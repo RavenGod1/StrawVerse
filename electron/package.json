@@ -6,7 +6,7 @@
   "scripts": {
     "start": "electron . --trace-warnings",
     "prebuild": "node scripts/download-binaries.js",
-    "build": "npm run build --prefix gui",
+    "build": "npm run build --prefix ../gui",
     "prepackage": "node scripts/download-binaries.js",
     "package": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true });\" && electron-builder --win --linux",
     "release": "bash release.sh",
@@ -29,14 +29,16 @@
     ],
     "files": [
       "**/*",
-      "!gui/node_modules/**/*",
-      "!gui/public/**/*",
-      "!gui/src/**/*",
-      "!gui/.gitignore",
-      "!gui/eslint.config.js",
-      "!gui/package.json",
-      "!gui/package-lock.json",
-      "!gui/vite.config.js"
+      {
+        "from": "../backend",
+        "to": "backend",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "../gui/dist",
+        "to": "gui/dist",
+        "filter": ["**/*"]
+      }
     ],
     "win": {
       "target": [

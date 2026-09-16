@@ -4,6 +4,45 @@ process.on("warning", (w) => {
   if (w.name !== "ExperimentalWarning") console.warn(w);
 });
 
+function makeStreamSafe(stream) {
+  if (!stream) return;
+  if (typeof stream.on === "function") {
+    stream.on("error", (err) => {
+      if (err && (err.code === "EIO" || err.code === "EPIPE")) return;
+    });
+  }
+  if (typeof stream.write === "function") {
+    const originalWrite = stream.write.bind(stream);
+    stream.write = function (chunk, encoding, callback) {
+      try {
+        return originalWrite(chunk, encoding, (err) => {
+          if (err && (err.code === "EIO" || err.code === "EPIPE")) {
+            if (typeof callback === "function") callback();
+            return;
+          }
+          if (typeof callback === "function") callback(err);
+        });
+      } catch (err) {
+        if (err && (err.code === "EIO" || err.code === "EPIPE")) {
+          if (typeof callback === "function") callback();
+          return false;
+        }
+        throw err;
+      }
+    };
+  }
+}
+
+makeStreamSafe(process.stdout);
+makeStreamSafe(process.stderr);
+if (console && console._stdout) makeStreamSafe(console._stdout);
+if (console && console._stderr) makeStreamSafe(console._stderr);
+
+process.on("uncaughtException", (err) => {
+  if (err && (err.code === "EIO" || err.code === "EPIPE")) return;
+  console.error("Uncaught Exception:", err);
+});
+
 // electron
 const {
   app,
@@ -25,6 +64,57 @@ const express = require("express");
 const path = require("node:path");
 const net = require("net");
 const fs = require("fs");
+const Module = require("module");
+const electronNodeModules = path.join(__dirname, "node_modules");
+if (!Module.globalPaths.includes(electronNodeModules)) {
+  Module.globalPaths.push(electronNodeModules);
+}
+const origResolve = Module._resolveFilename;
+Module._resolveFilename = function (request, parent, isMain) {
+  try {
+    return origResolve.call(this, request, parent, isMain);
+  } catch (err) {
+    if (
+      err.code === "MODULE_NOT_FOUND" &&
+      !path.isAbsolute(request) &&
+      !request.startsWith(".")
+    ) {
+      try {
+        const fallbackPath = path.join(electronNodeModules, request);
+        return origResolve.call(this, fallbackPath, parent, isMain);
+      } catch (_) {}
+    }
+    throw err;
+  }
+};
+
+const lastStatusCache = new Map();
+
+global.sendToRenderer = function (channel, payload) {
+  if (channel === "download-logger") {
+    global.__latestDownloadProgress = payload;
+  }
+
+  if (
+    channel === "info-loading-status" ||
+    channel === "catalog-loading-status" ||
+    channel === "download-logger"
+  ) {
+    if (payload && payload.text) {
+      lastStatusCache.set(channel, payload);
+    } else {
+      lastStatusCache.delete(channel);
+    }
+  }
+
+  if (global.win && !global.win.isDestroyed() && global.win.webContents) {
+    try {
+      global.win.webContents.send(channel, payload);
+    } catch (err) {
+      console.error(`[IPC Send Error] Channel ${channel}:`, err.message);
+    }
+  }
+};
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -86,36 +176,57 @@ try {
   });
 }
 
+const backendDir = fs.existsSync(path.join(__dirname, "backend"))
+  ? path.join(__dirname, "backend")
+  : path.join(__dirname, "..", "backend");
+
+const guiDistDir = fs.existsSync(path.join(__dirname, "gui", "dist"))
+  ? path.join(__dirname, "gui", "dist")
+  : path.join(__dirname, "..", "gui", "dist");
+
+const preloadPath = fs.existsSync(path.join(__dirname, "preload.js"))
+  ? path.join(__dirname, "preload.js")
+  : path.join(__dirname, "backend", "preload.js");
+
 //  functions
-const { logger } = require("./backend/utils/AppLogger");
-const { getKeyValue, setKeyValue } = require("./backend/utils/db");
-const { runStartupCleanup } = require("./backend/utils/ImageCacheManager");
-const { playInMpv, toProxyUrl } = require("./backend/utils/mpvPlayer");
+const { logger } = require(path.join(backendDir, "utils", "AppLogger"));
+const { getKeyValue, setKeyValue } = require(
+  path.join(backendDir, "utils", "db"),
+);
+const { runStartupCleanup } = require(
+  path.join(backendDir, "utils", "ImageCacheManager"),
+);
+const { playInMpv, toProxyUrl } = require(
+  path.join(backendDir, "utils", "mpvPlayer"),
+);
 const {
   SettingsLoad,
   patchModulePaths,
   loadAllScrapers,
   disableWhatsNew,
   settingupdate,
-} = require("./backend/utils/settings");
-const { loadQueue, continuousExecution } = require("./backend/utils/queue");
-const { StopDiscordRPC } = require("./backend/utils/discord");
-const {
-  createScrapperWindow,
-  ExitScrapperWindow,
-} = require("./backend/utils/scrapper");
-const { getHeaders } = require("./backend/utils/proxyHeaders");
-const { registerSharedStateHandlers } = require("./backend/sharedState");
-const { checkForMappingUpdates } = require("./backend/utils/mappingUpdater");
-const { MalRefreshTokenGen } = require("./backend/utils/mal");
+} = require(path.join(backendDir, "utils", "settings"));
+const { loadQueue, continuousExecution } = require(
+  path.join(backendDir, "utils", "queue"),
+);
+const { StopDiscordRPC } = require(path.join(backendDir, "utils", "discord"));
+const { createScrapperWindow, ExitScrapperWindow } = require(
+  path.join(backendDir, "utils", "scrapper"),
+);
+const { getHeaders } = require(path.join(backendDir, "utils", "proxyHeaders"));
+const { registerSharedStateHandlers } = require("./sharedState");
+const { checkForMappingUpdates } = require(
+  path.join(backendDir, "utils", "mappingUpdater"),
+);
+const { MalRefreshTokenGen } = require(path.join(backendDir, "utils", "mal"));
 
 // Express Server
-const routes = require("./backend/routes/index");
+const routes = require(path.join(backendDir, "routes", "index"));
 const appExpress = express();
 appExpress.use(express.urlencoded({ extended: true }));
 appExpress.use(express.json());
-appExpress.use(express.static(path.join(__dirname, "gui", "dist")));
-appExpress.set("views", path.join(__dirname, "gui", "dist"));
+appExpress.use(express.static(guiDistDir));
+appExpress.set("views", guiDistDir);
 appExpress.use((req, res, next) => {
   res.locals.MalLoggedIn = global.MalLoggedIn;
   next();
@@ -201,7 +312,7 @@ const createWindow = () => {
       backgroundThrottling: true,
       contextIsolation: true,
       webSecurity: false,
-      preload: path.join(__dirname, "backend", "preload.js"),
+      preload: preloadPath,
     },
     icon: path.join(
       __dirname,
@@ -215,6 +326,29 @@ const createWindow = () => {
 
   global.win.maximize();
   nativeTheme.themeSource = "dark";
+
+  global.win.webContents.on("did-finish-load", () => {
+    global.win.webContents.setVisualZoomLevelLimits(1, 1);
+    for (const [channel, data] of lastStatusCache.entries()) {
+      try {
+        global.win.webContents.send(channel, data);
+      } catch (_) {}
+    }
+  });
+
+  global.win.webContents.on("before-input-event", (event, input) => {
+    if (
+      input.control &&
+      (input.key === "+" ||
+        input.key === "=" ||
+        input.key === "-" ||
+        input.key === "_" ||
+        input.key === "0")
+    ) {
+      event.preventDefault();
+    }
+  });
+
   global.win.loadURL(`http://localhost:${global.PORT}`);
 
   session.defaultSession.webRequest.onBeforeSendHeaders(
@@ -407,10 +541,7 @@ const createWindow = () => {
 
       let changelogContent = "";
       if (showWhatsNew) {
-        let changelogPath = path.join(__dirname, "..", "CHANGELOG.md");
-        if (!fs.existsSync(changelogPath)) {
-          changelogPath = path.join(__dirname, "CHANGELOG.md");
-        }
+        const changelogPath = path.resolve(__dirname, "..", "changelog.md");
         if (fs.existsSync(changelogPath)) {
           changelogContent = fs.readFileSync(changelogPath, "utf8");
           const parts = changelogContent.split(
@@ -459,7 +590,7 @@ const createWindow = () => {
       modal: process.platform !== "linux",
       title: "MarketPlace",
       webPreferences: {
-        preload: path.join(__dirname, "backend", "preload.js"),
+        preload: preloadPath,
         contextIsolation: true,
         nodeIntegration: false,
       },
@@ -788,11 +919,6 @@ function registerLinuxProtocol() {
   if (process.platform !== "linux") return;
   // We only register the custom protocol handler desktop file if the app is packaged
   if (!app.isPackaged) return;
-
-  const fs = require("fs");
-  const path = require("path");
-  const os = require("os");
-  const { exec } = require("child_process");
 
   try {
     const desktopDir = path.join(os.homedir(), ".local/share/applications");

@@ -40,13 +40,39 @@ function broadcast(channel, data) {
   }
 }
 
-const fakeWindow = {
-  webContents: {
-    send: (channel, data) => broadcast(channel, data),
-  },
-  isDestroyed: () => false,
-  show: () => {},
-  focus: () => {},
+const lastStatusCache = new Map();
+
+global.sendToRenderer = function (channel, payload) {
+  if (channel === "download-logger") {
+    global.__latestDownloadProgress = payload;
+  }
+
+  if (
+    channel === "info-loading-status" ||
+    channel === "catalog-loading-status" ||
+    channel === "download-logger"
+  ) {
+    if (payload && payload.text) {
+      lastStatusCache.set(channel, payload);
+    } else {
+      lastStatusCache.delete(channel);
+    }
+  }
+
+  try {
+    broadcast(channel, payload);
+  } catch (err) {
+    console.error(
+      `[Android IPC Broadcast Error] Channel ${channel}:`,
+      err.message,
+    );
+  }
+
+  if (typeof global.__sendToNative === "function") {
+    try {
+      global.__sendToNative(channel, payload);
+    } catch (_) {}
+  }
 };
 
 function normalizeHostname(value) {
@@ -137,7 +163,6 @@ async function boot() {
     if (channel) channel.send(channelName, data);
   };
 
-  global.win = fakeWindow;
   global.PORT = PORT;
 
   const bundledModules = {};
@@ -158,12 +183,12 @@ async function boot() {
     };
   }
 
-  const { logger } = require("./backend/utils/AppLogger");
+  const { logger } = require("../../../backend/utils/AppLogger");
   logger.info(
     "[android] Booting StrawVerse backend (sqlite backend: native Java bridge)",
   );
 
-  const { initDatabase, run } = require("./backend/utils/db");
+  const { initDatabase, run } = require("../../../backend/utils/db");
   await initDatabase();
   logger.info("[android] Database initialized via Java bridge");
 
@@ -182,7 +207,7 @@ async function boot() {
   }
 
   try {
-    const proxyHeaders = require("./backend/utils/proxyHeaders");
+    const proxyHeaders = require("../../../backend/utils/proxyHeaders");
     await proxyHeaders.initCache();
   } catch (cacheInitErr) {
     logger.error(
@@ -357,7 +382,7 @@ async function boot() {
       timeout: 20000,
       adapter: nativeAxiosAdapter,
     });
-    const { getHeaders } = require("./backend/utils/proxyHeaders");
+    const { getHeaders } = require("../../../backend/utils/proxyHeaders");
     global.axios.interceptors.request.use(
       async (config) => {
         const headers = getHeaders(config.url, config.method);
@@ -490,7 +515,7 @@ async function boot() {
     SettingsLoad,
     settingfetch,
     loadAllScrapers,
-  } = require("./backend/utils/settings");
+  } = require("../../../backend/utils/settings");
 
   try {
     await patchModulePaths();
@@ -501,7 +526,7 @@ async function boot() {
     logger.error("[android] settings initialization failed: " + e.message);
   }
 
-  const { queryOne, run: dbRun } = require("./backend/utils/db");
+  const { queryOne, run: dbRun } = require("../../../backend/utils/db");
 
   global.cloudflarebypass = async (targetUrl, silent, referer, userAgent) => {
     if (!targetUrl) return;
@@ -572,7 +597,7 @@ async function boot() {
     const { url } = req.query;
     if (!url) return res.status(400).json({ error: "URL is required" });
     try {
-      const proxyHeaders = require("./backend/utils/proxyHeaders");
+      const proxyHeaders = require("../../../backend/utils/proxyHeaders");
       const headers = proxyHeaders.getHeaders(url);
       res.json(headers || {});
     } catch (err) {
@@ -593,6 +618,21 @@ async function boot() {
         `data: ${JSON.stringify({ channel: "cf-bypass-request", data: pendingBypassRequest })}\n\n`,
       );
     }
+
+    try {
+      const activeInfoStatus = lastStatusCache.get("info-loading-status");
+      if (activeInfoStatus) {
+        res.write(
+          `data: ${JSON.stringify({ channel: "info-loading-status", data: activeInfoStatus })}\n\n`,
+        );
+      }
+      const activeCatalogStatus = lastStatusCache.get("catalog-loading-status");
+      if (activeCatalogStatus) {
+        res.write(
+          `data: ${JSON.stringify({ channel: "catalog-loading-status", data: activeCatalogStatus })}\n\n`,
+        );
+      }
+    } catch (_) {}
 
     sseClients.add(res);
     const keepAlive = setInterval(() => {
@@ -626,7 +666,7 @@ async function boot() {
   router.post("/api/extensions", async (req, res) => {
     try {
       const [TaskType, AnimeManga, ExtentionName] = req.body.args || [];
-      const { HandleExtensions } = require("./backend/utils/settings");
+      const { HandleExtensions } = require("../../../backend/utils/settings");
       const result = await HandleExtensions(
         TaskType,
         AnimeManga,
@@ -641,7 +681,7 @@ async function boot() {
   router.get("/api/whats-new", async (req, res) => {
     try {
       const appVersion = process.env.STRAWVERSE_APP_VERSION || "1.0.0";
-      const { getKeyValue, setKeyValue } = require("./backend/utils/db");
+      const { getKeyValue, setKeyValue } = require("../../../backend/utils/db");
       const lastSeen = await getKeyValue("Settings", "whatsNewSeenVersion");
       const disabled = await getKeyValue("Settings", "whatsNewDisabled");
       if (disabled === true || lastSeen === appVersion) {
@@ -678,7 +718,7 @@ async function boot() {
 
   router.post("/api/whats-new/disable", async (req, res) => {
     try {
-      const { setKeyValue } = require("./backend/utils/db");
+      const { setKeyValue } = require("../../../backend/utils/db");
       await setKeyValue("Settings", "whatsNewDisabled", true);
       res.json({ ok: true, result: { success: true } });
     } catch (e) {
@@ -1027,7 +1067,7 @@ async function boot() {
           ]);
           savedClearance = true;
           try {
-            const proxyHeaders = require("./backend/utils/proxyHeaders");
+            const proxyHeaders = require("../../../backend/utils/proxyHeaders");
             proxyHeaders.updateCache(
               domain,
               "cf_clearance",
@@ -1081,7 +1121,7 @@ async function boot() {
           Date.now().toString(),
         ]);
         try {
-          const proxyHeaders = require("./backend/utils/proxyHeaders");
+          const proxyHeaders = require("../../../backend/utils/proxyHeaders");
           proxyHeaders.updateCache(domain, "user_agent", userAgent);
         } catch (e) {}
       }
@@ -1102,7 +1142,7 @@ async function boot() {
           Date.now().toString(),
         ]);
         try {
-          const proxyHeaders = require("./backend/utils/proxyHeaders");
+          const proxyHeaders = require("../../../backend/utils/proxyHeaders");
           proxyHeaders.updateCache(domain, "client_hints", clientHints);
         } catch (e) {}
       }
@@ -1119,8 +1159,8 @@ async function boot() {
       const {
         settingfetch,
         getScraperIconsPath,
-      } = require("./backend/utils/settings");
-      const { MalCreateUrl } = require("./backend/utils/mal");
+      } = require("../../../backend/utils/settings");
+      const { MalCreateUrl } = require("../../../backend/utils/mal");
 
       const setting = await settingfetch();
       let settingsObj = {};
@@ -1138,8 +1178,8 @@ async function boot() {
         if (valScraper?.logo) return valScraper.logo;
         const iconsDir = getScraperIconsPath();
         if (iconsDir) {
-          const iconPath = require("path").join(iconsDir, `${name}.ico`);
-          if (require("fs").existsSync(iconPath)) {
+          const iconPath = path.join(iconsDir, `${name}.ico`);
+          if (fs.existsSync(iconPath)) {
             return `/api/image?url=${encodeURIComponent(`file://${iconPath}`)}`;
           }
         }
@@ -1216,7 +1256,7 @@ async function boot() {
         updatePayload = req.body;
       }
       delete updatePayload.CustomDownloadLocation;
-      const { settingupdate } = require("./backend/utils/settings");
+      const { settingupdate } = require("../../../backend/utils/settings");
       await settingupdate(updatePayload);
       res.json({ ok: true, result: { success: true } });
     } catch (e) {
@@ -1229,7 +1269,7 @@ async function boot() {
       const settingsObj =
         (Array.isArray(req.body.args) ? req.body.args[0] : req.body) || {};
       delete settingsObj.CustomDownloadLocation;
-      const { settingupdate } = require("./backend/utils/settings");
+      const { settingupdate } = require("../../../backend/utils/settings");
       await settingupdate(settingsObj);
       res.json({ ok: true, result: { success: true } });
     } catch (e) {
@@ -1277,9 +1317,12 @@ async function boot() {
       .type("application/javascript")
       .send("// Capacitor bridge injected natively by WebView\n");
   });
-  appExpress.use(express.static(path.join(__dirname, "gui", "dist")));
+  const guiDistPath = fs.existsSync(path.join(__dirname, "gui", "dist"))
+    ? path.join(__dirname, "gui", "dist")
+    : path.resolve(__dirname, "../../../gui/dist");
+  appExpress.use(express.static(guiDistPath));
 
-  const routes = require("./backend/routes/index");
+  const routes = require("../../../backend/routes/index");
   appExpress.use(routes);
 
   appExpress.listen(PORT, "127.0.0.1", () => {
@@ -1288,7 +1331,7 @@ async function boot() {
   });
 
   try {
-    const { loadQueue } = require("./backend/utils/queue");
+    const { loadQueue } = require("../../../backend/utils/queue");
     await loadQueue();
   } catch (queueErr) {
     logger.error(
@@ -1299,7 +1342,7 @@ async function boot() {
   try {
     const {
       checkForMappingUpdates,
-    } = require("./backend/utils/mappingUpdater");
+    } = require("../../../backend/utils/mappingUpdater");
     checkForMappingUpdates().catch((e) =>
       logger.error("[android] mapping update failed: " + e.message),
     );

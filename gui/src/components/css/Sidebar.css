@@ -1,0 +1,115 @@
+/* Sidebar Styles */
+.sidebar {
+  width: 60px;
+  height: 100vh;
+  background-color: var(--bg-secondary);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  transition: var(--transition);
+  z-index: 100;
+  flex-shrink: 0;
+}
+.sidebar.collapsed {
+  width: 60px;
+}
+
+.sidebar-header {
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-bottom: 1px solid var(--border);
+  transition: var(--transition);
+}
+.sidebar.collapsed .sidebar-header {
+  height: 56px;
+  flex-direction: column;
+  justify-content: center;
+  padding: 0;
+  gap: 0;
+}
+
+.sidebar-logo-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.sidebar.collapsed .sidebar-logo-wrapper {
+  justify-content: center;
+  width: 100%;
+}
+
+.sidebar-logo-img {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.sidebar-logo-text {
+  display: none;
+}
+
+.sidebar-toggle-btn {
+  display: none;
+}
+
+.sidebar-nav {
+  flex: 1;
+  padding: 16px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+}
+
+.sidebar-item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px;
+  width: 100%;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: var(--transition);
+  outline: none;
+}
+.sidebar-item:hover {
+  background-color: rgba(255, 255, 255, 0.03);
+  color: var(--text-main);
+}
+.sidebar-item.active {
+  background: var(--sidebar-active-bg, rgba(139, 92, 246, 0.2));
+  color: var(--sidebar-active-color, var(--accent));
+  font-weight: 600;
+  box-shadow: 0 0 12px var(--sidebar-active-glow, rgba(139, 92, 246, 0.3));
+}
+.sidebar-item.active:hover {
+  background: var(--sidebar-active-bg-hover, rgba(139, 92, 246, 0.32));
+}
+.sidebar.collapsed .sidebar-item {
+  justify-content: center;
+}
+
+.sidebar-item span {
+  display: none;
+}
+
+.sidebar-footer {
+  padding: 16px 8px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.sidebar.collapsed .sidebar-footer {
+  padding: 16px 8px;
+}

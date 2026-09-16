@@ -10,9 +10,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ELECTRON_DIR="$SCRIPT_DIR/electron"
 CAPACITOR_DIR="$SCRIPT_DIR/capacitor"
-CHANGELOG="$ELECTRON_DIR/CHANGELOG.md"
+CHANGELOG="$SCRIPT_DIR/changelog.md"
 ELECTRON_PKG="$ELECTRON_DIR/package.json"
 CAPACITOR_PKG="$CAPACITOR_DIR/package.json"
+ROOT_PKG="$SCRIPT_DIR/package.json"
 DIST_DIR="$ELECTRON_DIR/dist"
 REPO="TheYogMehta/StrawVerse"
 DISCORD_LINK="https://discord.gg/PzfUBgQ2gt"
@@ -30,16 +31,16 @@ ok()    { echo -e "${GREEN}  ✓${NC} $*"; }
 warn()  { echo -e "${YELLOW}  ⚠${NC} $*"; }
 fail()  { echo -e "${RED}  ✗ $*${NC}" >&2; exit 1; }
 
-# ── 1. Ensure CHANGELOG.md exists ─────────────────────────
+# ── 1. Ensure changelog.md exists ─────────────────────────
 if [ ! -f "$CHANGELOG" ]; then
-  fail "CHANGELOG.md not found at $CHANGELOG"
+  fail "changelog.md not found at $CHANGELOG"
 fi
 
-# ── 2. Extract version from root CHANGELOG.md ────────────
-log "Reading version from ${BOLD}CHANGELOG.md${NC}..."
+# ── 2. Extract version from changelog.md ──────────────────
+log "Reading version from ${BOLD}changelog.md${NC}..."
 
 VERSION=$(grep -oP '(?<=^# \[)[0-9]+\.[0-9]+\.[0-9]+(?=\])' "$CHANGELOG" | head -1)
-[ -z "$VERSION" ] && fail "Could not parse version from CHANGELOG.md"
+[ -z "$VERSION" ] && fail "Could not parse version from changelog.md"
 TAG="v${VERSION}"
 ok "Version: ${BOLD}${VERSION}${NC}  →  Tag: ${BOLD}${TAG}${NC}"
 
@@ -68,8 +69,7 @@ extract_notes() {
   " "$file" "$VERSION"
 }
 
-DESKTOP_NOTES=$(extract_notes "$ELECTRON_DIR/CHANGELOG.md")
-MOBILE_NOTES=$(extract_notes "$CAPACITOR_DIR/www/nodejs/CHANGELOG.md")
+UNIFIED_NOTES=$(extract_notes "$CHANGELOG")
 
 # ── 4. Find previous tag ─────────────────────────────────
 PREV_TAG=$(git -C "$SCRIPT_DIR" tag --list 'v*' --sort=-v:refname | grep -v "^${TAG}$" | head -1)
@@ -82,12 +82,8 @@ fi
 # ── 5. Assemble release body ─────────────────────────────
 RELEASE_BODY=""
 
-if [ -n "$DESKTOP_NOTES" ]; then
-  RELEASE_BODY+=$'# Desktop\n\n'"$DESKTOP_NOTES"$'\n\n'
-fi
-
-if [ -n "$MOBILE_NOTES" ]; then
-  RELEASE_BODY+=$'# Android\n\n'"$MOBILE_NOTES"$'\n\n'
+if [ -n "$UNIFIED_NOTES" ]; then
+  RELEASE_BODY+="$UNIFIED_NOTES"$'\n\n'
 fi
 
 if [ -z "$RELEASE_BODY" ]; then
@@ -119,20 +115,23 @@ update_pkg_version() {
   fi
 }
 
+update_pkg_version "$ROOT_PKG"
 update_pkg_version "$ELECTRON_PKG"
 update_pkg_version "$CAPACITOR_PKG"
 update_pkg_version "$CAPACITOR_DIR/www/nodejs/package.json"
 
-# Sync CHANGELOG to capacitor nodejs folder
-if [ -f "$CAPACITOR_DIR/www/nodejs/CHANGELOG.md" ]; then
-  cp "$CHANGELOG" "$CAPACITOR_DIR/www/nodejs/CHANGELOG.md"
-  ok "Synced CHANGELOG.md to capacitor nodejs backend"
+# Sync changelog.md to capacitor folders
+mkdir -p "$CAPACITOR_DIR/www/nodejs"
+cp "$CHANGELOG" "$CAPACITOR_DIR/www/nodejs/changelog.md"
+if [ -d "$CAPACITOR_DIR/android/app/src/main/assets/public/nodejs" ]; then
+  cp "$CHANGELOG" "$CAPACITOR_DIR/android/app/src/main/assets/public/nodejs/changelog.md"
 fi
+ok "Synced changelog.md across all targets"
 
-# ── 7. Build Desktop (Electron) Application ──────────────
-log "Building Desktop (Electron) frontend..."
-npm run build --prefix "$ELECTRON_DIR/gui"
-ok "Desktop frontend built"
+# ── 7. Build Unified Frontend & Desktop Application ─────────
+log "Building Unified React GUI..."
+npm run build --prefix "$SCRIPT_DIR/gui"
+ok "Unified frontend built"
 
 log "Packaging Desktop application (Windows & Linux)..."
 cd "$ELECTRON_DIR"

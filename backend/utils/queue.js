@@ -1,0 +1,1112 @@
+// libs
+const path = require("path");
+const axios = require("axios");
+const { getKeyValue, setKeyValue, queryAll, run, batchRun } = require("./db");
+const { logger } = require("./AppLogger");
+const { download } = require("./downloader");
+const {
+  resetDomainConcurrency,
+  markCoolingDown,
+} = require("./domainConcurrency");
+const { directoryMaker, MangaDir } = require("./DirectoryMaker");
+const {
+  MangaChapterFetch,
+  DownloadChapters,
+  fetchEpisodeSources,
+  processServer,
+} = require("./AnimeManga");
+const {
+  providerFetch,
+  isLanguagePreferred,
+  settingfetch,
+} = require("./settings");
+const { sortSourcesByPreferredQuality } = require("./constants");
+const { verifyStreamReachability } = require("./streamVerifier");
+const { updateHistory } = require("./history");
+
+let _bgDownloadDepth = 0;
+let isProcessorRunning = false;
+global.__isBackgroundDownload = () =>
+  isProcessorRunning || _bgDownloadDepth > 0;
+
+function parseBoolSetting(val) {
+  if (val === true || val === 1 || val === "1" || val === "true") return true;
+  return false;
+}
+
+let AnimeQueue = [];
+let isQueuePausedState = false;
+
+(async () => {
+  try {
+    const val = await getKeyValue("Settings", "isQueuePaused");
+    isQueuePausedState = parseBoolSetting(val);
+  } catch (_) {}
+})();
+
+function isQueuePaused() {
+  return isQueuePausedState;
+}
+
+global.isQueuePaused = isQueuePaused;
+global.isEpisodeInQueue = (epid) =>
+  AnimeQueue.some((item) => String(item.epid) === String(epid));
+
+async function pauseQueue() {
+  isQueuePausedState = true;
+  await setKeyValue("Settings", "isQueuePaused", true).catch(() => {});
+  return isQueuePausedState;
+}
+
+async function resumeQueue() {
+  isQueuePausedState = false;
+  await setKeyValue("Settings", "isQueuePaused", false).catch(() => {});
+  try {
+    continuousExecution();
+  } catch (err) {}
+  return isQueuePausedState;
+}
+
+// Add to Queue
+async function addToQueue(item) {
+  try {
+    await run(
+      `INSERT OR REPLACE INTO DownloadQueue (epid, Type, Title, EpNum, SubDub, malid, id, ChapterTitle, status, totalSegments, currentSegments, caption, added_at, config) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        item.epid,
+        item.Type,
+        item.Title,
+        item.EpNum || "",
+        item.SubDub || "",
+        item.malid || "",
+        item.id || "",
+        item.ChapterTitle || "",
+        item.status || "Pending",
+        item.totalSegments || 0,
+        item.currentSegments || 0,
+        item.caption || "",
+        item.added_at || Date.now(),
+        JSON.stringify(item.config || {}),
+      ],
+    );
+  } catch (err) {
+    logger.error("Failed to insert item to DownloadQueue DB: " + err.message);
+  }
+  const existingIdx = AnimeQueue.findIndex(
+    (qItem) => String(qItem.epid) === String(item.epid),
+  );
+  if (existingIdx !== -1) {
+    AnimeQueue[existingIdx] = item;
+  } else {
+    AnimeQueue.push(item);
+  }
+  if (global.updatePowerSaveBlocker) {
+    global.updatePowerSaveBlocker();
+  }
+  if (!isQueuePausedState) {
+    try {
+      setTimeout(() => {
+        continuousExecution().catch(() => {});
+      }, 1000);
+    } catch (err) {}
+  }
+}
+
+// load queue when the script start
+async function loadQueue() {
+  try {
+    const rows = await queryAll(
+      "SELECT * FROM DownloadQueue ORDER BY added_at ASC",
+    );
+    AnimeQueue = rows.map((item) => {
+      if (item.config) {
+        try {
+          item.config = JSON.parse(item.config);
+        } catch (e) {
+          item.config = {};
+        }
+      }
+      item.progress = 0;
+      return item;
+    });
+  } catch (err) {
+    AnimeQueue = [];
+    logger.error("Failed to load DownloadQueue DB: " + err.message);
+  }
+  isQueuePausedState = parseBoolSetting(
+    await getKeyValue("Settings", "isQueuePaused"),
+  );
+  if (!isQueuePausedState) {
+    try {
+      continuousExecution();
+    } catch (err) {}
+  }
+}
+
+// remove anime from queue
+async function removeQueue(AnimeEpId, isSuccess = false) {
+  let removedItem = null;
+  try {
+    if (!AnimeEpId) {
+      await run("DELETE FROM DownloadQueue");
+      AnimeQueue.length = 0;
+      resetDomainConcurrency();
+      try {
+        global.sendToRenderer("download-logger", {
+          caption: "Nothing in progress",
+          totalSegments: 0,
+          currentSegments: 0,
+          epid: null,
+          queue: [],
+          isPaused: isQueuePaused(),
+        });
+      } catch (ipcErr) {}
+      return AnimeQueue;
+    }
+    await run("DELETE FROM DownloadQueue WHERE epid = ?", [AnimeEpId]);
+  } catch (err) {
+    logger.error("Failed to delete from DownloadQueue DB: " + err.message);
+  }
+  const indexToRemove = AnimeQueue.findIndex(
+    (item) => String(item.epid) === String(AnimeEpId),
+  );
+  if (indexToRemove !== -1) {
+    removedItem = AnimeQueue[indexToRemove];
+    AnimeQueue.splice(indexToRemove, 1);
+  }
+  if (AnimeQueue.length === 0) {
+    resetDomainConcurrency();
+  }
+  if (process.versions?.electron && global.updatePowerSaveBlocker) {
+    global.updatePowerSaveBlocker();
+  }
+
+  if (removedItem && isSuccess) {
+    global.sendToRenderer("download-complete", {
+      Type: removedItem.Type,
+      id: removedItem.id,
+      EpNum: removedItem.EpNum,
+      SubDub: removedItem.SubDub,
+      epid: removedItem.epid,
+    });
+  }
+
+  try {
+    const nextItem = AnimeQueue.find(
+      (item) =>
+        item.totalSegments > 0 ||
+        (item.caption && item.caption.includes("Downloading")),
+    );
+    const hasItemsInQueue = AnimeQueue.length > 0;
+    const fallbackCaption = hasItemsInQueue
+      ? "Preparing next episode..."
+      : "Nothing in progress";
+    global.sendToRenderer("download-logger", {
+      queue: nextItem
+        ? AnimeQueue.filter((item) => item.epid !== nextItem.epid)
+        : AnimeQueue,
+      caption: nextItem ? nextItem.caption : fallbackCaption,
+      totalSegments: nextItem ? nextItem.totalSegments : 0,
+      currentSegments: nextItem ? nextItem.currentSegments : 0,
+      epid: nextItem ? nextItem.epid : AnimeQueue[0]?.epid || null,
+      isPaused: isQueuePaused(),
+    });
+  } catch (ipcErr) {}
+
+  return AnimeQueue;
+}
+
+// Remove multiple items from queue at once and save to SQLite
+async function removeMultipleFromQueue(epids = []) {
+  if (epids.length > 0) {
+    try {
+      const placeholders = epids.map(() => "?").join(",");
+      await run(
+        `DELETE FROM DownloadQueue WHERE epid IN (${placeholders})`,
+        epids,
+      );
+    } catch (err) {
+      logger.error(
+        "Failed to delete multiple from DownloadQueue DB: " + err.message,
+      );
+    }
+    const epidsSet = new Set(epids.map((id) => String(id)));
+    AnimeQueue = AnimeQueue.filter((item) => !epidsSet.has(String(item.epid)));
+    if (AnimeQueue.length === 0) {
+      resetDomainConcurrency();
+    }
+    if (global.updatePowerSaveBlocker) {
+      global.updatePowerSaveBlocker();
+    }
+    try {
+      const nextItem = AnimeQueue.find(
+        (item) =>
+          item.totalSegments > 0 ||
+          (item.caption && item.caption.includes("Downloading")),
+      );
+      const hasItemsInQueue = AnimeQueue.length > 0;
+      const fallbackCaption = hasItemsInQueue
+        ? "Preparing next episode..."
+        : "Nothing in progress";
+      global.sendToRenderer("download-logger", {
+        queue: nextItem
+          ? AnimeQueue.filter((item) => item.epid !== nextItem.epid)
+          : AnimeQueue,
+        caption: nextItem ? nextItem.caption : fallbackCaption,
+        totalSegments: nextItem ? nextItem.totalSegments : 0,
+        currentSegments: nextItem ? nextItem.currentSegments : 0,
+        epid: nextItem ? nextItem.epid : AnimeQueue[0]?.epid || null,
+        isPaused: isQueuePaused(),
+      });
+    } catch (ipcErr) {}
+  }
+  return AnimeQueue;
+}
+
+// Save Queue Data
+async function SaveQueueData(QueueData) {
+  AnimeQueue = QueueData;
+  try {
+    await run("DELETE FROM DownloadQueue");
+    const operations = QueueData.map((item) => ({
+      sql: `INSERT OR REPLACE INTO DownloadQueue (epid, Type, Title, EpNum, SubDub, malid, id, ChapterTitle, status, totalSegments, currentSegments, caption, added_at, config) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      params: [
+        item.epid,
+        item.Type,
+        item.Title,
+        item.EpNum || "",
+        item.SubDub || "",
+        item.malid || "",
+        item.id || "",
+        item.ChapterTitle || "",
+        item.status || "Pending",
+        item.totalSegments || 0,
+        item.currentSegments || 0,
+        item.caption || "",
+        item.added_at || Date.now(),
+        JSON.stringify(item.config || {}),
+      ],
+    }));
+    if (operations.length > 0) {
+      await batchRun("main", operations);
+    }
+  } catch (err) {
+    logger.error("Failed to SaveQueueData to DownloadQueue DB: " + err.message);
+  }
+  if (global.updatePowerSaveBlocker) {
+    global.updatePowerSaveBlocker();
+  }
+}
+
+// update the queue [ for storing how much downloaded ]
+async function updateQueue(
+  epid,
+  totalSegments,
+  currentSegments,
+  caption = null,
+) {
+  let Tosave = false;
+  totalSegments = parseInt(totalSegments) || 0;
+  currentSegments = parseInt(currentSegments) || 0;
+
+  const indexToUpdate = AnimeQueue.findIndex(
+    (item) => String(item.epid) === String(epid),
+  );
+  if (indexToUpdate !== -1) {
+    AnimeQueue[indexToUpdate].totalSegments = totalSegments;
+    AnimeQueue[indexToUpdate].currentSegments = currentSegments;
+
+    if (caption && AnimeQueue[indexToUpdate].caption !== caption) {
+      AnimeQueue[indexToUpdate].caption = caption;
+      Tosave = true;
+    }
+
+    const progressPercentage =
+      totalSegments > 0
+        ? Math.floor((currentSegments / totalSegments) * 100)
+        : 0;
+
+    const lastPct = AnimeQueue[indexToUpdate].lastSavedPct;
+    if (
+      progressPercentage !== lastPct &&
+      (progressPercentage % 10 === 0 || progressPercentage >= 98)
+    ) {
+      Tosave = true;
+      AnimeQueue[indexToUpdate].lastSavedPct = progressPercentage;
+    }
+
+    if (Tosave) {
+      try {
+        await run(
+          "UPDATE DownloadQueue SET totalSegments = ?, currentSegments = ?, caption = ? WHERE epid = ?",
+          [totalSegments, currentSegments, caption || "", epid],
+        );
+      } catch (err) {
+        logger.error("Failed to update DownloadQueue DB: " + err.message);
+      }
+    }
+  }
+  return AnimeQueue;
+}
+
+// Get Queue
+async function getQueue(currently_downloading = null) {
+  return currently_downloading
+    ? AnimeQueue?.filter(
+        (item) => String(item.epid) !== String(currently_downloading),
+      )
+    : AnimeQueue;
+}
+
+// check if it exists in queue
+async function checkEpisodeDownload(epid) {
+  const found = AnimeQueue.some((item) => String(item.epid) === String(epid));
+  return found;
+}
+
+// Add multiple items to queue at once and save to SQLite
+async function addMultipleToQueue(items) {
+  if (items && items.length > 0) {
+    try {
+      const operations = items.map((item) => ({
+        sql: `INSERT OR REPLACE INTO DownloadQueue (epid, Type, Title, EpNum, SubDub, malid, id, ChapterTitle, status, totalSegments, currentSegments, caption, added_at, config) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        params: [
+          item.epid,
+          item.Type,
+          item.Title,
+          item.EpNum || "",
+          item.SubDub || "",
+          item.malid || "",
+          item.id || "",
+          item.ChapterTitle || "",
+          item.status || "Pending",
+          item.totalSegments || 0,
+          item.currentSegments || 0,
+          item.caption || "",
+          item.added_at || Date.now(),
+          JSON.stringify(item.config || {}),
+        ],
+      }));
+      await batchRun("main", operations);
+    } catch (err) {
+      logger.error(
+        "Failed to addMultipleToQueue in DownloadQueue DB: " + err.message,
+      );
+    }
+    for (const item of items) {
+      const existingIdx = AnimeQueue.findIndex(
+        (qItem) => String(qItem.epid) === String(item.epid),
+      );
+      if (existingIdx !== -1) {
+        AnimeQueue[existingIdx] = item;
+      } else {
+        AnimeQueue.push(item);
+      }
+    }
+    if (global.updatePowerSaveBlocker) {
+      global.updatePowerSaveBlocker();
+    }
+    if (!isQueuePausedState) {
+      try {
+        continuousExecution();
+      } catch (err) {}
+    }
+  }
+}
+
+const activeProcessingEpids = new Set();
+
+function isRetryableError(err) {
+  if (!err || !err.message) return false;
+  const msg = err.message.toLowerCase();
+  if (
+    msg.includes("queue paused") ||
+    msg.includes("episode cancelled") ||
+    msg.includes("data missing") ||
+    msg.includes("type is not valid")
+  ) {
+    return false;
+  }
+  return (
+    msg.includes("scraper_temporary_error") ||
+    msg.includes("stream link") ||
+    msg.includes("resolution timeout") ||
+    msg.includes("server resolution") ||
+    msg.includes("failed to download") ||
+    msg.includes("no stream url") ||
+    msg.includes("no source link") ||
+    msg.includes("no image found") ||
+    msg.includes("cloudflare") ||
+    msg.includes("err_address_unreachable") ||
+    msg.includes("econnrefused") ||
+    msg.includes("econnreset") ||
+    msg.includes("etimedout") ||
+    msg.includes("socket hang up") ||
+    msg.includes("network error") ||
+    msg.includes("fetch failed") ||
+    msg.includes("abort") ||
+    msg.includes("timeout") ||
+    msg.includes("429") ||
+    msg.includes("403") ||
+    msg.includes("500") ||
+    msg.includes("502") ||
+    msg.includes("503") ||
+    msg.includes("504") ||
+    msg.includes("enotfound") ||
+    msg.includes("eai_again")
+  );
+}
+
+// queue start
+async function continuousExecution() {
+  if (isQueuePausedState) return;
+
+  try {
+    let currentQueue = await getQueue();
+    if (!currentQueue || currentQueue.length === 0) {
+      return;
+    }
+
+    if (activeProcessingEpids.size >= 1) {
+      return;
+    }
+
+    logger.info("[queueWorker] Checking download queue...");
+
+    let startedNewTask = false;
+
+    for (const currentTask of currentQueue) {
+      if (isQueuePausedState) break;
+
+      if (activeProcessingEpids.size >= 1) {
+        break;
+      }
+
+      if (
+        !currentTask ||
+        !currentTask.epid ||
+        activeProcessingEpids.has(currentTask.epid)
+      ) {
+        continue;
+      }
+
+      activeProcessingEpids.add(currentTask.epid);
+      startedNewTask = true;
+
+      (async () => {
+        try {
+          if (currentTask?.Type === "Anime") {
+            let {
+              config,
+              Title,
+              EpNum,
+              epid,
+              SubDub,
+              malid,
+              id: animeId,
+            } = currentTask;
+            if (config && Title && EpNum && epid && SubDub) {
+              await downloadep(
+                config,
+                Title,
+                EpNum,
+                epid,
+                SubDub,
+                malid,
+                animeId,
+              );
+            } else {
+              logger.error(
+                `Error message: Some Anime Data missing [ removing from queue ]`,
+              );
+              await removeQueue(currentTask.epid, false);
+              return;
+            }
+          } else if (currentTask?.Type === "Manga") {
+            let { Title, EpNum, epid, ChapterTitle, config, id } = currentTask;
+            const safeChapterTitle =
+              ChapterTitle || (EpNum ? `Chapter ${EpNum}` : "Chapter");
+            if (
+              Title &&
+              EpNum !== undefined &&
+              EpNum !== null &&
+              epid &&
+              config
+            ) {
+              await downloadMangaChapters(
+                config,
+                Title,
+                EpNum,
+                epid,
+                safeChapterTitle,
+                id || currentTask?.id,
+              );
+            } else {
+              logger.error(
+                `Error message: Some Manga Data missing [ removing from queue ]`,
+              );
+              await removeQueue(currentTask.epid, false);
+              return;
+            }
+          } else {
+            logger.error(
+              `Error message: Type is Not Valid [ removing from queue ]`,
+            );
+            await removeQueue(currentTask.epid, false);
+            return;
+          }
+          await removeQueue(currentTask.epid, true);
+        } catch (err) {
+          if (err.message && err.message.includes("Queue Paused")) {
+            logger.info(
+              "[queueWorker] Download paused. Keeping item in queue.",
+            );
+          } else if (err.message && err.message.includes("Episode Cancelled")) {
+            logger.info("[queueWorker] Download cancelled by user.");
+            if (currentTask?.epid) {
+              await removeQueue(currentTask.epid, false);
+            }
+          } else if (isRetryableError(err)) {
+            currentTask.retryCount = (currentTask.retryCount || 0) + 1;
+            const maxRetries = 3;
+            if (currentTask.retryCount >= maxRetries) {
+              logger.error(
+                `[queueWorker] Task ${currentTask?.epid} failed after ${maxRetries} retries: ${err.message}. Removing from queue.`,
+              );
+              try {
+                const itemLabel = currentTask?.Title
+                  ? `${currentTask.Title} (${currentTask?.Type === "Manga" ? "CHP" : "EP"} ${currentTask?.EpNum || ""})`
+                  : "Download";
+                global.sendToRenderer("download-error", {
+                  title: "Download Failed",
+                  message: `${itemLabel}: ${err.message} (max retries exceeded)`,
+                  epid: currentTask?.epid,
+                });
+              } catch (ipcErr) {}
+              if (currentTask?.epid) {
+                await removeQueue(currentTask.epid, false);
+              }
+            } else {
+              const backoffMs = Math.min(
+                30000,
+                5000 * Math.pow(2, currentTask.retryCount - 1),
+              );
+              const cleanEp =
+                currentTask.EpNum !== undefined && currentTask.EpNum !== null
+                  ? String(currentTask.EpNum)
+                  : "";
+              const qualStr = currentTask.config?.quality
+                ? ` ( ${currentTask.config.quality} )`
+                : "";
+              const prefix = currentTask.Type === "Manga" ? "CHP" : "EP";
+              const retryCaption = `Downloading ${prefix} ${cleanEp} ${currentTask.Title || ""}${qualStr} Retrying in ${Math.round(backoffMs / 1000)}s...`;
+              await updateQueue(currentTask.epid, 0, 0, retryCaption);
+              try {
+                global.sendToRenderer("download-logger", {
+                  caption: retryCaption,
+                  totalSegments: 0,
+                  currentSegments: 0,
+                  epid: currentTask.epid,
+                  isPaused: isQueuePaused(),
+                });
+              } catch (_) {}
+              logger.warn(
+                `[queueWorker] Scraper/Download error on task ${currentTask?.epid} (attempt ${currentTask.retryCount}/${maxRetries}): ${err.message}. Retrying in ${backoffMs / 1000}s...`,
+              );
+              const prov =
+                currentTask.config?.Animeprovider ||
+                currentTask.config?.Mangaprovider ||
+                "scraper";
+              markCoolingDown(prov, backoffMs);
+              await new Promise((resolve) => setTimeout(resolve, backoffMs));
+            }
+          } else {
+            logger.error(`Error message: ${err.message}`);
+            logger.error(`Stack trace: ${err.stack}`);
+            try {
+              const itemLabel = currentTask?.Title
+                ? `${currentTask.Title} (${currentTask?.Type === "Manga" ? "CHP" : "EP"} ${currentTask?.EpNum || ""})`
+                : "Download";
+              global.sendToRenderer("download-error", {
+                title: "Download Failed",
+                message: `${itemLabel}: ${err.message}`,
+                epid: currentTask?.epid,
+              });
+            } catch (ipcErr) {}
+            if (currentTask?.epid) {
+              logger.warn(
+                `[queueWorker] Task ${currentTask.epid} fatal error: ${err.message}. Removing from queue.`,
+              );
+              await removeQueue(currentTask.epid, false);
+            }
+          }
+        } finally {
+          activeProcessingEpids.delete(currentTask.epid);
+          setTimeout(() => {
+            continuousExecution().catch(() => {});
+          }, 500);
+        }
+      })();
+    }
+  } catch (err) {
+    console.error("Error in continuous execution:", err);
+    logger.error(`Error message: ${err.message}`);
+    logger.error(`Stack trace: ${err.stack}`);
+  }
+}
+
+// start downloadloading ep
+async function downloadep(
+  Videoconfig,
+  Title,
+  EpNum,
+  AnimeEpId,
+  SubDub,
+  malid,
+  animeId,
+) {
+  const directoryPath = await directoryMaker(
+    Title,
+    EpNum,
+    Videoconfig?.CustomDownloadLocation,
+    animeId || AnimeEpId,
+  );
+  _bgDownloadDepth++;
+  try {
+    const qualStr = Videoconfig?.quality ? ` ( ${Videoconfig.quality} )` : "";
+    const cleanEp =
+      EpNum !== undefined && EpNum !== null && !isNaN(Number(EpNum))
+        ? String(Number(EpNum))
+        : EpNum;
+    const initialCaption = `Resolving EP ${cleanEp} ${Title}${qualStr}...`;
+    await updateQueue(AnimeEpId, 0, 0, initialCaption);
+    global.sendToRenderer("request-battery-optimization", {});
+    global.sendToRenderer("download-logger", {
+      caption: initialCaption,
+      totalSegments: 0,
+      currentSegments: 0,
+      epid: AnimeEpId,
+      isPaused: isQueuePaused(),
+    });
+
+    await downloadEpisodeByQuality(
+      Videoconfig,
+      EpNum,
+      directoryPath,
+      Title,
+      AnimeEpId,
+      SubDub,
+      malid,
+      animeId,
+    );
+  } finally {
+    _bgDownloadDepth--;
+  }
+}
+
+// Download episode by quality
+async function downloadEpisodeByQuality(
+  config,
+  episodeNumber,
+  directoryName,
+  Title,
+  epid,
+  subdub,
+  malid,
+  animeId,
+) {
+  try {
+    const provider = await providerFetch("Anime", config.Animeprovider);
+    let resolvedEpid = epid;
+    if (subdub && !epid.endsWith(`-${subdub}`) && !epid.endsWith("-both")) {
+      resolvedEpid = `${epid}-${subdub}`;
+    }
+    let sourcesArray = null;
+    let fetchAttempt = 0;
+    const maxFetchAttempts = 3;
+    let lastFetchErr = null;
+
+    while (fetchAttempt < maxFetchAttempts && !sourcesArray) {
+      fetchAttempt++;
+      try {
+        sourcesArray = await fetchEpisodeSources(
+          provider,
+          resolvedEpid,
+          subdub,
+        );
+      } catch (err) {
+        lastFetchErr = err;
+        logger.warn(
+          `[queueWorker] Scraper stream fetch attempt ${fetchAttempt}/${maxFetchAttempts} failed for ${resolvedEpid}: ${err.message}`,
+        );
+        if (fetchAttempt < maxFetchAttempts) {
+          await new Promise((resolve) =>
+            setTimeout(resolve, fetchAttempt * 3000),
+          );
+        }
+      }
+    }
+
+    if (!sourcesArray && lastFetchErr) {
+      throw new Error(`SCRAPER_TEMPORARY_ERROR: ${lastFetchErr.message}`);
+    }
+
+    const extractSources = (srcObj, prefSubDub) => {
+      if (!srcObj) return [];
+      if (
+        prefSubDub &&
+        Array.isArray(srcObj[prefSubDub]?.sources) &&
+        srcObj[prefSubDub].sources.length > 0
+      ) {
+        return srcObj[prefSubDub].sources;
+      }
+      if (
+        prefSubDub &&
+        Array.isArray(srcObj[prefSubDub]) &&
+        srcObj[prefSubDub].length > 0
+      ) {
+        return srcObj[prefSubDub];
+      }
+      if (Array.isArray(srcObj.sources) && srcObj.sources.length > 0) {
+        return srcObj.sources;
+      }
+      if (Array.isArray(srcObj) && srcObj.length > 0) {
+        return srcObj;
+      }
+      return [
+        ...(Array.isArray(srcObj.sources) ? srcObj.sources : []),
+        ...(Array.isArray(srcObj.sub?.sources)
+          ? srcObj.sub.sources
+          : Array.isArray(srcObj.sub)
+            ? srcObj.sub
+            : []),
+        ...(Array.isArray(srcObj.dub?.sources)
+          ? srcObj.dub.sources
+          : Array.isArray(srcObj.dub)
+            ? srcObj.dub
+            : []),
+        ...(Array.isArray(srcObj.hsub?.sources)
+          ? srcObj.hsub.sources
+          : Array.isArray(srcObj.hsub)
+            ? srcObj.hsub
+            : []),
+      ];
+    };
+
+    let sourcesList = extractSources(sourcesArray, subdub);
+
+    if ((!sourcesList || sourcesList.length === 0) && resolvedEpid !== epid) {
+      sourcesArray = await fetchEpisodeSources(provider, epid, subdub);
+      sourcesList = extractSources(sourcesArray, subdub);
+    }
+
+    let subtitles =
+      sourcesArray?.subtitles ||
+      sourcesArray?.[subdub]?.subtitles ||
+      sourcesArray?.sub?.subtitles ||
+      sourcesArray?.dub?.subtitles ||
+      [];
+
+    const Animeprovider = provider;
+    const sortedSources = sortSourcesByPreferredQuality(
+      sourcesList,
+      config?.quality ?? "1080p",
+    );
+
+    let selectedSource = null;
+
+    for (let i = 0; i < sortedSources.length; i++) {
+      const src = sortedSources[i];
+      if (!src) continue;
+
+      if (src.isUnresolved || !src.url) {
+        try {
+          logger.info(
+            `[Download] Resolving server #${i + 1} "${src.name || src.quality}" for download...`,
+          );
+          const resolved = await processServer(Animeprovider, src);
+          if (resolved && resolved.url) {
+            selectedSource = {
+              ...src,
+              ...resolved,
+              isUnresolved: false,
+            };
+            if (
+              Array.isArray(resolved.subtitles) &&
+              resolved.subtitles.length > 0
+            ) {
+              subtitles = resolved.subtitles;
+            }
+            break;
+          } else {
+            logger.warn(
+              `[Download] Server #${i + 1} "${src.name || src.quality}" resolution failed or returned no stream URL. Trying fallback server...`,
+            );
+          }
+        } catch (e) {
+          logger.warn(
+            `[Download] Error resolving server #${i + 1} "${src.name || src.quality}": ${e.message}`,
+          );
+        }
+      } else {
+        const isAlive = await verifyStreamReachability(
+          src.url,
+          src.headers || {},
+        );
+        if (isAlive.ok) {
+          selectedSource = src;
+          break;
+        } else {
+          logger.warn(
+            `[Download] Server #${i + 1} "${src.name || src.quality}" stream verification failed: ${isAlive.message}. Trying fallback server...`,
+          );
+        }
+      }
+    }
+
+    if (!selectedSource || !selectedSource.url) {
+      throw new Error(
+        "Failed to resolve stream link for download across all available servers",
+      );
+    }
+
+    try {
+      const streamDomain = new URL(selectedSource.url).hostname;
+      const ref =
+        selectedSource.headers?.Referer ||
+        selectedSource.headers?.referer ||
+        "https://megaplay.buzz/";
+      if (global.setDynamicReferer) {
+        global.setDynamicReferer(streamDomain, ref);
+        global.setFallbackReferer(ref);
+      }
+    } catch (e) {}
+
+    const dlQuality =
+      selectedSource.quality && selectedSource.quality.match(/\d+p/)
+        ? selectedSource.quality
+        : config?.quality || "1080p";
+
+    const currentSettings = (await settingfetch()) || {};
+    const preferredLangs = config?.preferredSubtitleLanguages ||
+      currentSettings?.preferredSubtitleLanguages || ["English"];
+
+    let filteredSubtitles = (subdub === "hsub" ? [] : subtitles || []).filter(
+      (sub) => {
+        if (!sub || typeof sub !== "object") return false;
+        const subLang = sub.lang || sub.label || sub.language;
+        return (
+          subLang !== "Thumbnails" &&
+          isLanguagePreferred(subLang, preferredLangs)
+        );
+      },
+    );
+    if (
+      subdub !== "hsub" &&
+      preferredLangs.length > 0 &&
+      filteredSubtitles.length === 0 &&
+      Array.isArray(subtitles) &&
+      subtitles.length > 0
+    ) {
+      filteredSubtitles = subtitles.filter((sub) => {
+        if (!sub || typeof sub !== "object") return false;
+        const subLang = sub.lang || sub.label || sub.language;
+        return subLang !== "Thumbnails";
+      });
+    }
+
+    await downloadVideo(
+      selectedSource.url,
+      directoryName,
+      episodeNumber,
+      dlQuality,
+      Title,
+      epid,
+      filteredSubtitles,
+      subdub === "hsub"
+        ? false
+        : config?.mergeSubtitles === true
+          ? true
+          : false,
+      (config?.subtitleFormat ?? "vtt") === "srt",
+      selectedSource.headers ?? {},
+    );
+
+    if (malid && animeId) {
+      try {
+        await updateHistory({
+          type: "Anime",
+          mediaId: animeId,
+          malid: malid,
+          number: episodeNumber,
+          currentTime: 0,
+          duration: 0,
+        });
+      } catch (_) {}
+      try {
+        const epNum = parseFloat(episodeNumber);
+        if (!isNaN(epNum)) {
+          const aniskipUrl = `https://api.aniskip.com/v2/skip-times/${malid}/${Number(epNum)}?types[]=op&types[]=ed&types[]=mixed-op&types[]=mixed-ed&episodeLength=1440`;
+          const res = await axios.get(aniskipUrl);
+          if (res.status === 200) {
+            const resData = res.data;
+            if (resData && resData.found && resData.results) {
+              const normalized = resData.results.map((st) => ({
+                ...st,
+                skip_type: st.skipType || st.skip_type,
+                interval: {
+                  start_time: st.interval.startTime ?? st.interval.start_time,
+                  end_time: st.interval.endTime ?? st.interval.end_time,
+                },
+              }));
+
+              try {
+                const rawEpNum = Number(epNum);
+                const cleanEpNum =
+                  !isNaN(rawEpNum) && Number.isInteger(rawEpNum)
+                    ? Math.trunc(rawEpNum)
+                    : rawEpNum;
+                await run(
+                  "INSERT OR REPLACE INTO SkipTimes (anime_id, episode_number, skip_times) VALUES (?, ?, ?)",
+                  [animeId, cleanEpNum, JSON.stringify(normalized)],
+                );
+                logger.info(
+                  `[queueWorker] Saved skip times to SkipTimes DB for ${Title} EP ${cleanEpNum}`,
+                );
+              } catch (errDb) {
+                logger.error(
+                  `[queueWorker] Failed to save skip times to SkipTimes DB: ${errDb.message}`,
+                );
+              }
+            }
+          }
+        }
+      } catch (err) {
+        logger.warn(`[queueWorker] Failed to save skip times: ${err.message}`);
+      }
+    }
+  } catch (err) {
+    throw err;
+  }
+}
+
+// download video
+async function downloadVideo(
+  Url,
+  directoryPath,
+  episodeNumber,
+  quality,
+  Title,
+  epid,
+  subtitles = [],
+  MergeSubtitles,
+  subtitleFormat = false,
+  headers = {},
+) {
+  try {
+    const qualStr = quality ? ` ( ${quality} )` : "";
+    const cleanEp =
+      episodeNumber !== undefined &&
+      episodeNumber !== null &&
+      !isNaN(Number(episodeNumber))
+        ? String(Number(episodeNumber))
+        : episodeNumber;
+    await download({
+      directory: directoryPath,
+      Epnum: episodeNumber,
+      streamUrl: Url,
+      quality: quality,
+      caption: `Downloading EP ${cleanEp} ${Title}${qualStr}`,
+      EpID: epid,
+      subtitles: subtitles,
+      MergeSubtitles: MergeSubtitles,
+      ChangeTosrt: subtitleFormat,
+      headers: headers,
+    });
+  } catch (err) {
+    if (err.message === "Queue Paused" || err.message === "Episode Cancelled") {
+      throw err;
+    }
+    const errMsg = err?.message || String(err);
+    throw new Error(`Failed To Download: ${errMsg}`);
+  }
+}
+
+// start downloadloading manga
+async function downloadMangaChapters(
+  config,
+  Title,
+  EpNum,
+  ChapterId,
+  ChapterTitle,
+  mediaId,
+) {
+  _bgDownloadDepth++;
+  try {
+    const qualStr = config?.quality ? ` ( ${config.quality} )` : "";
+    const cleanEp =
+      EpNum !== undefined && EpNum !== null && !isNaN(Number(EpNum))
+        ? String(Number(EpNum))
+        : EpNum;
+    const chpStr = cleanEp || ChapterTitle || "";
+    const initialCaption = `Downloading CHP ${chpStr} ${Title}${qualStr}`;
+    await updateQueue(ChapterId, 1, 0, initialCaption);
+    global.sendToRenderer("download-logger", {
+      caption: initialCaption,
+      totalSegments: 1,
+      currentSegments: 0,
+      epid: ChapterId,
+      isPaused: isQueuePaused(),
+    });
+
+    const provider = await providerFetch("Manga", config?.Mangaprovider);
+    const ChapterData = await MangaChapterFetch(provider, ChapterId);
+
+    if (!ChapterData || ChapterData?.length < 1) {
+      throw new Error("No Image Found For This Chapter!");
+    }
+
+    const directoryPath = await MangaDir(
+      Title,
+      config?.CustomDownloadLocation,
+      mediaId,
+    );
+
+    const sanitizedChapterName = (ChapterTitle || `Chapter ${EpNum}`).replace(
+      /[<>:"/\\|?*]/g,
+      "-",
+    );
+    const outputFile = path.join(directoryPath, `${sanitizedChapterName}.cbz`);
+    await DownloadChapters(
+      outputFile,
+      ChapterData,
+      Title,
+      ChapterTitle,
+      ChapterId,
+      EpNum,
+      config?.quality,
+    );
+  } finally {
+    _bgDownloadDepth--;
+  }
+}
+
+global.getQueueNumber = () => {
+  return AnimeQueue?.length ?? 0;
+};
+
+module.exports = {
+  addToQueue,
+  addMultipleToQueue,
+  loadQueue,
+  removeQueue,
+  removeMultipleFromQueue,
+  updateQueue,
+  getQueue,
+  checkEpisodeDownload,
+  SaveQueueData,
+  continuousExecution,
+  isQueuePaused,
+  pauseQueue,
+  resumeQueue,
+};

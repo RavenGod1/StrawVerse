@@ -21,9 +21,12 @@ local.properties
 **/.gradle/
 **/build/
 capacitor/www/nodejs/main.bundle.js
+capacitor/www/nodejs/*.md
 *.jks
 *.keystore
 *.p12
 *.pepk
 **/release/
 capacitor/android/app/release/
+node_modules
+app.log

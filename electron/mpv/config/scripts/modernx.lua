@@ -91,6 +91,7 @@ local icons = {
 local speed_menu = {
     active = false,
     selected_index = 4,
+    last_closed_time = nil,
     speeds = { 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0 }
 }
 
@@ -142,8 +143,29 @@ local language = {
 		nochapter = 'Brak rozdziałów.',
 	}
 }
--- read options from config and command-line
 opt.read_options(user_opts, 'osc', function(list) update_options(list) end)
+
+local function is_autoskip_intro_enabled()
+    local opt_val = mp.get_opt("modernx-autoskip_intro") or mp.get_opt("osc-autoskip_intro")
+    if opt_val ~= nil then
+        return (opt_val == "yes" or opt_val == "true" or opt_val == true)
+    end
+    if type(user_opts.autoskip_intro) == "string" then
+        return (user_opts.autoskip_intro == "yes" or user_opts.autoskip_intro == "true")
+    end
+    return user_opts.autoskip_intro == true
+end
+
+local function is_autoplay_next_enabled()
+    local opt_val = mp.get_opt("modernx-autoplay_next") or mp.get_opt("osc-autoplay_next")
+    if opt_val ~= nil then
+        return (opt_val == "yes" or opt_val == "true" or opt_val == true)
+    end
+    if type(user_opts.autoplay_next) == "string" then
+        return (user_opts.autoplay_next == "yes" or user_opts.autoplay_next == "true")
+    end
+    return user_opts.autoplay_next == true
+end
 -- apply lang opts
 local texts = language[user_opts.language]
 local osc_param = { -- calculated by osc_init()
@@ -209,6 +231,10 @@ local state = {
     chapter_list = {},                      -- sorted by time
     loading_active = false,
     loading_start_time = 0,
+    loading_message = nil,
+    switching_episode = false,
+    paused_for_cache = false,
+    seeking = false,
     resume_pos = nil,
     has_next = "yes",
     has_prev = "yes",
@@ -519,6 +545,9 @@ end
 local function get_all_subtitles()
     local subs_str = mp.get_opt("modernx-subtitles")
     if not subs_str or subs_str == "" then
+        subs_str = mp.get_property("user-data/strawverse-subtitles")
+    end
+    if not subs_str or subs_str == "" then
         return nil
     end
     
@@ -528,6 +557,30 @@ local function get_all_subtitles()
     end
     
     return #subs > 0 and subs or nil
+end
+
+local function get_op_start()
+    local opt = mp.get_opt("modernx-op-start")
+    if opt and tonumber(opt) then return tonumber(opt) end
+    return mp.get_property_number("user-data/strawverse-op-start", 0)
+end
+
+local function get_op_end()
+    local opt = mp.get_opt("modernx-op-end")
+    if opt and tonumber(opt) then return tonumber(opt) end
+    return mp.get_property_number("user-data/strawverse-op-end", 0)
+end
+
+local function get_ed_start()
+    local opt = mp.get_opt("modernx-ed-start")
+    if opt and tonumber(opt) then return tonumber(opt) end
+    return mp.get_property_number("user-data/strawverse-ed-start", 0)
+end
+
+local function get_ed_end()
+    local opt = mp.get_opt("modernx-ed-end")
+    if opt and tonumber(opt) then return tonumber(opt) end
+    return mp.get_property_number("user-data/strawverse-ed-end", 0)
 end
 
 local function get_server_sources()
@@ -626,7 +679,10 @@ local function select_server()
             request_tick()
         else
             state.loading_active = true
+            state.switching_episode = true
+            state.loading_message = "Changing server..."
             state.loading_start_time = mp.get_time()
+            mp.set_property("pause", "yes")
             show_osc()
 
             state.resume_pos = mp.get_property_number("time-pos", 0)
@@ -733,7 +789,17 @@ local function draw_loading_spinner(ass)
     local radius = 28
     local thickness = 4
     local segments = 12
-    local elapsed = mp.get_time() - state.loading_start_time
+    local elapsed = mp.get_time() - (state.loading_start_time or 0)
+
+    -- Auto-clear spinner after 30 seconds if stream fails to avoid freezing UI
+    if elapsed > 30 then
+        state.loading_active = false
+        state.switching_episode = false
+        state.loading_message = nil
+        request_tick()
+        return
+    end
+
     local active_segment = math.floor(elapsed * 8) % segments
 
     -- Semi-transparent dark backdrop
@@ -765,12 +831,20 @@ local function draw_loading_spinner(ass)
         ass:merge(dot)
     end
 
+    -- Draw loading message under the spinner
+    if state.loading_message and state.loading_message ~= "" then
+        ass:new_event()
+        ass:append(string.format("{\\pos(%f,%f)\\an8\\fn%s\\fs%d\\b1\\bord2\\3c&H000000&\\1c&HFFFFFF&}%s",
+            cx, cy + radius + 16, "sans-serif", 18, state.loading_message))
+    end
+
     -- Keep animating
     request_tick()
 end
 
 close_speed_menu = function()
     if not speed_menu.active then return end
+    speed_menu.last_closed_time = mp.get_time()
     speed_menu.active = false
     mp.remove_key_binding("speed-menu-up")
     mp.remove_key_binding("speed-menu-down")
@@ -795,8 +869,16 @@ local function select_speed()
 end
 
 local function open_speed_menu()
-    if speed_menu.active then return end
+    local now = mp.get_time()
+    if speed_menu.active then
+        close_speed_menu()
+        return
+    elseif speed_menu.last_closed_time and (now - speed_menu.last_closed_time < 0.4) then
+        speed_menu.last_closed_time = nil
+        return
+    end
     close_server_menu()
+    close_sub_menu()
     show_osc()
     
     speed_menu.active = true
@@ -866,12 +948,16 @@ mp.add_forced_key_binding("]", "speed-step-up", function() step_speed(1) end)
 mp.add_forced_key_binding("[", "speed-step-down", function() step_speed(-1) end)
 
 local function draw_speed_menu(ass)
-    if not speed_menu.active then return end
-    local w = 120
-    local item_h = 24
+    if not speed_menu.active or not speed_menu.speeds or #speed_menu.speeds == 0 then
+        return
+    end
+    
+    local w = 160
+    local item_h = 28
     local h = 30 + item_h * #speed_menu.speeds + 10
     local menu_x = osc_param.playresx - w - 15
     local menu_y = osc_param.playresy - h - 55
+    if menu_y < 10 then menu_y = 10 end
     
     -- Card background box
     ass:new_event()
@@ -893,9 +979,9 @@ local function draw_speed_menu(ass)
     for idx, s in ipairs(speed_menu.speeds) do
         local item_y = menu_y + 30 + item_h * (idx - 1)
         local is_hovered = (mx >= menu_x + 6 and mx <= menu_x + w - 6 and my >= item_y and my <= item_y + item_h)
-        local is_current = (math.abs(s - current_speed) < 0.01)
+        local is_selected = (idx == speed_menu.selected_index) or (math.abs(s - current_speed) < 0.01)
         
-        if is_hovered or is_current then
+        if is_hovered or is_selected then
             ass:new_event()
             local sel_ass = assdraw.ass_new()
             sel_ass:append(string.format("{\\pos(%f,%f)\\an7\\q2\\margl0\\margr0\\margv0\\bord0\\1c&H303030&\\1a&H00&}", menu_x + 6, item_y + 1))
@@ -905,14 +991,14 @@ local function draw_speed_menu(ass)
             ass:merge(sel_ass)
         end
         
-        if is_current then
+        if is_selected then
             ass:new_event()
-            ass:append(string.format("{\\pos(%f,%f)\\an5\\q2\\margl0\\margr0\\margv0\\blur0\\bord0\\1c&HFFFFFF&\\fs11\\fnMaterial-Design-Iconic-Font}", menu_x + w - 18, item_y + item_h/2))
+            ass:append(string.format("{\\pos(%f,%f)\\an5\\q2\\margl0\\margr0\\margv0\\blur0\\bord0\\1c&HFFFFFF&\\fs12\\fnMaterial-Design-Iconic-Font}", menu_x + w - 18, item_y + item_h/2))
             ass:append("\239\137\171")
         end
         
-        local text_color = (is_current or is_hovered) and "\\1c&HFFFFFF&" or "\\1c&HB0B0B0&"
-        local font_weight = is_current and "\\b1" or "\\b0"
+        local text_color = (is_selected or is_hovered) and "\\1c&HFFFFFF&" or "\\1c&HB0B0B0&"
+        local font_weight = is_selected and "\\b1" or "\\b0"
         
         ass:new_event()
         ass:append(string.format("{\\pos(%f,%f)\\an4\\q2\\margl0\\margr0\\margv0\\blur0\\bord0%s%s\\fs12\\fn%s}", menu_x + 16, item_y + item_h/2, text_color, font_weight, user_opts.font or "sans-serif"))
@@ -993,6 +1079,23 @@ end
 
 local function select_sub()
     if not sub_menu.active then return end
+    local has_tracks = (#tracks_osc.sub > 0)
+    local total_items = has_tracks and (#tracks_osc.sub + 2) or 2
+    if sub_menu.selected_index == total_items then
+        close_sub_menu()
+        mp.set_property("user-data/strawverse-action", "open-subtitle-settings")
+        return
+    end
+    if not has_tracks then
+        close_sub_menu()
+        local subdub = mp.get_opt("modernx-subdub") or "sub"
+        if subdub == "dub" then
+            mp.osd_message("Dub Audio (No subtitle track)", 2)
+        else
+            mp.osd_message("English subtitles are hardcoded into video", 2)
+        end
+        return
+    end
     if sub_menu.selected_index == 1 then
         mp.set_property("sub", "no")
     else
@@ -1014,19 +1117,24 @@ local function open_sub_menu()
     update_tracklist()
     sub_menu.active = true
     
-    local current_sub = mp.get_property("sub")
-    sub_menu.selected_index = 1
-    if current_sub ~= "no" and current_sub ~= nil then
-        local current_id = tonumber(current_sub)
-        for idx, track in ipairs(tracks_osc.sub) do
-            if track.id == current_id then
-                sub_menu.selected_index = idx + 1
-                break
+    local has_tracks = (#tracks_osc.sub > 0)
+    local total_items = has_tracks and (#tracks_osc.sub + 2) or 2
+    
+    if not has_tracks then
+        sub_menu.selected_index = 1
+    else
+        local current_sub = mp.get_property("sub")
+        sub_menu.selected_index = 1
+        if current_sub ~= "no" and current_sub ~= nil then
+            local current_id = tonumber(current_sub)
+            for idx, track in ipairs(tracks_osc.sub) do
+                if track.id == current_id then
+                    sub_menu.selected_index = idx + 1
+                    break
+                end
             end
         end
     end
-    
-    local total_items = #tracks_osc.sub + 1
     
     mp.add_forced_key_binding("UP", "sub-menu-up", function()
         sub_menu.selected_index = sub_menu.selected_index - 1
@@ -1049,30 +1157,44 @@ local function draw_sub_menu(ass)
     update_tracklist()
     
     local custom_subs = get_all_subtitles()
-    local items = { "Off" }
-    local ext_count = 0
-    for n = 1, #tracks_osc.sub do
-        local tr = tracks_osc.sub[n]
-        local name = nil
-        if tr.external then
-            ext_count = ext_count + 1
-            if custom_subs and custom_subs[ext_count] and custom_subs[ext_count].name then
-                name = custom_subs[ext_count].name
-            end
-        elseif custom_subs and custom_subs[n] and custom_subs[n].name then
-            name = custom_subs[n].name
-        end
-        if not name or name == "" then
-            name = tr.title or tr.lang or ("Track " .. n)
-        end
-        table.insert(items, name)
-    end
+    local items = {}
+    local has_tracks = (#tracks_osc.sub > 0)
+    local subdub = mp.get_opt("modernx-subdub") or "sub"
     
-    local w = 160
+    if has_tracks then
+        table.insert(items, "Off")
+        local ext_count = 0
+        for n = 1, #tracks_osc.sub do
+            local tr = tracks_osc.sub[n]
+            local name = nil
+            if tr.external then
+                ext_count = ext_count + 1
+                if custom_subs and custom_subs[ext_count] and custom_subs[ext_count].name then
+                    name = custom_subs[ext_count].name
+                end
+            elseif custom_subs and custom_subs[n] and custom_subs[n].name then
+                name = custom_subs[n].name
+            end
+            if not name or name == "" then
+                name = tr.title or tr.lang or ("Track " .. n)
+            end
+            table.insert(items, name)
+        end
+    else
+        if subdub == "dub" then
+            table.insert(items, "No Subtitles (Dub)")
+        else
+            table.insert(items, "Hardsubbed (English)")
+        end
+    end
+    table.insert(items, "Subtitle Settings...")
+    
+    local w = 185
     local item_h = 28
     local h = 30 + item_h * #items + 10
     local menu_x = osc_param.playresx - w - 15
     local menu_y = osc_param.playresy - h - 55
+    if menu_y < 10 then menu_y = 10 end
     
     -- Card background box
     ass:new_event()
@@ -1094,8 +1216,9 @@ local function draw_sub_menu(ass)
         local item_y = menu_y + 30 + item_h * (idx - 1)
         local is_hovered = (mx >= menu_x + 6 and mx <= menu_x + w - 6 and my >= item_y and my <= item_y + item_h)
         local is_selected = (idx == sub_menu.selected_index)
+        local is_settings = (idx == #items)
         
-        if is_hovered or is_selected then
+        if is_hovered or (is_selected and not is_settings) then
             ass:new_event()
             local sel_ass = assdraw.ass_new()
             sel_ass:append(string.format("{\\pos(%f,%f)\\an7\\q2\\margl0\\margr0\\margv0\\bord0\\1c&H303030&\\1a&H00&}", menu_x + 6, item_y + 1))
@@ -1105,14 +1228,19 @@ local function draw_sub_menu(ass)
             ass:merge(sel_ass)
         end
         
-        if is_selected then
+        if is_selected and not is_settings then
             ass:new_event()
             ass:append(string.format("{\\pos(%f,%f)\\an5\\q2\\margl0\\margr0\\margv0\\blur0\\bord0\\1c&HFFFFFF&\\fs12\\fnMaterial-Design-Iconic-Font}", menu_x + w - 18, item_y + item_h/2))
             ass:append("\239\137\171")
         end
         
-        local text_color = (is_selected or is_hovered) and "\\1c&HFFFFFF&" or "\\1c&HB0B0B0&"
-        local font_weight = is_selected and "\\b1" or "\\b0"
+        local text_color = "\\1c&HB0B0B0&"
+        if is_settings then
+            text_color = is_hovered and "\\1c&H8B5CF6&" or "\\1c&HA855F7&"
+        elseif is_selected or is_hovered then
+            text_color = "\\1c&HFFFFFF&"
+        end
+        local font_weight = (is_selected or is_settings) and "\\b1" or "\\b0"
         
         ass:new_event()
         ass:append(string.format("{\\pos(%f,%f)\\an4\\q2\\margl0\\margr0\\margv0\\blur0\\bord0%s%s\\fs12\\fn%s}", menu_x + 16, item_y + item_h/2, text_color, font_weight, user_opts.font or "sans-serif"))
@@ -1378,7 +1506,9 @@ function render_elements(master_ass)
         
         if element.name == "skip_intro" or element.name == "skip_intro_bg" then
             local val = mp.get_property_number("time-pos", 0)
-            local show = (val >= 83 and val < 141) and not user_opts.autoskip_intro
+            local op_start = get_op_start()
+            local op_end = get_op_end()
+            local show = (op_start > 0 and op_end > 0 and val >= op_start and val < op_end) and not is_autoskip_intro_enabled()
             element.enabled = show
             if not show then
                 render_it = false
@@ -1408,11 +1538,7 @@ function render_elements(master_ass)
         end
 
         if element.name == "cy_sub" then
-            local show = (#tracks_osc.sub > 0)
-            element.enabled = show
-            if not show then
-                render_it = false
-            end
+            element.enabled = true
         end
 
         if render_it then
@@ -1511,10 +1637,10 @@ function render_elements(master_ass)
                 local dur = mp.get_property_number("duration", 0)
                 if dur > 0 then
                     local scale_start = element.slider.min.ele_pos
-                    local intro_start = 83
-                    local intro_end = 141
-                    local outro_start = 1320
-                    local outro_end = dur
+                    local op_start = get_op_start()
+                    local op_end = get_op_end()
+                    local ed_start = get_ed_start()
+                    local ed_end = get_ed_end()
 
                     local scale_width = element.slider.max.ele_pos - scale_start
 
@@ -1523,10 +1649,10 @@ function render_elements(master_ass)
                         return scale_start + pct * scale_width
                     end
 
-                    -- Draw Intro (Light Purple)
-                    if intro_start < dur then
-                        local x1 = get_x_for_time(intro_start)
-                        local x2 = get_x_for_time(math.min(intro_end, dur))
+                    -- Draw OP Intro Marker (Light Purple)
+                    if op_start > 0 and op_end > op_start and op_start < dur then
+                        local x1 = get_x_for_time(op_start)
+                        local x2 = get_x_for_time(math.min(op_end, dur))
                         elem_ass:new_event()
                         elem_ass:merge(element.style_ass)
                         elem_ass:append("{\\1c&HF594B1&}")
@@ -1534,10 +1660,10 @@ function render_elements(master_ass)
                         elem_ass:rect_cw(x1, y1, x2, y2)
                     end
 
-                    -- Draw Outro (Light Purple)
-                    if outro_start < dur then
-                        local x1 = get_x_for_time(outro_start)
-                        local x2 = get_x_for_time(outro_end)
+                    -- Draw ED Outro Marker (Light Purple)
+                    if ed_start > 0 and ed_end > ed_start and ed_start < dur then
+                        local x1 = get_x_for_time(ed_start)
+                        local x2 = get_x_for_time(math.min(ed_end, dur))
                         elem_ass:new_event()
                         elem_ass:merge(element.style_ass)
                         elem_ass:append("{\\1c&HF594B1&}")
@@ -2048,20 +2174,23 @@ layouts = function ()
     lo.slider.tooltip_style = osc_styles.Tooltip
     lo.slider.tooltip_an = 2
 
-    local showjump = user_opts.showjump
-    local offset = showjump and 60 or 0
+    local showjump = user_opts.showjump and (osc_geo.w >= 540)
+    local btn_spacing = 60
+    if osc_geo.w < 820 then
+        btn_spacing = math.max(34, math.floor((osc_geo.w - 380) / 7))
+    end
+    local offset = showjump and btn_spacing or 0
     
     --
     -- Volumebar
     --
     lo = new_element('volumebarbg', 'box')
-    lo.visible = (osc_param.playresx >= 750) and user_opts.volumecontrol
+    lo.visible = (osc_param.playresx >= 720) and user_opts.volumecontrol
     lo = add_layout('volumebarbg')
     lo.geometry = {x = 55, y = refY - 40, an = 4, w = 80, h = 2}
     lo.layer = 13
     lo.style = osc_styles.VolumebarBg
 
-    
     lo = add_layout('volumebar')
     lo.geometry = {x = 55, y = refY - 40, an = 4, w = 80, h = 8}
     lo.style = osc_styles.VolumebarFg
@@ -2071,17 +2200,16 @@ layouts = function ()
 
 	-- buttons
     lo = add_layout('pl_prev')
-    lo.geometry = {x = refX - 120 - offset, y = refY - 40 , an = 5, w = 30, h = 24}
+    lo.geometry = {x = refX - (2 * btn_spacing) - offset, y = refY - 40 , an = 5, w = 30, h = 24}
     lo.style = osc_styles.Ctrl2
 
 	lo = add_layout('skipback')
-    lo.geometry = {x = refX - 60 - offset, y = refY - 40 , an = 5, w = 30, h = 24}
+    lo.geometry = {x = refX - btn_spacing - offset, y = refY - 40 , an = 5, w = 30, h = 24}
     lo.style = osc_styles.Ctrl2
-
 
     if showjump then
         lo = add_layout('jumpback')
-        lo.geometry = {x = refX - 60, y = refY - 40 , an = 5, w = 30, h = 24}
+        lo.geometry = {x = refX - btn_spacing, y = refY - 40 , an = 5, w = 30, h = 24}
         lo.style = osc_styles.Ctrl2
     end
 			
@@ -2091,7 +2219,7 @@ layouts = function ()
 
     if showjump then
         lo = add_layout('jumpfrwd')
-        lo.geometry = {x = refX + 60, y = refY - 40 , an = 5, w = 30, h = 24}
+        lo.geometry = {x = refX + btn_spacing, y = refY - 40 , an = 5, w = 30, h = 24}
 
         -- HACK: jumpfrwd's icon must be mirrored for nonstandard # of seconds
         -- as the font only has an icon without a number for rewinding
@@ -2099,19 +2227,17 @@ layouts = function ()
     end
 
     lo = add_layout('skipfrwd')
-    lo.geometry = {x = refX + 60 + offset, y = refY - 40 , an = 5, w = 30, h = 24}
+    lo.geometry = {x = refX + btn_spacing + offset, y = refY - 40 , an = 5, w = 30, h = 24}
     lo.style = osc_styles.Ctrl2	
 
     lo = add_layout('pl_next')
-    lo.geometry = {x = refX + 120 + offset, y = refY - 40 , an = 5, w = 30, h = 24}
+    lo.geometry = {x = refX + (2 * btn_spacing) + offset, y = refY - 40 , an = 5, w = 30, h = 24}
     lo.style = osc_styles.Ctrl2
-
 
 	-- Time
     lo = add_layout('tc_left')
     lo.geometry = {x = 25, y = refY - 84, an = 7, w = 64, h = 20}
     lo.style = osc_styles.Time	
-	
 
     lo = add_layout('tc_right')
     lo.geometry = {x = osc_geo.w - 25 , y = refY -84, an = 9, w = 64, h = 20}
@@ -2127,17 +2253,26 @@ layouts = function ()
     lo.style = osc_styles.Ctrl3
     lo.visible = false
 
+    local right_step = math.min(50, math.max(34, math.floor((osc_geo.w - refX - 160) / 4)))
     local right_btn_x = osc_geo.w - 37
-    local has_subs = (#tracks_osc.sub > 0)
-    if has_subs then
-        lo = add_layout('cy_sub')
+
+    -- cy_sub (always allocated its own distinct slot)
+    lo = add_layout('cy_sub')
+    lo.geometry = {x = right_btn_x, y = refY - 40, an = 5, w = 40, h = 40}
+    lo.style = osc_styles.Ctrl3
+    lo.visible = (osc_param.playresx >= 460)
+    right_btn_x = right_btn_x - right_step
+
+    local quality_srcs = get_quality_sources()
+    if quality_srcs ~= nil and #quality_srcs > 0 then
+        lo = add_layout('cy_quality')
         lo.geometry = {x = right_btn_x, y = refY - 40, an = 5, w = 40, h = 40}
         lo.style = osc_styles.Ctrl3
-        lo.visible = (osc_param.playresx >= 600)
-        right_btn_x = right_btn_x - 50
+        lo.visible = (osc_param.playresx >= 540)
+        right_btn_x = right_btn_x - right_step
     else
-        lo = add_layout('cy_sub')
-        lo.geometry = {x = osc_geo.w - 87, y = refY - 40, an = 5, w = 40, h = 40}
+        lo = add_layout('cy_quality')
+        lo.geometry = {x = -1000, y = -1000, an = 5, w = 0, h = 0}
         lo.style = osc_styles.Ctrl3
         lo.visible = false
     end
@@ -2147,25 +2282,11 @@ layouts = function ()
         lo = add_layout('cy_server')
         lo.geometry = {x = right_btn_x, y = refY - 40, an = 5, w = 40, h = 40}
         lo.style = osc_styles.Ctrl3
-        lo.visible = (osc_param.playresx >= 600)
-        right_btn_x = right_btn_x - 50
+        lo.visible = (osc_param.playresx >= 580)
+        right_btn_x = right_btn_x - right_step
     else
         lo = add_layout('cy_server')
-        lo.geometry = {x = osc_geo.w - 137, y = refY - 40, an = 5, w = 40, h = 40}
-        lo.style = osc_styles.Ctrl3
-        lo.visible = false
-    end
-
-    local quality_srcs = get_quality_sources()
-    if quality_srcs ~= nil and #quality_srcs > 0 then
-        lo = add_layout('cy_quality')
-        lo.geometry = {x = right_btn_x, y = refY - 40, an = 5, w = 40, h = 40}
-        lo.style = osc_styles.Ctrl3
-        lo.visible = (osc_param.playresx >= 600)
-        right_btn_x = right_btn_x - 50
-    else
-        lo = add_layout('cy_quality')
-        lo.geometry = {x = osc_geo.w - 137, y = refY - 40, an = 5, w = 40, h = 40}
+        lo.geometry = {x = -1000, y = -1000, an = 5, w = 0, h = 0}
         lo.style = osc_styles.Ctrl3
         lo.visible = false
     end
@@ -2173,12 +2294,12 @@ layouts = function ()
     lo = add_layout('cy_speed')
     lo.geometry = {x = right_btn_x, y = refY - 40, an = 5, w = 40, h = 40}
     lo.style = osc_styles.Ctrl3
-    lo.visible = (osc_param.playresx >= 600)
+    lo.visible = (osc_param.playresx >= 460)
 
     lo = add_layout('vol_ctrl')
     lo.geometry = {x = 37, y = refY - 40, an = 5, w = 24, h = 24}
     lo.style = osc_styles.Ctrl3
-    lo.visible = (osc_param.playresx >= 650)    
+    lo.visible = (osc_param.playresx >= 460)    
 
 	lo = add_layout('tog_info')
     lo.geometry = {x = 25, y = 20, an = 5, w = 24, h = 24}
@@ -2288,7 +2409,11 @@ function osc_init()
                     mp.commandv('playlist-prev', 'weak')
                 else
                     state.loading_active = true
+                    state.switching_episode = true
+                    state.loading_message = "Loading previous episode..."
                     state.loading_start_time = mp.get_time()
+                    mp.set_property("pause", "yes")
+                    show_osc()
                     request_tick()
                     mp.set_property("user-data/strawverse-action", "prev")
                 end
@@ -2309,7 +2434,11 @@ function osc_init()
                     mp.commandv('playlist-next', 'weak')
                 else
                     state.loading_active = true
+                    state.switching_episode = true
+                    state.loading_message = "Loading next episode..."
                     state.loading_start_time = mp.get_time()
+                    mp.set_property("pause", "yes")
+                    show_osc()
                     request_tick()
                     mp.set_property("user-data/strawverse-action", "next")
                 end
@@ -2474,10 +2603,12 @@ function osc_init()
                 
     --cy_sub
     ne = new_element('cy_sub', 'button')
-    ne.enabled = (#tracks_osc.sub > 0)
-    ne.off = (get_track('sub') == 0)
-    ne.visible = (osc_param.playresx >= 600)
+    ne.enabled = true
+    ne.off = false
+    ne.visible = (osc_param.playresx >= 460)
     ne.content = icons.sub
+    ne.tooltip_style = nil
+    ne.tooltipF = nil
     ne.eventresponder['mbtn_left_down'] = function () end
     ne.eventresponder['mbtn_left_up'] = function ()
         if sub_menu.active then
@@ -2494,7 +2625,11 @@ function osc_init()
     ne.tooltipF = nil
     ne.eventresponder['mbtn_left_down'] = function () end
     ne.eventresponder['mbtn_left_up'] = function ()
-        open_server_menu("servers")
+        if server_menu.active and server_menu.menu_type == "servers" then
+            close_server_menu()
+        else
+            open_server_menu("servers")
+        end
     end
 
     --cy_quality
@@ -2504,13 +2639,17 @@ function osc_init()
     ne.tooltipF = nil
     ne.eventresponder['mbtn_left_down'] = function () end
     ne.eventresponder['mbtn_left_up'] = function ()
-        open_server_menu("quality")
+        if server_menu.active and server_menu.menu_type == "quality" then
+            close_server_menu()
+        else
+            open_server_menu("quality")
+        end
     end
     
     --cy_speed
     ne = new_element('cy_speed', 'button')
     ne.enabled = true
-    ne.visible = (osc_param.playresx >= 600)
+    ne.visible = true
     ne.content = function ()
         local spd = mp.get_property_number("speed", 1.0)
         if math.abs(spd - 1.0) < 0.01 then
@@ -2519,6 +2658,8 @@ function osc_init()
             return string.format("%.2gx", spd)
         end
     end
+    ne.tooltip_style = nil
+    ne.tooltipF = nil
     ne.eventresponder['mbtn_left_down'] = function () end
     ne.eventresponder['mbtn_left_up'] = function ()
         if speed_menu.active then
@@ -2526,6 +2667,22 @@ function osc_init()
         else
             open_speed_menu()
         end
+    end
+    ne.eventresponder['shift+mbtn_left_up'] = function ()
+        step_speed(-1)
+    end
+    ne.eventresponder['mbtn_right_up'] = function ()
+        if speed_menu.active then
+            close_speed_menu()
+        else
+            open_speed_menu()
+        end
+    end
+    ne.eventresponder['wheel_up_press'] = function ()
+        step_speed(1)
+    end
+    ne.eventresponder['wheel_down_press'] = function ()
+        step_speed(-1)
     end
 
     -- vol_ctrl
@@ -2568,7 +2725,10 @@ function osc_init()
     ne.content = "Skip Intro"
     ne.visible = true
     ne.eventresponder['mbtn_left_up'] = function ()
-        mp.commandv('seek', 141, 'absolute')
+        local op_end = tonumber(mp.get_opt("modernx-op-end")) or 0
+        if op_end > 0 then
+            mp.commandv('seek', op_end, 'absolute')
+        end
     end
 
     -- title
@@ -3113,74 +3273,152 @@ local function element_has_action(element, action)
         element.eventresponder[action]
 end
 
+local menu_click_in_progress = false
+
 function process_event(source, what)
     -- Handle menu drawer clicks if server, speed, or sub menu is active
-    if (server_menu.active or speed_menu.active or sub_menu.active) and source == 'mbtn_left' and what == 'down' then
-        local mx, my = get_virt_mouse_pos()
-        if speed_menu.active then
-            local w = 120
-            local item_h = 24
-            local h = 30 + item_h * #speed_menu.speeds + 10
-            local menu_x = osc_param.playresx - w - 15
-            local menu_y = osc_param.playresy - h - 55
-            
-            if mx >= menu_x and mx <= menu_x + w and my >= menu_y and my <= menu_y + h then
-                if my >= menu_y + 25 then
-                    local idx = math.floor((my - (menu_y + 30)) / item_h) + 1
-                    if idx >= 1 and idx <= #speed_menu.speeds then
-                        speed_menu.selected_index = idx
-                        select_speed()
+    if source == 'mbtn_left' then
+        if what == 'down' then
+            local mx, my = get_virt_mouse_pos()
+
+            -- Check if click is directly on menu buttons
+            local hit_btn = nil
+            for n = 1, #elements do
+                if elements[n] and elements[n].hitbox and elements[n].visible ~= false and elements[n].enabled ~= false then
+                    if elements[n].layout == nil or elements[n].layout.visible ~= false then
+                        local hb = elements[n].hitbox
+                        if mx >= hb.x1 and mx <= hb.x2 and my >= hb.y1 and my <= hb.y2 then
+                            local nname = elements[n].name
+                            if nname == 'cy_speed' or nname == 'cy_sub' or nname == 'cy_server' or nname == 'cy_quality' then
+                                hit_btn = nname
+                                break
+                            end
+                        end
+                    end
+                end
+            end
+
+            if hit_btn == 'cy_speed' then
+                close_server_menu()
+                close_sub_menu()
+                if speed_menu.active then
+                    close_speed_menu()
+                else
+                    open_speed_menu()
+                end
+                menu_click_in_progress = true
+                return
+            elseif hit_btn == 'cy_sub' then
+                close_server_menu()
+                close_speed_menu()
+                if sub_menu.active then
+                    close_sub_menu()
+                else
+                    open_sub_menu()
+                end
+                menu_click_in_progress = true
+                return
+            elseif hit_btn == 'cy_server' then
+                close_speed_menu()
+                close_sub_menu()
+                if server_menu.active and server_menu.menu_type == "servers" then
+                    close_server_menu()
+                else
+                    open_server_menu("servers")
+                end
+                menu_click_in_progress = true
+                return
+            elseif hit_btn == 'cy_quality' then
+                close_speed_menu()
+                close_sub_menu()
+                if server_menu.active and server_menu.menu_type == "quality" then
+                    close_server_menu()
+                else
+                    open_server_menu("quality")
+                end
+                menu_click_in_progress = true
+                return
+            end
+
+            if speed_menu.active then
+                local w = 160
+                local item_h = 28
+                local num_speeds = (speed_menu.speeds and #speed_menu.speeds) or 1
+                local h = 30 + item_h * num_speeds + 10
+                local menu_x = osc_param.playresx - w - 15
+                local menu_y = osc_param.playresy - h - 55
+                if menu_y < 10 then menu_y = 10 end
+                
+                if mx >= menu_x and mx <= menu_x + w and my >= menu_y and my <= menu_y + h then
+                    if my >= menu_y + 25 then
+                        local idx = math.floor((my - (menu_y + 30)) / item_h) + 1
+                        if idx >= 1 and idx <= num_speeds then
+                            speed_menu.selected_index = idx
+                            select_speed()
+                        end
+                    else
+                        close_speed_menu()
                     end
                 else
                     close_speed_menu()
                 end
+                menu_click_in_progress = true
                 return
-            else
-                close_speed_menu()
-            end
-        elseif server_menu.active then
-            local w = 160
-            local item_h = 28
-            local num_sources = (server_menu.sources and #server_menu.sources) or 1
-            local h = 30 + item_h * num_sources + 10
-            local menu_x = osc_param.playresx - w - 15
-            local menu_y = osc_param.playresy - h - 55
-            
-            if mx >= menu_x and mx <= menu_x + w and my >= menu_y and my <= menu_y + h then
-                if my >= menu_y + 25 then
-                    local idx = math.floor((my - (menu_y + 30)) / item_h) + 1
-                    if idx >= 1 and idx <= num_sources then
-                        server_menu.selected_index = idx
-                        select_server()
+            elseif server_menu.active then
+                local w = 160
+                local item_h = 28
+                local num_sources = (server_menu.sources and #server_menu.sources) or 1
+                local h = 30 + item_h * num_sources + 10
+                local menu_x = osc_param.playresx - w - 15
+                local menu_y = osc_param.playresy - h - 55
+                if menu_y < 10 then menu_y = 10 end
+                
+                if mx >= menu_x and mx <= menu_x + w and my >= menu_y and my <= menu_y + h then
+                    if my >= menu_y + 25 then
+                        local idx = math.floor((my - (menu_y + 30)) / item_h) + 1
+                        if idx >= 1 and idx <= num_sources then
+                            server_menu.selected_index = idx
+                            select_server()
+                        end
+                    else
+                        close_server_menu()
                     end
                 else
                     close_server_menu()
                 end
+                menu_click_in_progress = true
                 return
-            else
-                close_server_menu()
-            end
-        elseif sub_menu.active then
-            local w = 160
-            local item_h = 28
-            local total_items = #tracks_osc.sub + 1
-            local h = 30 + item_h * total_items + 10
-            local menu_x = osc_param.playresx - w - 15
-            local menu_y = osc_param.playresy - h - 55
-            
-            if mx >= menu_x and mx <= menu_x + w and my >= menu_y and my <= menu_y + h then
-                if my >= menu_y + 25 then
-                    local idx = math.floor((my - (menu_y + 30)) / item_h) + 1
-                    if idx >= 1 and idx <= total_items then
-                        sub_menu.selected_index = idx
-                        select_sub()
+            elseif sub_menu.active then
+                local w = 185
+                local item_h = 28
+                local has_tracks = (#tracks_osc.sub > 0)
+                local total_items = has_tracks and (#tracks_osc.sub + 2) or 2
+                local h = 30 + item_h * total_items + 10
+                local menu_x = osc_param.playresx - w - 15
+                local menu_y = osc_param.playresy - h - 55
+                if menu_y < 10 then menu_y = 10 end
+                
+                if mx >= menu_x and mx <= menu_x + w and my >= menu_y and my <= menu_y + h then
+                    if my >= menu_y + 25 then
+                        local idx = math.floor((my - (menu_y + 30)) / item_h) + 1
+                        if idx >= 1 and idx <= total_items then
+                            sub_menu.selected_index = idx
+                            select_sub()
+                        end
+                    else
+                        close_sub_menu()
                     end
                 else
                     close_sub_menu()
                 end
+                menu_click_in_progress = true
                 return
-            else
-                close_sub_menu()
+            end
+        elseif what == 'up' then
+            if menu_click_in_progress then
+                menu_click_in_progress = false
+                state.active_element = nil
+                return
             end
         end
     end
@@ -3491,6 +3729,14 @@ mp.observe_property('idle-active', 'bool',
     end
 )
 mp.observe_property('pause', 'bool', pause_state)
+mp.observe_property('paused-for-cache', 'bool', function(name, val)
+    state.paused_for_cache = val or false
+    request_tick()
+end)
+mp.observe_property('seeking', 'bool', function(name, val)
+    state.seeking = val or false
+    request_tick()
+end)
 mp.observe_property('demuxer-cache-state', 'native', cache_state)
 mp.observe_property('vo-configured', 'bool', function(name, val)
     request_tick()
@@ -3505,7 +3751,13 @@ mp.observe_property('speed', 'number', function(name, val)
     request_tick()
 end)
 mp.register_event('file-loaded', function()
+    local was_switching = state.switching_episode
     state.loading_active = false
+    state.switching_episode = false
+    state.loading_message = nil
+    if was_switching then
+        mp.set_property("pause", "no")
+    end
     if state.resume_pos and state.resume_pos > 0 then
         local pos = state.resume_pos
         state.resume_pos = nil
@@ -3515,12 +3767,18 @@ mp.register_event('file-loaded', function()
 end)
 mp.observe_property('playback-time', 'number', function(name, val)
     if val then
-        local op_start = tonumber(mp.get_opt("modernx-op-start")) or 83
-        local op_end = tonumber(mp.get_opt("modernx-op-end")) or 141
-        local ed_start = tonumber(mp.get_opt("modernx-ed-start")) or 1320
+        if state.loading_active then
+            state.loading_active = false
+            state.switching_episode = false
+            state.loading_message = nil
+        end
+
+        local op_start = get_op_start()
+        local op_end = get_op_end()
+        local ed_start = get_ed_start()
 
         -- 1. Auto Skip Intro
-        if user_opts.autoskip_intro then
+        if is_autoskip_intro_enabled() and op_start > 0 and op_end > 0 then
             if val >= op_start and val < op_end then
                 if not state.intro_skipped then
                     state.intro_skipped = true
@@ -3533,7 +3791,7 @@ mp.observe_property('playback-time', 'number', function(name, val)
         end
 
         -- 2. Auto Play Next (when entering Outro)
-        if user_opts.autoplay_next then
+        if is_autoplay_next_enabled() and ed_start > 0 then
             local dur = mp.get_property_number("duration", 0)
             if dur > 0 and val >= ed_start and val < dur then
                 if not state.outro_skipped then
@@ -3542,7 +3800,11 @@ mp.observe_property('playback-time', 'number', function(name, val)
                         mp.commandv("playlist-next")
                     else
                         state.loading_active = true
+                        state.switching_episode = true
+                        state.loading_message = "Loading next episode..."
                         state.loading_start_time = mp.get_time()
+                        mp.set_property("pause", "yes")
+                        show_osc()
                         request_tick()
                         mp.set_property("user-data/strawverse-action", "next")
                     end
@@ -3559,6 +3821,29 @@ mp.observe_property('osd-dimensions', 'native', function(name, val)
     -- (we could use the value instead of re-querying it all the time, but then
     --  we might have to worry about property update ordering)
     request_init_resize()
+end)
+mp.observe_property('user-data/strawverse-op-start', 'string', function(name, val)
+    request_tick()
+end)
+mp.observe_property('user-data/strawverse-subtitles', 'string', function(name, val)
+    request_tick()
+end)
+mp.observe_property('user-data/strawverse-loading', 'string', function(name, val)
+    if val and val ~= "" and val ~= "no" and val ~= "false" then
+        state.loading_active = true
+        state.switching_episode = true
+        state.loading_message = (val ~= "yes" and val ~= "true") and val or nil
+        state.loading_start_time = mp.get_time()
+        mp.set_property("pause", "yes")
+        show_osc()
+        request_tick()
+    elseif val == "" or val == "no" or val == "false" then
+        state.loading_active = false
+        state.switching_episode = false
+        state.loading_message = nil
+        mp.set_property("pause", "no")
+        request_tick()
+    end
 end)
 
 -- mouse show/hide bindings

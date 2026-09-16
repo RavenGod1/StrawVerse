@@ -667,6 +667,8 @@ public class CloudflareBypassPlugin extends Plugin {
         final String image = call.getString("image", "");
         final String malid = call.getData().optString("malid", "");
         final String episodesList = call.getString("episodesList", "[]");
+        final boolean autoSkipIntro = call.getBoolean("autoSkipIntro", false);
+        final boolean autoPlayNextEpisode = call.getBoolean("autoPlayNextEpisode", true);
 
         getActivity().runOnUiThread(new Runnable() {
             @Override
@@ -684,6 +686,8 @@ public class CloudflareBypassPlugin extends Plugin {
                     intent.putExtra("image", image);
                     intent.putExtra("malid", malid);
                     intent.putExtra("episodesList", episodesList);
+                    intent.putExtra("autoSkipIntro", autoSkipIntro);
+                    intent.putExtra("autoPlayNextEpisode", autoPlayNextEpisode);
                     context.startActivity(intent);
                     call.resolve();
                 } catch (Exception e) {

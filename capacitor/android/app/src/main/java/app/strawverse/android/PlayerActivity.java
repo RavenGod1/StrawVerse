@@ -31,6 +31,7 @@ import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -89,6 +90,9 @@ public class PlayerActivity extends Activity {
     };
 
     private android.widget.ImageButton skipButton;
+    private LinearLayout loadingLayout;
+    private ProgressBar loadingSpinner;
+    private TextView loadingTextView;
 
     // Gesture variables
     private GestureDetector gestureDetector;
@@ -111,6 +115,8 @@ public class PlayerActivity extends Activity {
     private int currentSourceIndex = 0;
     private int selectedSubtitleIndex = -1; // -1 means disabled/off by default
     private String preferredSubtitleLang = "english";
+    private List<String> preferredSubtitleLanguagesList = new ArrayList<>(java.util.Collections.singletonList("English"));
+    private boolean preferredSubtitleLanguagesExplicitlyLoaded = false;
     private String preferredQuality = "highest";
 
     // History tracking fields
@@ -120,9 +126,43 @@ public class PlayerActivity extends Activity {
     private String imageUrl = "";
     private String malid = "";
     private long lastReportTimeMs = 0;
-    private boolean autoSkipIntro = true;
+    private boolean autoSkipIntro = false;
     private boolean autoPlayNextEpisode = true;
     private float savedSpeed = 1.0f;
+
+    private int subTextColor = Color.WHITE;
+    private int subBorderColor = Color.BLACK;
+    private int subBgColor = Color.TRANSPARENT;
+    private float subFontSizeSp = 20f;
+
+    private int parseColorHex(String hex, int defaultColor) {
+        if (hex == null || hex.isEmpty() || "transparent".equalsIgnoreCase(hex) || "none".equalsIgnoreCase(hex)) {
+            return Color.TRANSPARENT;
+        }
+        try {
+            String str = hex.trim();
+            if (!str.startsWith("#")) str = "#" + str;
+            return Color.parseColor(str);
+        } catch (Exception e) {
+            return defaultColor;
+        }
+    }
+
+    private void applySubtitleStyle() {
+        if (playerView != null && playerView.getSubtitleView() != null) {
+            try {
+                playerView.getSubtitleView().setStyle(new androidx.media3.ui.CaptionStyleCompat(
+                        subTextColor,
+                        subBgColor,
+                        Color.TRANSPARENT,
+                        androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_OUTLINE,
+                        subBorderColor,
+                        null
+                ));
+                playerView.getSubtitleView().setFixedTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, subFontSizeSp);
+            } catch (Exception ignored) {}
+        }
+    }
     private double lastProgressTimeSecs = -1;
     private boolean hasSeekedToProgress = false;
 
@@ -198,6 +238,12 @@ public class PlayerActivity extends Activity {
         if (malid == null) malid = "";
         final String baseAnimeTitle = intent.getStringExtra("animeTitle");
         animeTitle = baseAnimeTitle != null ? baseAnimeTitle : "Anime Stream";
+        if (intent.hasExtra("autoSkipIntro")) {
+            autoSkipIntro = intent.getBooleanExtra("autoSkipIntro", false);
+        }
+        if (intent.hasExtra("autoPlayNextEpisode")) {
+            autoPlayNextEpisode = intent.getBooleanExtra("autoPlayNextEpisode", true);
+        }
 
         String episodesListStr = intent.getStringExtra("episodesList");
         if (episodesListStr != null && !episodesListStr.isEmpty()) {
@@ -432,7 +478,47 @@ public class PlayerActivity extends Activity {
         skipButton.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
         skipButton.setColorFilter(0xFFFFFFFF);
         skipButton.setVisibility(View.GONE);
-        rootLayout.addView(skipButton);
+        // Centered Loading Overlay (Circular ProgressBar + Text)
+        loadingLayout = new LinearLayout(this);
+        loadingLayout.setOrientation(LinearLayout.VERTICAL);
+        loadingLayout.setGravity(Gravity.CENTER);
+        int padH = (int) (40 * density);
+        int padV = (int) (30 * density);
+        loadingLayout.setPadding(padH, padV, padH, padV);
+        GradientDrawable loadingBg = new GradientDrawable();
+        loadingBg.setColor(0xD9000000);
+        loadingBg.setCornerRadius((int) (24 * density));
+        loadingLayout.setBackground(loadingBg);
+
+        loadingSpinner = new ProgressBar(this);
+        loadingSpinner.setIndeterminate(true);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            loadingSpinner.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(0xFFFFFFFF));
+        }
+        int spinnerSize = (int) (48 * density);
+        LinearLayout.LayoutParams spinnerParams = new LinearLayout.LayoutParams(spinnerSize, spinnerSize);
+        spinnerParams.gravity = Gravity.CENTER_HORIZONTAL;
+        loadingLayout.addView(loadingSpinner, spinnerParams);
+
+        loadingTextView = new TextView(this);
+        loadingTextView.setTextColor(0xFFFFFFFF);
+        loadingTextView.setTextSize(16);
+        loadingTextView.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        loadingTextView.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams textParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        textParams.gravity = Gravity.CENTER_HORIZONTAL;
+        textParams.topMargin = (int) (14 * density);
+        loadingLayout.addView(loadingTextView, textParams);
+
+        FrameLayout.LayoutParams loadingOverlayParams = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT);
+        loadingOverlayParams.gravity = Gravity.CENTER;
+        loadingLayout.setLayoutParams(loadingOverlayParams);
+        loadingLayout.setVisibility(View.GONE);
+        rootLayout.addView(loadingLayout);
 
         setContentView(rootLayout);
 
@@ -454,6 +540,7 @@ public class PlayerActivity extends Activity {
         fetchHistoryAndSettings();
 
         // Start background fetch to retrieve sources
+        showLoading("Loading stream...");
         fetchSourcesNatively(animeId, currentEpisodeId, episodeNumber, downloaded, subdub, provider);
     }
 
@@ -588,7 +675,10 @@ public class PlayerActivity extends Activity {
 
     private void loadNewEpisode(JSONObject ep) {
         try {
+            double nextEpNum = ep.optDouble("number", 0.0);
+            showLoading("Loading Episode " + formatEpisodeNumber(nextEpNum) + "...");
             if (player != null) {
+                player.pause();
                 player.stop();
                 player.release();
                 player = null;
@@ -600,7 +690,7 @@ public class PlayerActivity extends Activity {
             }
             
             currentEpisodeId = ep.getString("id");
-            episodeNumber = ep.optDouble("number", 0.0);
+            episodeNumber = nextEpNum;
             
             skipTimesArray = new JSONArray();
             hasSeekedToProgress = false;
@@ -620,6 +710,7 @@ public class PlayerActivity extends Activity {
             fetchSourcesNatively(animeId, currentEpisodeId, episodeNumber, downloaded, subdub, provider);
             
         } catch (Exception e) {
+            hideLoading();
             Log.e("PlayerActivity", "Failed to load new episode: " + e.getMessage());
             Toast.makeText(this, "Failed loading next episode: " + e.getMessage(), Toast.LENGTH_SHORT).show();
         }
@@ -635,8 +726,8 @@ public class PlayerActivity extends Activity {
 
     private void fetchSourcesNatively(final String animeId, final String ep, final double epNum, final boolean downloaded, final String subdub, final String provider) {
         android.util.Log.d("PlayerActivity", "fetchSourcesNatively: ep=" + ep + ", provider=" + provider + ", downloaded=" + downloaded);
-        showHudOverlay("Fetching video sources...");
-        hudTextView.setVisibility(View.VISIBLE);
+        showLoading("Fetching video sources...");
+        hudTextView.setVisibility(View.GONE);
         hudHandler.removeCallbacks(hudRunnable);
 
         new Thread(new Runnable() {
@@ -695,6 +786,7 @@ public class PlayerActivity extends Activity {
                     runOnUiThread(new Runnable() {
                         @Override
                         public void run() {
+                            hideLoading();
                             hudTextView.setVisibility(View.GONE);
                             showErrorAndFinish("Failed to load video player resources: " + e.getMessage());
                         }
@@ -723,47 +815,108 @@ public class PlayerActivity extends Activity {
         return s;
     }
 
+    private boolean isLanguagePreferred(String subLang, List<String> preferredLanguages) {
+        if (subLang == null || subLang.trim().isEmpty()) return false;
+        if (preferredLanguages == null) return true;
+        if (preferredLanguages.isEmpty()) return false;
+
+        String sLower = subLang.toLowerCase().trim();
+        String[] tokens = sLower.split("[\\s\\-_,()\\[\\]]+");
+
+        for (String pref : preferredLanguages) {
+            if (pref == null) continue;
+            String pLower = pref.toLowerCase().trim();
+            if (pLower.isEmpty()) continue;
+
+            if (sLower.equals(pLower) || sLower.contains(pLower)) return true;
+
+            List<String> targetCodes = new ArrayList<>();
+            if (pLower.equals("english")) { targetCodes.add("en"); targetCodes.add("eng"); }
+            else if (pLower.equals("spanish")) { targetCodes.add("es"); targetCodes.add("spa"); }
+            else if (pLower.equals("french")) { targetCodes.add("fr"); targetCodes.add("fre"); targetCodes.add("fra"); }
+            else if (pLower.equals("german")) { targetCodes.add("de"); targetCodes.add("ger"); targetCodes.add("deu"); }
+            else if (pLower.equals("italian")) { targetCodes.add("it"); targetCodes.add("ita"); }
+            else if (pLower.equals("portuguese")) { targetCodes.add("pt"); targetCodes.add("por"); }
+            else if (pLower.equals("russian")) { targetCodes.add("ru"); targetCodes.add("rus"); }
+            else if (pLower.equals("japanese")) { targetCodes.add("ja"); targetCodes.add("jpn"); }
+            else if (pLower.equals("chinese")) { targetCodes.add("zh"); targetCodes.add("chi"); targetCodes.add("zho"); }
+            else if (pLower.equals("arabic")) { targetCodes.add("ar"); targetCodes.add("ara"); }
+            else if (pLower.equals("hindi")) { targetCodes.add("hi"); targetCodes.add("hin"); }
+            else if (pLower.equals("indonesian")) { targetCodes.add("id"); targetCodes.add("ind"); }
+            else if (pLower.equals("thai")) { targetCodes.add("th"); targetCodes.add("tha"); }
+            else if (pLower.equals("vietnamese")) { targetCodes.add("vi"); targetCodes.add("vie"); }
+            else {
+                if (pLower.length() >= 2) targetCodes.add(pLower.substring(0, 2));
+                if (pLower.length() >= 3) targetCodes.add(pLower.substring(0, 3));
+            }
+
+            for (String t : tokens) {
+                if (targetCodes.contains(t)) return true;
+            }
+            for (String code : targetCodes) {
+                if (sLower.equals(code) || sLower.startsWith(code + "_") || sLower.startsWith(code + "-")) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private JSONArray filterSubtitlesByPreference(JSONArray input) {
+        if (input == null || input.length() == 0) return new JSONArray();
+        if (preferredSubtitleLanguagesExplicitlyLoaded && preferredSubtitleLanguagesList.isEmpty()) {
+            return new JSONArray();
+        }
+        List<String> prefs = preferredSubtitleLanguagesList;
+        if (prefs.isEmpty() && !preferredSubtitleLanguagesExplicitlyLoaded) {
+            prefs = java.util.Collections.singletonList(preferredSubtitleLang);
+        }
+
+        JSONArray filtered = new JSONArray();
+        for (int i = 0; i < input.length(); i++) {
+            JSONObject subObj = input.optJSONObject(i);
+            if (subObj == null) continue;
+            String rawLang = subObj.optString("lang", null);
+            String url = subObj.optString("url", "");
+            String formattedLabel = formatSubtitleLabel(rawLang, url, i);
+            if (isLanguagePreferred(formattedLabel, prefs) || (rawLang != null && isLanguagePreferred(rawLang, prefs))) {
+                filtered.put(subObj);
+            }
+        }
+        return filtered;
+    }
+
     private void applyPreferredSubtitleLanguage() {
         if (subtitlesArray == null || subtitlesArray.length() == 0) {
             selectedSubtitleIndex = -1;
             return;
         }
 
-        String prefNorm = normalizeLangCode(preferredSubtitleLang);
-        if (prefNorm.equals("off") || prefNorm.equals("false") || prefNorm.equals("none")) {
+        if (preferredSubtitleLanguagesExplicitlyLoaded && preferredSubtitleLanguagesList.isEmpty()) {
             selectedSubtitleIndex = -1;
             return;
         }
 
-        int matchedIdx = -1;
-        int englishIdx = -1;
+        List<String> prefs = preferredSubtitleLanguagesList;
+        if (prefs.isEmpty()) {
+            prefs = java.util.Collections.singletonList(preferredSubtitleLang);
+        }
 
+        int matchedIdx = -1;
         for (int i = 0; i < subtitlesArray.length(); i++) {
             JSONObject subObj = subtitlesArray.optJSONObject(i);
             if (subObj == null) continue;
-            String lang = normalizeLangCode(subObj.optString("lang", ""));
-            String label = normalizeLangCode(subObj.optString("label", ""));
-            String name = normalizeLangCode(subObj.optString("name", ""));
-            String url = normalizeLangCode(subObj.optString("url", ""));
-
-            if (!prefNorm.isEmpty()) {
-                if (lang.contains(prefNorm) || label.contains(prefNorm) || name.contains(prefNorm) || url.contains(prefNorm)) {
-                    matchedIdx = i;
-                    break;
-                }
-            }
-            if (englishIdx == -1) {
-                if (lang.contains("english") || label.contains("english") || name.contains("english") || url.contains("english")
-                        || lang.equals("en") || lang.equals("eng")) {
-                    englishIdx = i;
-                }
+            String rawLang = subObj.optString("lang", null);
+            String url = subObj.optString("url", "");
+            String formattedLabel = formatSubtitleLabel(rawLang, url, i);
+            if (isLanguagePreferred(formattedLabel, prefs) || (rawLang != null && isLanguagePreferred(rawLang, prefs))) {
+                matchedIdx = i;
+                break;
             }
         }
 
         if (matchedIdx != -1) {
             selectedSubtitleIndex = matchedIdx;
-        } else if (englishIdx != -1) {
-            selectedSubtitleIndex = englishIdx;
         } else {
             selectedSubtitleIndex = 0;
         }
@@ -833,7 +986,8 @@ public class PlayerActivity extends Activity {
             hudTextView.setVisibility(View.GONE);
 
             sourcesArray = data.optJSONArray("sources");
-            subtitlesArray = data.optJSONArray("subtitles");
+            JSONArray rawSubs = data.optJSONArray("subtitles");
+            subtitlesArray = filterSubtitlesByPreference(rawSubs);
             skipTimesArray = data.optJSONArray("skipTimes");
 
             if (sourcesArray == null) {
@@ -863,6 +1017,7 @@ public class PlayerActivity extends Activity {
     }
 
     private void showErrorAndFinish(String message) {
+        hideLoading();
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
         builder.setMessage(message);
         builder.setPositiveButton("OK", new DialogInterface.OnClickListener() {
@@ -931,8 +1086,8 @@ public class PlayerActivity extends Activity {
         }
 
         String serverLabel = getServerLabel(sourceObj, startIndex);
-        showHudOverlay("Resolving " + serverLabel + "...");
-        if (hudTextView != null) hudTextView.setVisibility(View.VISIBLE);
+        showLoading("Resolving " + serverLabel + "...");
+        if (hudTextView != null) hudTextView.setVisibility(View.GONE);
 
         new Thread(new Runnable() {
             @Override
@@ -970,12 +1125,14 @@ public class PlayerActivity extends Activity {
                         }
                         final JSONObject resolved = new JSONObject(response.toString());
                         final String resUrl = resolved.optString("url", "");
+                        final boolean hasError = resolved.optBoolean("error", false);
 
-                        if (!resUrl.isEmpty()) {
+                        if (!resUrl.isEmpty() && !hasError) {
                             runOnUiThread(new Runnable() {
                                 @Override
                                 public void run() {
                                     if (hudTextView != null) hudTextView.setVisibility(View.GONE);
+                                    showLoading("Connecting stream...");
                                     try {
                                         sourceObj.put("url", resUrl);
                                         sourceObj.put("isUnresolved", false);
@@ -985,7 +1142,7 @@ public class PlayerActivity extends Activity {
                                         }
                                         JSONArray resSubs = resolved.optJSONArray("subtitles");
                                         if (resSubs != null && resSubs.length() > 0) {
-                                            subtitlesArray = resSubs;
+                                            subtitlesArray = filterSubtitlesByPreference(resSubs);
                                             applyPreferredSubtitleLanguage();
                                         }
                                     } catch (Exception ignored) {}
@@ -996,8 +1153,10 @@ public class PlayerActivity extends Activity {
                             });
                             return;
                         }
+                        String errMsg = resolved.optString("message", "Server resolution returned empty stream URL");
+                        throw new Exception(errMsg + " (HTTP " + code + ")");
                     }
-                    throw new Exception("Server resolution returned empty stream URL (HTTP " + code + ")");
+                    throw new Exception("Server resolution request failed (HTTP " + code + ")");
                 } catch (final Exception e) {
                     Log.w("PlayerActivity", "Server #" + (startIndex + 1) + " resolution failed: " + e.getMessage());
                     runOnUiThread(new Runnable() {
@@ -1005,8 +1164,10 @@ public class PlayerActivity extends Activity {
                         public void run() {
                             if (startIndex + 1 < sourcesArray.length()) {
                                 Log.i("PlayerActivity", "Falling back to next server #" + (startIndex + 2));
+                                showLoading("Trying server #" + (startIndex + 2) + "...");
                                 resolveServerWithFallback(startIndex + 1);
                             } else {
+                                hideLoading();
                                 if (hudTextView != null) hudTextView.setVisibility(View.GONE);
                                 showErrorAndFinish("Failed to resolve stream servers: " + e.getMessage());
                             }
@@ -1084,11 +1245,14 @@ public class PlayerActivity extends Activity {
                             break;
                         case androidx.media3.common.Player.STATE_READY:
                             stateString = "STATE_READY";
+                            hideLoading();
                             if (savedSpeed > 0 && player != null) {
                                 player.setPlaybackSpeed(savedSpeed);
                             }
                             if (selectedSubtitleIndex >= 0) {
                                 selectSubtitle(selectedSubtitleIndex, false);
+                            } else {
+                                selectSubtitle(-1, false);
                             }
                             break;
                         case androidx.media3.common.Player.STATE_ENDED:
@@ -1111,6 +1275,11 @@ public class PlayerActivity extends Activity {
                 }
 
                 @Override
+                public void onRenderedFirstFrame() {
+                    hideLoading();
+                }
+
+                @Override
                 public void onPlayerError(androidx.media3.common.PlaybackException error) {
                     Log.e("PlayerActivity", "ExoPlayer playback error: " + error.getMessage(), error);
                     if (sourcesArray != null && currentSourceIndex + 1 < sourcesArray.length()) {
@@ -1122,29 +1291,40 @@ public class PlayerActivity extends Activity {
                                 switchSource(currentSourceIndex + 1);
                             }
                         });
+                    } else {
+                        hideLoading();
                     }
                 }
             });
-            player.setTrackSelectionParameters(
-                    player.getTrackSelectionParameters()
-                            .buildUpon()
-                            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, selectedSubtitleIndex == -1)
-                            .build()
-            );
-            playerView.setPlayer(player);
-            if (playerView.getSubtitleView() != null) {
-                try {
-                    playerView.getSubtitleView().setStyle(new androidx.media3.ui.CaptionStyleCompat(
-                            Color.WHITE,
-                            Color.TRANSPARENT,
-                            Color.TRANSPARENT,
-                            androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_OUTLINE,
-                            Color.BLACK,
-                            null
-                    ));
-                    playerView.getSubtitleView().setFixedTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 20);
-                } catch (Exception ignored) {}
+            TrackSelectionParameters.Builder tspBuilder = player.getTrackSelectionParameters()
+                    .buildUpon()
+                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, selectedSubtitleIndex == -1);
+
+            if (preferredSubtitleLanguagesList != null && !preferredSubtitleLanguagesList.isEmpty()) {
+                List<String> langCodes = new ArrayList<>();
+                for (String p : preferredSubtitleLanguagesList) {
+                    String pLow = p.toLowerCase().trim();
+                    if (pLow.equals("english")) { langCodes.add("en"); langCodes.add("eng"); }
+                    else if (pLow.equals("spanish")) { langCodes.add("es"); langCodes.add("spa"); }
+                    else if (pLow.equals("french")) { langCodes.add("fr"); langCodes.add("fra"); langCodes.add("fre"); }
+                    else if (pLow.equals("german")) { langCodes.add("de"); langCodes.add("deu"); langCodes.add("ger"); }
+                    else if (pLow.equals("italian")) { langCodes.add("it"); langCodes.add("ita"); }
+                    else if (pLow.equals("portuguese")) { langCodes.add("pt"); langCodes.add("por"); }
+                    else if (pLow.equals("russian")) { langCodes.add("ru"); langCodes.add("rus"); }
+                    else if (pLow.equals("japanese")) { langCodes.add("ja"); langCodes.add("jpn"); }
+                    else if (pLow.equals("chinese")) { langCodes.add("zh"); langCodes.add("chi"); langCodes.add("zho"); }
+                    else if (pLow.equals("arabic")) { langCodes.add("ar"); langCodes.add("ara"); }
+                    else if (pLow.equals("hindi")) { langCodes.add("hi"); langCodes.add("hin"); }
+                    else if (pLow.equals("indonesian")) { langCodes.add("id"); langCodes.add("ind"); }
+                    else if (pLow.length() >= 2) { langCodes.add(pLow.substring(0, 2)); }
+                }
+                if (!langCodes.isEmpty()) {
+                    tspBuilder.setPreferredTextLanguages(langCodes.toArray(new String[0]));
+                }
             }
+            player.setTrackSelectionParameters(tspBuilder.build());
+            playerView.setPlayer(player);
+            applySubtitleStyle();
 
             String userAgentString = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36";
             if (headers.containsKey("User-Agent")) {
@@ -1354,20 +1534,22 @@ public class PlayerActivity extends Activity {
         try {
             for (int i = 0; i < skipTimesArray.length(); i++) {
                 JSONObject st = skipTimesArray.getJSONObject(i);
-                String skipType = st.optString("skip_type", "");
+                String skipType = st.optString("skip_type", "").toLowerCase();
                 JSONObject interval = st.optJSONObject("interval");
                 if (interval != null) {
                     double start = interval.optDouble("start_time", 0.0);
                     double end = interval.optDouble("end_time", 0.0);
                     if (currentSecs >= start - 0.2 && currentSecs < end - 0.5) {
-                        final double skipTarget = end + 0.5;
-                        if (autoSkipIntro) {
+                        final double skipTarget = end;
+                        boolean isIntro = skipType.contains("op") || skipType.contains("intro");
+                        if (autoSkipIntro && isIntro) {
                             if (player != null) {
                                 player.seekTo((long) (skipTarget * 1000));
                                 skipButton.setVisibility(View.GONE);
                                 return;
                             }
                         }
+                        skipButton.setContentDescription(isIntro ? "Skip Intro" : "Skip Outro");
                         skipButton.setVisibility(View.VISIBLE);
                         skipButton.setOnClickListener(new View.OnClickListener() {
                             @Override
@@ -1419,6 +1601,7 @@ public class PlayerActivity extends Activity {
         try {
             currentSourceIndex = index;
             final JSONObject sourceObj = sourcesArray.getJSONObject(index);
+            showLoading("Switching to " + sourceObj.optString("quality", "server") + "...");
             boolean isUnresolved = sourceObj.optBoolean("isUnresolved", false) || !sourceObj.has("url") || sourceObj.optString("url", "").isEmpty();
 
             if (isUnresolved) {
@@ -2381,6 +2564,32 @@ public class PlayerActivity extends Activity {
         }
     }
 
+    private void showLoading(final String message) {
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                if (loadingLayout != null) {
+                    if (loadingTextView != null) {
+                        loadingTextView.setText(message != null ? message : "Loading...");
+                    }
+                    loadingLayout.setVisibility(View.VISIBLE);
+                    loadingLayout.bringToFront();
+                }
+            }
+        });
+    }
+
+    private void hideLoading() {
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                if (loadingLayout != null) {
+                    loadingLayout.setVisibility(View.GONE);
+                }
+            }
+        });
+    }
+
     private void showHudOverlay(String text) {
         showHudOverlay(text, 0);
     }
@@ -2516,16 +2725,52 @@ public class PlayerActivity extends Activity {
                         if (result != null) {
                             JSONObject settings = result.optJSONObject("settings");
                             if (settings != null) {
-                                autoSkipIntro = settings.optBoolean("autoSkipIntro", true);
+                                autoSkipIntro = settings.optBoolean("autoSkipIntro", false);
                                 autoPlayNextEpisode = settings.optBoolean("autoPlayNextEpisode", true);
-                                if (settings.has("subtitleLang")) {
-                                    preferredSubtitleLang = settings.optString("subtitleLang", "english");
-                                } else if (settings.has("preferredSubtitleLanguages")) {
+                                if (settings.has("preferredSubtitleLanguages")) {
+                                    preferredSubtitleLanguagesList.clear();
                                     JSONArray arr = settings.optJSONArray("preferredSubtitleLanguages");
-                                    if (arr != null && arr.length() > 0) {
-                                        preferredSubtitleLang = arr.optString(0, "english");
+                                    if (arr != null) {
+                                        for (int i = 0; i < arr.length(); i++) {
+                                            String l = arr.optString(i, "").trim();
+                                            if (!l.isEmpty()) preferredSubtitleLanguagesList.add(l);
+                                        }
                                     }
+                                    preferredSubtitleLanguagesExplicitlyLoaded = true;
+                                    if (!preferredSubtitleLanguagesList.isEmpty()) {
+                                        preferredSubtitleLang = preferredSubtitleLanguagesList.get(0);
+                                    } else {
+                                        preferredSubtitleLang = "off";
+                                    }
+                                } else if (settings.has("subtitleLang")) {
+                                    String l = settings.optString("subtitleLang", "english").trim();
+                                    preferredSubtitleLanguagesList.clear();
+                                    if (!l.isEmpty() && !l.equalsIgnoreCase("off") && !l.equalsIgnoreCase("none")) {
+                                        preferredSubtitleLanguagesList.add(l);
+                                    }
+                                    preferredSubtitleLang = l;
+                                    preferredSubtitleLanguagesExplicitlyLoaded = true;
                                 }
+
+                                runOnUiThread(new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        if (subtitlesArray != null && subtitlesArray.length() > 0) {
+                                            JSONArray filtered = filterSubtitlesByPreference(subtitlesArray);
+                                            if (filtered.length() > 0 || (preferredSubtitleLanguagesExplicitlyLoaded && preferredSubtitleLanguagesList.isEmpty())) {
+                                                subtitlesArray = filtered;
+                                            }
+                                            applyPreferredSubtitleLanguage();
+                                            if (player != null) {
+                                                if (selectedSubtitleIndex >= 0) {
+                                                    selectSubtitle(selectedSubtitleIndex, false);
+                                                } else {
+                                                    selectSubtitle(-1, false);
+                                                }
+                                            }
+                                        }
+                                    }
+                                });
                                 if (settings.has("quality")) {
                                     preferredQuality = settings.optString("quality", "highest");
                                 }
@@ -2545,6 +2790,25 @@ public class PlayerActivity extends Activity {
                                         }
                                     } catch (Exception e) {}
                                 }
+                                if (settings.has("subColor")) {
+                                    subTextColor = parseColorHex(settings.optString("subColor"), Color.WHITE);
+                                }
+                                if (settings.has("subBorderColor")) {
+                                    subBorderColor = parseColorHex(settings.optString("subBorderColor"), Color.BLACK);
+                                }
+                                if (settings.has("subBgColor")) {
+                                    subBgColor = parseColorHex(settings.optString("subBgColor"), Color.TRANSPARENT);
+                                }
+                                if (settings.has("subFontSize")) {
+                                    float sz = (float) settings.optDouble("subFontSize", 46.0);
+                                    if (sz > 0) subFontSizeSp = Math.max(12f, Math.min(48f, sz / 2.2f));
+                                }
+                                runOnUiThread(new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        applySubtitleStyle();
+                                    }
+                                });
                             }
                         }
                     }
@@ -2577,7 +2841,15 @@ public class PlayerActivity extends Activity {
                             if (lastProgress != null) {
                                 double savedEpNum = lastProgress.optDouble("number", -1.0);
                                 if (Math.abs(savedEpNum - episodeNumber) < 0.01) {
-                                    lastProgressTimeSecs = lastProgress.optDouble("currentTime", 0.0);
+                                    double savedTime = lastProgress.optDouble("currentTime", 0.0);
+                                    double recDur = lastProgress.optDouble("duration", 0.0);
+                                    boolean isCompleted = lastProgress.optBoolean("isCompleted", false) || lastProgress.optInt("is_completed", 0) == 1;
+
+                                    if (isCompleted || (recDur > 0 && savedTime >= recDur - 15) || savedTime >= 10800) {
+                                        lastProgressTimeSecs = 0;
+                                    } else {
+                                        lastProgressTimeSecs = savedTime;
+                                    }
                                     runOnUiThread(new Runnable() {
                                         @Override
                                         public void run() {
@@ -2604,7 +2876,7 @@ public class PlayerActivity extends Activity {
         hasFetchedSkipTimes = true;
         isFetchingSkipTimes = true;
         
-        final long durationSecs = durationMs / 1000;
+        final long durationSecs = (durationMs > 0) ? (durationMs / 1000) : 1440;
         new Thread(new Runnable() {
             @Override
             public void run() {

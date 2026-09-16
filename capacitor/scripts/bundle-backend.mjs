@@ -20,7 +20,17 @@ try {
     "--outfile=main.bundle.js",
   ].join(" ");
 
-  execSync(esbuildCmd, { cwd: nodejsDir, stdio: "inherit" });
+  const nodePaths = [
+    path.join(capacitorRoot, "node_modules"),
+    path.join(capacitorRoot, "..", "electron", "node_modules"),
+    path.join(capacitorRoot, "..", "node_modules"),
+  ].join(path.delimiter);
+
+  execSync(esbuildCmd, {
+    cwd: nodejsDir,
+    stdio: "inherit",
+    env: { ...process.env, NODE_PATH: nodePaths },
+  });
   console.log("[bundle] Successfully created main.bundle.js");
 
   const bundlePath = path.join(nodejsDir, "main.bundle.js");
