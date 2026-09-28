@@ -102,7 +102,7 @@ function extractDomain(urlStr, refererStr) {
   if (hostname.includes("owocdn") || hostname.includes("uwucdn")) {
     return "kwik.cx";
   } else if (hostname.includes("animepahe")) {
-    return "animepahe.pw";
+    return "animepahe";
   }
 
   const parts = hostname.split(".");
@@ -131,7 +131,11 @@ async function getInitialDomainConcurrency(domain, defaultInitial = 4) {
       [domain],
     );
     if (row && row.failed_requests > 0 && row.current_concurrency) {
-      domainMaxCap[domain] = Math.max(1, Number(row.current_concurrency));
+      // Floor restored caps at 4 so one old throttled session doesn't pin
+      // future downloads to 1-2 threads forever; the adaptive loop still
+      // backs off fast on real 429s/cooling-down.
+      const restored = Math.max(4, Number(row.current_concurrency));
+      domainMaxCap[domain] = restored;
     }
   } catch (e) {}
 
@@ -268,7 +272,9 @@ function recordDomainBatchSuccess(domain, batchThroughput = null) {
         (batchThroughput - prevThroughput) / prevThroughput;
 
       if (speedDiffRatio > 0.05) {
-        newConcurrency = current + 1;
+        // Ramp up faster on clearly improving links (+2 on strong gains),
+        // still capped by domainMaxCap below.
+        newConcurrency = current + (speedDiffRatio > 0.25 ? 2 : 1);
         if (domainMaxCap[domain] && newConcurrency > domainMaxCap[domain]) {
           newConcurrency = domainMaxCap[domain];
           logger.info(

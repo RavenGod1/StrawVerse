@@ -223,21 +223,10 @@ function getHeaders(url, method = "GET") {
   let cleanDomain = "";
   if (cookieDomain) {
     cleanDomain = cookieDomain.replace("www.", "").toLowerCase();
-    if (cleanDomain.includes("animepahe")) {
-      let tld = "pw";
-      for (const cachedDomain of Object.keys(cookieCache)) {
-        if (cachedDomain.includes("animepahe")) {
-          const matchedDomain = cachedDomain.replace(/^\./, "");
-          const domainParts = matchedDomain.split(".");
-          tld = domainParts[domainParts.length - 1] || "pw";
-          break;
-        }
-      }
-      const hostParts = cookieDomain.split(".");
-      hostParts[hostParts.length - 1] = tld;
-      cookieDomain = hostParts.join(".");
-      cleanDomain = cookieDomain;
-    } else if (
+    // NOTE: do NOT force animepahe hosts to a single TLD. Each mirror
+    // (.ng/.ch/.pw/.com/.org) has its own Cloudflare clearance + cookies.
+    // Keep per-host so .pw cookies are used for .pw requests, etc.
+    if (
       cleanDomain.includes("kwik.cx") ||
       cleanDomain.includes("owocdn.top") ||
       cleanDomain.includes("uwucdn.top")
@@ -337,7 +326,11 @@ function getHeaders(url, method = "GET") {
     ) {
       headers.Referer = "https://weebcentral.com/";
     } else if (url.includes("animepahe")) {
-      headers.Referer = "https://animepahe.pw/";
+      try {
+        headers.Referer = new URL(url).origin + "/";
+      } catch (_) {
+        headers.Referer = "https://animepahe.ng/";
+      }
     } else if (url.includes("anikoto") || url.includes("megaplay.buzz")) {
       headers.Referer = "https://anikoto.to/";
     } else if (url.includes("anineko")) {

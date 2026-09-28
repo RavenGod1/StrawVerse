@@ -225,7 +225,7 @@ function getMalStatusLabel(status) {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-const GITHUB_REPO = "TheYogMehta/StrawVerse";
+const GITHUB_REPO = "RavenGod1/StrawVerse";
 const DISCORD_CLIENT_ID = "1372260492982358016";
 const DISCORD_IDLE_MESSAGES = Object.freeze([
   "Taking a quick snack break 🍕",

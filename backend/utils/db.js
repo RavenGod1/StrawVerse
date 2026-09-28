@@ -676,7 +676,7 @@ async function batchRun(dbNameOrOps, maybeOps) {
 
   if (isAndroid) {
     try {
-      return await dbRequest("db-batch", { db: dbName, operations });
+      return await dbRequest("db-batch-run", { db: dbName, operations });
     } catch (e) {
       logger.error(`Database batchRun error on ${dbName}: ${e.message}`);
       throw e;
@@ -757,9 +757,15 @@ async function initDatabase() {
 
   logger.info("[db] Initializing Android database schema via Java bridge...");
   try {
-    await dbRequest("db-init", {});
+    // Java DatabaseBridge.handleInit requires dataDir (StrawVerse root;
+    // it appends "/data" itself). Without it db-init fails and every
+    // CREATE TABLE below throws "Database 'main' is not open".
+    const root =
+      process.env.NODEJS_MOBILE_DATA_DIR || process.env.DATADIR || null;
+    await dbRequest("db-init", root ? { dataDir: root } : {});
   } catch (e) {
     logger.error("Failed to send db-init to bridge: " + e.message);
+    throw new Error(`Database bridge init failed: ${e.message}`);
   }
 
   for (const [tableName, columns] of Object.entries(tables)) {

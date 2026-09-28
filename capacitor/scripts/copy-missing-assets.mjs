@@ -32,6 +32,7 @@ function copyDir(from, to) {
 console.log("[post-copy] Syncing bundled app assets to Android assets...");
 
 try {
+  fs.mkdirSync(destDir, { recursive: true });
   // 1. Copy loader files
   for (const file of ["index.html", "loader.js"]) {
     const src = path.join(srcDir, file);

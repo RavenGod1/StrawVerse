@@ -656,7 +656,7 @@ async function HandleExtensions(TaskType, AnimeManga, ExtensionName) {
   if (TaskType === "add") {
     try {
       const response = await got(
-        `https://raw.githubusercontent.com/strawverse/extensions/refs/heads/main/extensions/${AnimeManga}/${ExtensionName}.js`,
+        `https://raw.githubusercontent.com/RavenGod1/extensions/refs/heads/main/extensions/${AnimeManga}/${ExtensionName}.js`,
       ).text();
 
       if (response.includes("404: Not Found")) {
@@ -670,7 +670,7 @@ async function HandleExtensions(TaskType, AnimeManga, ExtensionName) {
       await fs.promises.writeFile(extensionPath, response);
 
       try {
-        const iconUrl = `https://raw.githubusercontent.com/strawverse/extensions/refs/heads/main/extensions/ico/${ExtensionName}.ico`;
+        const iconUrl = `https://raw.githubusercontent.com/RavenGod1/extensions/refs/heads/main/ico/${ExtensionName}.ico`;
         const iconDest = path.join(ScraperIcons, `${ExtensionName}.ico`);
         const iconBuffer = await got(iconUrl, {
           responseType: "buffer",

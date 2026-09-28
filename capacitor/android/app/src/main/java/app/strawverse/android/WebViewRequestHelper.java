@@ -27,7 +27,7 @@ public class WebViewRequestHelper {
     private static boolean isCloudflareProtectedHost(String host) {
         if (host == null) return false;
         host = host.toLowerCase();
-        if (host.endsWith("animepahe.pw")) {
+        if (host.contains("animepahe")) {
             return true;
         }
         return false;
@@ -47,10 +47,9 @@ public class WebViewRequestHelper {
                 if (host == null) return;
 
                 // Determine the parent domain so cookies cover all subdomains
+                // animepahe hosts kept per-mirror (.ng/.ch/.pw/.com/.org)
                 String parentDomain = host.replace("www.", "").toLowerCase();
-                if (parentDomain.contains("animepahe")) {
-                    parentDomain = "animepahe.pw";
-                } else if (parentDomain.contains("kwik.cx") || parentDomain.contains("owocdn.top") || parentDomain.contains("uwucdn.top")) {
+                if (parentDomain.contains("kwik.cx") || parentDomain.contains("owocdn.top") || parentDomain.contains("uwucdn.top")) {
                     parentDomain = "kwik.cx";
                 }
 

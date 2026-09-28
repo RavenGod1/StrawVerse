@@ -148,7 +148,12 @@ async function checkForUpdateLogic() {
       };
     }
   } catch (err) {
-    logger.error(`[AutoUpdater] Check failed: ${err.message}`);
+    // No releases published yet (fork without releases) is normal, not an error.
+    if (err?.response?.status === 404 || String(err?.message || "").includes("404")) {
+      logger.info("[AutoUpdater] No releases published for this repo yet, skipping update check.");
+    } else {
+      logger.error(`[AutoUpdater] Check failed: ${err.message}`);
+    }
     global.sendToRenderer("update-error", { message: err.message });
     return { success: false, error: err.message };
   }

@@ -349,19 +349,29 @@ async function healAnimePaheUuid({ oldId, malid, title, folderName }) {
 
     try {
       let html = "";
-      if (typeof global.scrapperFetch === "function") {
-        try {
-          html = await global.scrapperFetch("https://animepahe.pw/anime");
-        } catch (_) {}
-      }
-      if (!html && global.axios) {
-        try {
-          const res = await global.axios.get("https://animepahe.pw/anime", {
-            headers: { Referer: "https://animepahe.pw/" },
-            timeout: 20000,
-          });
-          html = typeof res.data === "string" ? res.data : "";
-        } catch (_) {}
+      const paheMirrors = [
+        "https://animepahe.ng",
+        "https://animepahe.ch",
+        "https://animepahe.pw",
+        "https://animepahe.com",
+        "https://animepahe.org",
+      ];
+      for (const mirror of paheMirrors) {
+        if (html) break;
+        if (typeof global.scrapperFetch === "function") {
+          try {
+            html = await global.scrapperFetch(`${mirror}/anime`);
+          } catch (_) {}
+        }
+        if (!html && global.axios) {
+          try {
+            const res = await global.axios.get(`${mirror}/anime`, {
+              headers: { Referer: `${mirror}/` },
+              timeout: 20000,
+            });
+            html = typeof res.data === "string" ? res.data : "";
+          } catch (_) {}
+        }
       }
 
       const links = [];
