@@ -698,7 +698,85 @@ export default function Catalog({
     setDragOverIndex(null);
   };
 
-  const siteFilterDefs = {};
+  // Per-provider Discover filters. The panel renders one dropdown per key
+  // and sends the chosen value as filters[key] to /api/list. Only providers
+  // listed here show filters (no studio/producer/licensor facets by design).
+  const siteFilterDefs = {
+    anikoto: {
+      genre: {
+        label: "Genre",
+        options: {
+          All: "",
+          Action: "1",
+          Adventure: "2",
+          Comedy: "8",
+          Demons: "119",
+          Drama: "62",
+          Ecchi: "214",
+          Fantasy: "3",
+          Game: "180",
+          Harem: "215",
+          Historical: "70",
+          Horror: "222",
+          Isekai: "74",
+          Josei: "404",
+          Kids: "46",
+          Magic: "203",
+          "Martial Arts": "114",
+          Mecha: "123",
+          Military: "125",
+          Music: "242",
+          Mystery: "57",
+          Parody: "162",
+          Police: "136",
+          Psychological: "73",
+          Romance: "28",
+          Samurai: "163",
+          School: "14",
+          "Sci-Fi": "12",
+          Seinen: "50",
+          Shoujo: "252",
+          Shounen: "15",
+          "Slice of Life": "35",
+          Space: "124",
+          Sports: "29",
+          "Super Power": "16",
+          Supernatural: "9",
+          Suspense: "2316",
+          Thriller: "54",
+          Vampire: "58",
+        },
+      },
+      status: {
+        label: "Status",
+        options: {
+          All: "",
+          Ongoing: "currently-airing",
+          Completed: "finished-airing",
+        },
+      },
+      type: {
+        label: "Type",
+        options: {
+          All: "",
+          TV: "TV",
+          Movie: "Movie",
+          ONA: "ONA",
+          OVA: "OVA",
+          Special: "Special",
+        },
+      },
+      sort: {
+        label: "Sort",
+        options: {
+          Latest: "latest-updated",
+          Popular: "most-viewed",
+          Score: "score",
+          "Name A-Z": "name-az",
+        },
+      },
+    },
+  };
 
   const getApiEndpoint = (currentTag = activeFilters.tag) => {
     if (provider === "local") {
