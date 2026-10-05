@@ -142,7 +142,7 @@ function deserializeDelta(buffer) {
   return { action: "delta", version, updates };
 }
 
-async function checkForMappingUpdates() {
+async function checkForMappingUpdates(force = false) {
   const mappingTagKey = "mapping_release_tag";
   let storedTag = await getKeyValue("Settings", mappingTagKey);
 
@@ -229,6 +229,7 @@ async function checkForMappingUpdates() {
   }
 
   if (
+    !force &&
     storedTag &&
     latestVersion &&
     storedTag === latestVersion &&
@@ -730,6 +731,69 @@ async function syncLibraryIdsWithMapping() {
           } catch (_) {}
         }
       }
+    }
+
+    // 1.5 Sync standalone WatchHistory entries that are not in Anime table
+    try {
+      const standaloneHistory = await queryAll(
+        "SELECT DISTINCT anime_id, anime_title FROM WatchHistory WHERE anime_id NOT IN (SELECT id FROM Anime)",
+      );
+      for (const hist of standaloneHistory || []) {
+        if (!hist.anime_id) continue;
+        const isUuid =
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(
+            hist.anime_id,
+          );
+        if (!isUuid) continue;
+
+        let targetRow = null;
+        try {
+          targetRow = await mappingQueryOne(
+            "SELECT id, uuid, malid FROM pahe WHERE id = ? OR uuid = ? LIMIT 1",
+            [hist.anime_id, hist.anime_id],
+          );
+        } catch (_) {}
+
+        if (!targetRow && hist.anime_title) {
+          try {
+            const malRow = await queryOne(
+              "SELECT id FROM MyAnimeList WHERE LOWER(title) = LOWER(?) LIMIT 1",
+              [hist.anime_title],
+            );
+            if (malRow?.id) {
+              targetRow = await mappingQueryOne(
+                "SELECT id, uuid, malid FROM pahe WHERE malid = ? LIMIT 1",
+                [Number(malRow.id)],
+              );
+            }
+          } catch (_) {}
+        }
+
+        if (targetRow?.uuid && targetRow.uuid !== hist.anime_id) {
+          await run(
+            "UPDATE WatchHistory SET anime_id = REPLACE(anime_id, ?, ?) WHERE anime_id = ? OR anime_id LIKE ?",
+            [
+              hist.anime_id,
+              targetRow.uuid,
+              hist.anime_id,
+              `${hist.anime_id}-%`,
+            ],
+          );
+          await run(
+            "UPDATE SkipTimes SET anime_id = REPLACE(anime_id, ?, ?) WHERE anime_id = ? OR anime_id LIKE ?",
+            [
+              hist.anime_id,
+              targetRow.uuid,
+              hist.anime_id,
+              `${hist.anime_id}-%`,
+            ],
+          );
+        }
+      }
+    } catch (whErr) {
+      logger.error(
+        `[mappingUpdater] Failed to sync standalone WatchHistory: ${whErr.message}`,
+      );
     }
 
     // 2. Sync Manga
