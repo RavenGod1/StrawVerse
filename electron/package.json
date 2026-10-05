@@ -1,6 +1,6 @@
 {
   "name": "strawverse",
-  "version": "9.5.3",
+  "version": "10.0.0",
   "description": "Download anime in batches & its fast :3",
   "main": "gui.js",
   "scripts": {
@@ -32,12 +32,16 @@
       {
         "from": "../backend",
         "to": "backend",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       },
       {
         "from": "../gui/dist",
         "to": "gui/dist",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "win": {
