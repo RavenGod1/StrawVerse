@@ -1,0 +1,135 @@
+/* ==========================================================================
+   Shared Custom Dropdown Component Styles
+   ========================================================================== */
+
+.custom-dropdown-trigger {
+  background-color: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  color: white;
+  padding: 8px 12px;
+  border-radius: 6px;
+  outline: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 38px;
+  font-size: 14px;
+  user-select: none;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.custom-dropdown-trigger:hover {
+  border-color: var(--accent);
+}
+
+.custom-dropdown-trigger.open {
+  border-color: var(--accent);
+}
+
+.custom-dropdown-chevron {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.custom-dropdown-trigger.open .custom-dropdown-chevron {
+  transform: rotate(180deg);
+  color: white;
+}
+
+.custom-dropdown-trigger-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+}
+
+.custom-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  width: 100%;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+  padding: 4px;
+  z-index: 100;
+  max-height: 220px;
+  overflow-y: auto;
+  box-sizing: border-box;
+}
+
+/* Custom Scrollbar for dropdown menu */
+.custom-dropdown-menu::-webkit-scrollbar {
+  width: 6px;
+}
+
+.custom-dropdown-menu::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+.custom-dropdown-menu::-webkit-scrollbar-thumb:hover {
+  background: var(--accent);
+}
+
+.custom-dropdown-item {
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  user-select: none;
+}
+
+.custom-dropdown-item:hover {
+  background-color: rgba(255, 255, 255, 0.05);
+  color: white;
+}
+
+.custom-dropdown-item.selected {
+  background-color: rgba(124, 58, 237, 0.2);
+  color: var(--accent-hover);
+  font-weight: 600;
+}
+
+.custom-dropdown-divider {
+  height: 1px;
+  background-color: var(--border);
+  margin: 4px 6px;
+}
+
+.custom-dropdown-item.create-new {
+  color: var(--accent-hover);
+}
+
+.custom-dropdown-item.create-new:hover {
+  background-color: rgba(124, 58, 237, 0.1);
+  color: white;
+}
+
+@media (max-width: 768px) {
+  .custom-dropdown-trigger {
+    width: 100%;
+    box-sizing: border-box;
+    min-width: 0;
+    gap: 6px;
+    padding: 8px 10px;
+  }
+
+  .custom-dropdown-trigger-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    min-width: 0;
+    text-align: left;
+  }
+}

@@ -688,22 +688,21 @@ async function boot() {
         return res.json({ ok: true, result: null });
       }
 
-      let changelogPath = path.join(__dirname, "CHANGELOG.md");
-      if (!fs.existsSync(changelogPath)) {
-        changelogPath = path.join(__dirname, "..", "CHANGELOG.md");
-      }
+      const { getChangelog } = require("../../../backend/utils/changelog");
       let changelog = "";
-      if (fs.existsSync(changelogPath)) {
-        changelog = fs.readFileSync(changelogPath, "utf-8");
-        const parts = changelog.split(
+      const fullChangelog = getChangelog();
+      if (fullChangelog) {
+        const parts = fullChangelog.split(
           /(?:^|\n)#+\s*\[\d+\.\d+\.\d+(?:-[a-zA-Z0-9.]+)?\][^\n]*/,
         );
         if (parts.length > 1) {
-          const match = changelog.match(
+          const match = fullChangelog.match(
             /(?:^|\n)(#+\s*\[\d+\.\d+\.\d+(?:-[a-zA-Z0-9.]+)?\]\s*-\s*\d{4}-\d{2}-\d{2})/,
           );
           const versionHeader = match ? match[1].trim() : "# What's New";
           changelog = `${versionHeader}\n\n${parts[1].trim()}`;
+        } else {
+          changelog = fullChangelog;
         }
       } else {
         return res.json({ ok: true, result: null });

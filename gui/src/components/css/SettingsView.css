@@ -453,6 +453,21 @@
   text-decoration: underline;
 }
 
+.changelog-bold {
+  font-weight: 700;
+  color: var(--text-main, #fff);
+}
+
+.changelog-code {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 12px;
+  font-family: monospace;
+  color: var(--accent-hover, #a78bfa);
+}
+
 .settings-history-item.clickable {
   cursor: pointer;
 }
@@ -571,7 +586,8 @@
   align-items: center;
 }
 
-.settings-row-control .settings-select {
+.settings-row-control .settings-select,
+.settings-row-control .input-group {
   width: 100%;
   max-width: 320px;
 }
@@ -593,7 +609,8 @@
     justify-content: flex-start;
   }
   .settings-row-control .settings-select,
-  .settings-row-control .settings-text-input {
+  .settings-row-control .settings-text-input,
+  .settings-row-control .input-group {
     max-width: 100%;
     min-width: unset;
   }

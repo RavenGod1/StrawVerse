@@ -304,7 +304,7 @@ export default function SettingsView({
       const timer = setTimeout(() => {
         const el = document.getElementById(scrollToSection);
         if (el) {
-          el.scrollIntoView({ behavior: "smooth", block: "start" });
+          el.scrollIntoView({ behavior: "auto", block: "start" });
         }
       }, 250);
       return () => clearTimeout(timer);
@@ -370,7 +370,11 @@ export default function SettingsView({
   const [historyFilter, setHistoryFilter] = useState("All");
   const [statsLoading, setStatsLoading] = useState(false);
 
-  const [changelog, setChangelog] = useState("");
+  const [changelog, setChangelog] = useState(
+    typeof __APP_CHANGELOG__ !== "undefined" && __APP_CHANGELOG__
+      ? __APP_CHANGELOG__
+      : "",
+  );
   const [changelogLoading, setChangelogLoading] = useState(false);
 
   useEffect(() => {
@@ -396,9 +400,9 @@ export default function SettingsView({
   }, [activeTab]);
 
   useEffect(() => {
-    if (activeTab === "changelog" && !changelog) {
+    if (activeTab === "changelog") {
       const fetchChangelogData = async () => {
-        setChangelogLoading(true);
+        if (!changelog) setChangelogLoading(true);
         try {
           const res = await fetch("/api/changelog");
           const data = await res.json();
@@ -413,7 +417,7 @@ export default function SettingsView({
       };
       fetchChangelogData();
     }
-  }, [activeTab, changelog]);
+  }, [activeTab]);
 
   const fetchCacheStats = async () => {
     try {
@@ -2909,14 +2913,14 @@ function ChangelogRenderer({ markdown }) {
         if (line.startsWith("## ")) {
           return (
             <h2 key={idx} className="changelog-h2">
-              {line.replace("## ", "")}
+              {parseMarkdownLinks(line.replace("## ", ""))}
             </h2>
           );
         }
         if (line.startsWith("### ")) {
           return (
             <h3 key={idx} className="changelog-h3">
-              {line.replace("### ", "")}
+              {parseMarkdownLinks(line.replace("### ", ""))}
             </h3>
           );
         }
@@ -2991,48 +2995,64 @@ function parseChangelogContent(text) {
 }
 
 function parseMarkdownLinks(text) {
-  const linkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
+  if (typeof text !== "string") return text;
+  const regex = /\[([^\]]+)\]\(([^)]+)\)|\*\*([^*]+)\*\*|`([^`]+)`/g;
   const parts = [];
   let lastIndex = 0;
   let match;
 
-  while ((match = linkRegex.exec(text)) !== null) {
-    const [, linkText, url] = match;
+  while ((match = regex.exec(text)) !== null) {
     const matchIndex = match.index;
 
     if (matchIndex > lastIndex) {
       parts.push(text.substring(lastIndex, matchIndex));
     }
 
-    parts.push(
-      <a
-        key={matchIndex}
-        href={url}
-        onClick={(e) => {
-          e.preventDefault();
-          if (
-            window.Capacitor &&
-            window.Capacitor.Plugins &&
-            window.Capacitor.Plugins.CloudflareBypass
-          ) {
-            window.Capacitor.Plugins.CloudflareBypass.openSystemBrowser({
-              url,
-            }).catch(() => {
+    if (match[1] && match[2]) {
+      const linkText = match[1];
+      const url = match[2];
+      parts.push(
+        <a
+          key={`link-${matchIndex}`}
+          href={url}
+          onClick={(e) => {
+            e.preventDefault();
+            if (
+              window.Capacitor &&
+              window.Capacitor.Plugins &&
+              window.Capacitor.Plugins.CloudflareBypass
+            ) {
+              window.Capacitor.Plugins.CloudflareBypass.openSystemBrowser({
+                url,
+              }).catch(() => {
+                window.open(url, "_blank");
+              });
+            } else {
               window.open(url, "_blank");
-            });
-          } else {
-            window.open(url, "_blank");
-          }
-        }}
-        target="_blank"
-        rel="noreferrer"
-        className="changelog-link"
-      >
-        {linkText}
-      </a>,
-    );
+            }
+          }}
+          target="_blank"
+          rel="noreferrer"
+          className="changelog-link"
+        >
+          {linkText}
+        </a>,
+      );
+    } else if (match[3]) {
+      parts.push(
+        <strong key={`bold-${matchIndex}`} className="changelog-bold">
+          {match[3]}
+        </strong>,
+      );
+    } else if (match[4]) {
+      parts.push(
+        <code key={`code-${matchIndex}`} className="changelog-code">
+          {match[4]}
+        </code>,
+      );
+    }
 
-    lastIndex = linkRegex.lastIndex;
+    lastIndex = regex.lastIndex;
   }
 
   if (lastIndex < text.length) {

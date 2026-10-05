@@ -495,6 +495,13 @@
   /* ---------------------------------------------------------------- */
   /* General touch ergonomics                                          */
   /* ---------------------------------------------------------------- */
+  html *,
+  html *::before,
+  html *::after {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+
   html button,
   html [role="button"] {
     -webkit-tap-highlight-color: transparent;

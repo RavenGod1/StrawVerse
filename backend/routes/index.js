@@ -1,3 +1,7 @@
+if (typeof global.sendToRenderer !== "function") {
+  global.sendToRenderer = () => {};
+}
+
 const express = require("express");
 const path = require("path");
 

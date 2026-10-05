@@ -48,13 +48,24 @@ try {
         "/^[a-zA-Z_$][a-zA-Z0-9_$\\u200c\\u200d]*$/",
       );
 
+    const rootChangelog = path.resolve(capacitorRoot, "..", "changelog.md");
+    if (fs.existsSync(rootChangelog)) {
+      const changelogText = fs.readFileSync(rootChangelog, "utf8");
+      bundleContent = bundleContent.replace(
+        '"__EMBEDDED_CHANGELOG_PLACEHOLDER__"',
+        JSON.stringify(changelogText),
+      );
+      console.log("[bundle] Injected root changelog into main.bundle.js");
+    }
+
     if (
       bundleContent.length !== originalLength ||
-      bundleContent.includes("/^[a-zA-Z_$]$/")
+      bundleContent.includes("/^[a-zA-Z_$]$/") ||
+      bundleContent.includes(rootChangelog)
     ) {
       fs.writeFileSync(bundlePath, bundleContent, "utf8");
       console.log(
-        "[bundle] Sanitized Unicode property escapes for Android Node.js compatibility.",
+        "[bundle] Sanitized Unicode property escapes and updated main.bundle.js.",
       );
     }
   }

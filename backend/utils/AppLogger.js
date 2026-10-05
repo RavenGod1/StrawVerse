@@ -32,6 +32,10 @@ makeStreamSafe(process.stderr);
 if (console && console._stdout) makeStreamSafe(console._stdout);
 if (console && console._stderr) makeStreamSafe(console._stderr);
 
+if (typeof global.sendToRenderer !== "function") {
+  global.sendToRenderer = () => {};
+}
+
 const winston = require("winston");
 const path = require("path");
 const fs = require("fs");
