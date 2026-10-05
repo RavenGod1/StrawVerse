@@ -103,9 +103,28 @@ async function download(url, dest) {
 }
 
 function extractFfmpeg(archivePath, workDir) {
-  execFileSync("unzip", ["-o", archivePath, "-d", workDir], {
-    stdio: "inherit",
-  });
+  try {
+    execFileSync("unzip", ["-o", archivePath, "-d", workDir], {
+      stdio: "inherit",
+    });
+  } catch (err) {
+    // Windows has no `unzip` by default; fall back to tar.exe then Expand-Archive.
+    try {
+      execFileSync("tar", ["-xf", archivePath, "-C", workDir], {
+        stdio: "inherit",
+      });
+    } catch (tarErr) {
+      execFileSync(
+        "powershell",
+        [
+          "-NoProfile",
+          "-Command",
+          `Expand-Archive -Path '${archivePath}' -DestinationPath '${workDir}' -Force`,
+        ],
+        { stdio: "inherit" },
+      );
+    }
+  }
   const candidate = path.join(workDir, "ffmpeg");
   if (fs.existsSync(candidate)) return candidate;
   for (const entry of fs.readdirSync(workDir)) {

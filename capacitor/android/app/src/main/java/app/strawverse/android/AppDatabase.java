@@ -113,7 +113,8 @@ public class AppDatabase {
                 domain = domain.replace("www.", "").toLowerCase();
                 String parentDomain = domain;
                 if (domain.contains("animepahe")) {
-                    parentDomain = "animepahe.pw";
+                    // keep per-mirror host (.ng/.ch/.pw/.com/.org have separate CF clearance)
+                    parentDomain = domain;
                 } else if (domain.contains("kwik.cx") || domain.contains("owocdn.top") || domain.contains("uwucdn.top")) {
                     parentDomain = "kwik.cx";
                 } else if (domain.contains("allmanga") || domain.contains("allanime")) {
@@ -165,9 +166,8 @@ public class AppDatabase {
             String domain = uri.getHost();
             if (domain != null) {
                 domain = domain.replace("www.", "").toLowerCase();
-                if (domain.contains("animepahe")) {
-                    domain = "animepahe.pw";
-                } else if (domain.contains("kwik.cx") || domain.contains("owocdn.top") || domain.contains("uwucdn.top")) {
+                // per-mirror host kept as-is for animepahe (.ng/.ch/.pw/.com/.org)
+                if (domain.contains("kwik.cx") || domain.contains("owocdn.top") || domain.contains("uwucdn.top")) {
                     domain = "kwik.cx";
                 }
                 cursor = db.rawQuery(
@@ -195,9 +195,8 @@ public class AppDatabase {
             String domain = uri.getHost();
             if (domain != null) {
                 domain = domain.replace("www.", "").toLowerCase();
-                if (domain.contains("animepahe")) {
-                    domain = "animepahe.pw";
-                } else if (domain.contains("kwik.cx") || domain.contains("owocdn.top") || domain.contains("uwucdn.top")) {
+                // per-mirror host kept as-is for animepahe (.ng/.ch/.pw/.com/.org)
+                if (domain.contains("kwik.cx") || domain.contains("owocdn.top") || domain.contains("uwucdn.top")) {
                     domain = "kwik.cx";
                 }
                 cursor = db.rawQuery(
@@ -237,9 +236,9 @@ public class AppDatabase {
         if (url.contains("owocdn.top") || url.contains("uwucdn.top")) {
             headers.put("Referer", "https://kwik.cx/");
         } else if (url.contains("kwik.cx")) {
-            headers.put("Referer", "https://animepahe.pw/");
+            headers.put("Referer", "https://animepahe.ng/");
         } else if (url.contains("animepahe")) {
-            headers.put("Referer", "https://animepahe.pw/");
+            headers.put("Referer", "https://animepahe.ng/");
         } else if (url.contains("temp.compsci88.com")) {
             headers.put("Referer", "https://weebcentral.com/");
         } else if (url.contains("anikototv.to") || url.contains("megaplay.buzz")) {

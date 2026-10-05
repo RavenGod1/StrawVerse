@@ -2166,8 +2166,43 @@ export default function InfoView({
     }
   };
 
-  const handleProviderSwitch = async (newId, newProvider) => {
-    const oldId = id;
+  // Switch to an installed provider that has no mapping entry for this
+  // title: search that provider by title and jump to the top result.
+  const handleUnlinkedSwitch = async (newProvider) => {
+    try {
+      const response = await fetch(`/api/list/${type}/${newProvider}/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ keyword: details?.title || "" }),
+      });
+      const data = await response.json();
+      const first = data?.results?.[0];
+      if (first?.id) {
+        await handleProviderSwitch(String(first.id), newProvider);
+      } else {
+        Swal.fire({
+          title: "Not found",
+          text: `"${details?.title}" was not found on ${newProvider}.`,
+          icon: "info",
+          background: "var(--bg-secondary)",
+          color: "var(--text-main)",
+          confirmButtonColor: "var(--accent)",
+        });
+      }
+    } catch (err) {
+      console.error(err);
+      Swal.fire({
+        title: "Error",
+        text: `Could not search ${newProvider}.`,
+        icon: "error",
+        background: "var(--bg-secondary)",
+        color: "var(--text-main)",
+        confirmButtonColor: "var(--accent)",
+      });
+    }
+  };
+
+  const handleProviderSwitch = async (newId, newProvider) => {    const oldId = id;
     try {
       await fetch("/api/metadata/switch-provider", {
         method: "POST",
@@ -2958,8 +2993,26 @@ export default function InfoView({
                       self.findIndex((t) => t.provider === p.provider) ===
                         index,
                   );
+                  // Also offer installed providers with no mapping entry for
+                  // this title (switching searches that provider by title).
+                  const linkedNames = new Set(
+                    validLinked.map((p) => p.provider),
+                  );
+                  const unlinkedInstalled = (
+                    installedExtensions?.[type] || []
+                  )
+                    .map((x) => x?.name)
+                    .filter(
+                      (n) =>
+                        n &&
+                        n !== "provider" &&
+                        n !== "local source" &&
+                        !linkedNames.has(n),
+                    )
+                    .map((n) => ({ provider: n, id: null }));
+                  const allOptions = [...validLinked, ...unlinkedInstalled];
 
-                  if (validLinked.length > 1) {
+                  if (allOptions.length > 1) {
                     return (
                       <>
                         <div
@@ -3000,12 +3053,16 @@ export default function InfoView({
 
                         {isProviderDropdownOpen && (
                           <div className="custom-dropdown-menu">
-                            {validLinked.map((p) => (
+                            {allOptions.map((p) => (
                               <div
                                 key={p.provider}
                                 className={`custom-dropdown-item ${activeProv === p.provider ? "selected" : ""}`}
                                 onClick={() => {
-                                  handleProviderSwitch(p.id, p.provider);
+                                  if (p.id) {
+                                    handleProviderSwitch(p.id, p.provider);
+                                  } else {
+                                    handleUnlinkedSwitch(p.provider);
+                                  }
                                   setIsProviderDropdownOpen(false);
                                 }}
                                 style={{

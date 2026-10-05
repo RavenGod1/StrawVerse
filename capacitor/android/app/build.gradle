@@ -17,9 +17,22 @@ android {
             ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    // True when a release keystore + password are available; else debug-sign.
+    def ksPath = System.getenv("STRAWVERSE_KEYSTORE_FILE")
+    def hasReleaseKeystore = ksPath != null && new File(ksPath).exists() && System.getenv("STRAWVERSE_KEYSTORE_PASSWORD")
+    signingConfigs {
+        release {
+            storeFile ksPath ? file(ksPath) : null
+            storePassword System.getenv("STRAWVERSE_KEYSTORE_PASSWORD")
+            keyAlias System.getenv("STRAWVERSE_KEY_ALIAS") ?: "strawverse"
+            keyPassword System.getenv("STRAWVERSE_KEY_PASSWORD") ?: System.getenv("STRAWVERSE_KEYSTORE_PASSWORD")
+        }
+    }
     buildTypes {
         release {
-            signingConfig signingConfigs.debug
+            // Release keystore via env (never committed). Falls back to debug
+            // signing so local/CI builds never break when keys are absent.
+            signingConfig hasReleaseKeystore ? signingConfigs.release : signingConfigs.debug
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
@@ -92,8 +105,14 @@ task patchCapacitorNodeJS {
     doLast {
         def targetFile = file("${rootProject.projectDir}/../node_modules/capacitor-nodejs/android/src/main/java/net/hampoelz/capacitor/nodejs/CapacitorNodeJS.java")
         if (targetFile.exists()) {
+            // On Windows, plain 'bash' resolves to C:\Windows\System32\bash.exe (WSL launcher)
+            // via CreateProcess search order, which fails without WSL. Prefer Git Bash.
+            def gitBash = new File("C:/Program Files/Git/bin/bash.exe")
+            def bashCmd = (org.gradle.internal.os.OperatingSystem.current().isWindows() && gitBash.exists())
+                ? gitBash.absolutePath
+                : "bash"
             exec {
-                commandLine 'bash', file('patch-capacitor-nodejs.sh').absolutePath, targetFile.absolutePath
+                commandLine bashCmd, file('patch-capacitor-nodejs.sh').absolutePath, targetFile.absolutePath
             }
         } else {
             logger.warn("CapacitorNodeJS.java not found at expected path, skipping patch")

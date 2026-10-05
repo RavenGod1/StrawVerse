@@ -598,7 +598,21 @@ class downloader {
         this.headers?.Referer || this.headers?.referer,
       );
 
-      let CONCURRENCY = await getInitialDomainConcurrency(domainName, 4);
+      let CONCURRENCY = await getInitialDomainConcurrency(domainName, 8);
+      // Hard ceiling: the adaptive loop below has no upper bound on its own
+      // (it kept climbing past 20 threads, got the host to 429, and then a
+      // single bad segment aborted the whole episode).
+      const MAX_CONCURRENCY = 16;
+      CONCURRENCY = Math.min(CONCURRENCY, MAX_CONCURRENCY);
+      // Slow-mirror escape: kwik mirrors throttle per-host (0.04 MB/s seen
+      // on akirax.buzz vs 5 MB/s bursts on mikora.top). If the first 16
+      // freshly-downloaded segments average under the floor, abort with the
+      // host attached so the queue retries on a different server instead of
+      // trickling for over an hour.
+      const SLOW_HOST_FLOOR_BPS = 350 * 1024;
+      const SLOW_HOST_AFTER_FRESH = 16;
+      const dlStartTime = Date.now();
+      let freshCount = 0;
       let currentIndex = 0;
       let stopDownloading = false;
       let failedSegmentsCount = 0;
@@ -677,8 +691,14 @@ class downloader {
               headers: await this.getRequestHeaders(segUrl),
               responseType: "buffer",
               agent: keepAliveAgent,
-              http2: segUrl.startsWith("https://"),
-              timeout: { request: 15000 },
+              // NOTE: HTTP/1.1 only. With http2:true, got multiplexes all
+              // segment "threads" onto one throttled TCP connection, which
+              // defeats parallelism on per-connection-throttled hosts.
+              http2: false,
+              // Generous total timeout: throttled hosts (0.1 MB/s) still make
+              // progress; a truly dead connection is reaped after 60s while
+              // other workers keep flowing.
+              timeout: { request: 60000 },
             });
             const cipherText = stripPngHeader(encRes.body);
             const decipher = crypto.createDecipheriv(
@@ -695,8 +715,11 @@ class downloader {
               headers: await this.getRequestHeaders(segUrl),
               responseType: "buffer",
               agent: keepAliveAgent,
-              http2: segUrl.startsWith("https://"),
-              timeout: { request: 15000 },
+              // NOTE: HTTP/1.1 only (see above): one TCP connection per
+              // thread instead of all threads multiplexed onto one.
+              http2: false,
+              // See above: throttled hosts need room to trickle.
+              timeout: { request: 60000 },
             });
             body = stripPngHeader(response.body);
           }
@@ -725,7 +748,11 @@ class downloader {
             logger.error(
               `[Download] Segment ${index} failed after 3 retries: ${err.message}`,
             );
-            stopDownloading = true;
+            // NOTE: do NOT set stopDownloading here. That flag means
+            // user pause/cancel; setting it on a segment error makes the
+            // worker loop below reject with a bogus "Queue Paused" and the
+            // queue halts silently. The caller parks this index for the
+            // sequential second pass instead.
             throw new Error(
               `SCRAPER_TEMPORARY_ERROR: Segment ${index} failed after retries (${err.message})`,
             );
@@ -750,6 +777,10 @@ class downloader {
       let completedCount = 0;
       let sampleBytesDownloaded = 0;
       let sampleStartTime = Date.now();
+      // Segments that exhausted retries: parked here and given a sequential
+      // second pass after the main loop, instead of aborting a whole episode
+      // over one flaky segment.
+      let failedIndices = [];
 
       await new Promise((resolve, reject) => {
         const checkDone = () => {
@@ -798,6 +829,7 @@ class downloader {
                   if (typeof downloadedBytes === "number") {
                     this.downloadedTotalBytes =
                       (this.downloadedTotalBytes || 0) + downloadedBytes;
+                    freshCount++;
                   }
                   this.currentSegments = Math.min(
                     this.Segments.length,
@@ -806,14 +838,44 @@ class downloader {
                   this.logProgress(null, CONCURRENCY);
                 }
 
-                if (completedCount % 8 === 0) {
+                // Slow-mirror escape hatch (see above): judge only once,
+                // after enough fresh bytes to see past handshake noise, and
+                // never on mostly-resumed downloads.
+                if (
+                  completedCount === SLOW_HOST_AFTER_FRESH &&
+                  freshCount >= SLOW_HOST_AFTER_FRESH
+                ) {
+                  const elapsedSec = (Date.now() - dlStartTime) / 1000;
+                  const overallBps =
+                    elapsedSec > 0
+                      ? (this.downloadedTotalBytes || 0) / elapsedSec
+                      : 0;
+                  if (overallBps < SLOW_HOST_FLOOR_BPS) {
+                    let slowHost = domainName;
+                    try {
+                      slowHost = new URL(this.streamUrl).hostname;
+                    } catch (_) {}
+                    stopDownloading = true;
+                    const slowErr = new Error(
+                      `SCRAPER_TEMPORARY_ERROR: segment host ${slowHost} too slow (${Math.round(overallBps / 1024)} KB/s over first ${SLOW_HOST_AFTER_FRESH} segments), trying another server`,
+                    );
+                    slowErr.failedHost = slowHost;
+                    reject(slowErr);
+                    return;
+                  }
+                }
+
+                if (completedCount % 4 === 0) {
                   const durationSec = (Date.now() - sampleStartTime) / 1000;
                   const throughput =
                     durationSec > 0 ? sampleBytesDownloaded / durationSec : 0;
                   recordDomainBatchSuccess(domainName, throughput);
                   sampleBytesDownloaded = 0;
                   sampleStartTime = Date.now();
-                  CONCURRENCY = await getDomainConcurrency(domainName, 6);
+                  CONCURRENCY = Math.min(
+                    await getDomainConcurrency(domainName, 16),
+                    MAX_CONCURRENCY,
+                  );
                 }
 
                 if (completedCount >= this.Segments.length) {
@@ -824,9 +886,24 @@ class downloader {
               })
               .catch((err) => {
                 activeWorkers--;
-                stopDownloading = true;
+                const cancelled =
+                  (global.isEpisodeInQueue &&
+                    !global.isEpisodeInQueue(this.EpID)) ||
+                  (global.isQueuePaused && global.isQueuePaused());
+                if (cancelled || stopDownloading) {
+                  stopDownloading = true;
+                  setDomainErrorCap(domainName, CONCURRENCY);
+                  reject(err);
+                  return;
+                }
+                completedCount++;
+                failedIndices.push(idx);
                 setDomainErrorCap(domainName, CONCURRENCY);
-                reject(err);
+                this.logProgress(
+                  `Segment ${idx} failed, will retry after the rest finish...`,
+                  CONCURRENCY,
+                );
+                enqueueNext();
               });
           }
 
@@ -835,6 +912,70 @@ class downloader {
 
         enqueueNext();
       });
+
+      if (failedIndices.length > 0) {
+        // Dead/rotated mirror host, not flaky segments: fail fast so the
+        // queue retries on a different server instead of grinding hundreds
+        // of dead segments sequentially (hours per episode).
+        const massFailThreshold = Math.max(
+          8,
+          Math.ceil(this.Segments.length * 0.1),
+        );
+        if (failedIndices.length > massFailThreshold) {
+          let host = "unknown-host";
+          try {
+            host = new URL(this.streamUrl).hostname;
+          } catch (_) {}
+          const abortErr = new Error(
+            `SCRAPER_TEMPORARY_ERROR: segment host ${host} unreachable (${failedIndices.length}/${this.Segments.length} segments failed)`,
+          );
+          abortErr.failedHost = host;
+          throw abortErr;
+        }
+        this.logProgress(
+          `Retrying ${failedIndices.length} failed segment(s) one by one...`,
+        );
+        // Cap the sequential pass: many failures means a dead host, which
+        // the mass-fail check above already handles; this bounds worst-case
+        // time when right at the threshold. Deferred items stay failing so
+        // the episode aborts fast instead of grinding them one by one.
+        const secondPass = failedIndices.slice(0, 12);
+        const stillFailing = [...failedIndices.slice(12)];
+        for (const fIdx of secondPass) {
+          if (
+            stopDownloading ||
+            (global.isQueuePaused && global.isQueuePaused()) ||
+            (global.isEpisodeInQueue && !global.isEpisodeInQueue(this.EpID))
+          ) {
+            stillFailing.push(fIdx);
+            continue;
+          }
+          try {
+            const bytes = await downloadSingleSegment(fIdx, 0);
+            if (typeof bytes === "number") {
+              this.downloadedTotalBytes =
+                (this.downloadedTotalBytes || 0) + bytes;
+            }
+            this.currentSegments = Math.min(
+              this.Segments.length,
+              this.currentSegments + 1,
+            );
+            this.logProgress(null, CONCURRENCY);
+          } catch (err) {
+            stillFailing.push(fIdx);
+            logger.error(
+              `[Download] Segment ${fIdx} failed on second pass: ${err.message}`,
+            );
+          }
+        }
+        failedIndices = stillFailing;
+        if (failedIndices.length > 0) {
+          failedSegmentsCount = failedIndices.length;
+          throw new Error(
+            `SCRAPER_TEMPORARY_ERROR: ${failedIndices.length} segment(s) failed after retries (e.g. #${failedIndices[0]})`,
+          );
+        }
+      }
 
       logger.info(
         `[Download] Finished downloading segments. Total: ${this.Segments.length}, Failed/Empty: ${failedSegmentsCount}`,

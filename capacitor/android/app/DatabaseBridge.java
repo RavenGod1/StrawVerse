@@ -82,7 +82,17 @@ public class DatabaseBridge {
     }
 
     private void handleInit(Context context, int requestId, JSONObject request) throws JSONException {
-        String baseDir = request.getString("dataDir");
+        // dataDir may be missing on older clients; fall back to the app's
+        // internal files parent (<pkg>/files -> <pkg>) so openDatabaseInternal
+        // never operates on a null dataDir.
+        String baseDir = request.optString("dataDir", "");
+        if (baseDir == null || baseDir.isEmpty()) {
+            File fallbackRoot = context.getFilesDir() != null
+                    ? context.getFilesDir().getParentFile()
+                    : context.getExternalFilesDir(null);
+            baseDir = fallbackRoot != null ? fallbackRoot.getAbsolutePath() : ".";
+            Log.w(TAG, "db-init without dataDir, falling back to " + baseDir);
+        }
         File strawverseRoot = new File(baseDir);
         File dataFolder = new File(strawverseRoot, "data");
         dataFolder.mkdirs();

@@ -1326,7 +1326,7 @@ async function boot() {
   appExpress.use(routes);
 
   appExpress.listen(PORT, "127.0.0.1", () => {
-    logger.info(`[android] Express listening on http://127.0.0.1:${PORT}`);
+    logger.info(`[android] Express listening on local port ${PORT}`);
     if (channel) channel.send("server-ready", { port: PORT });
   });
 

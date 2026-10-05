@@ -12,6 +12,7 @@ const { directoryMaker, MangaDir } = require("./DirectoryMaker");
 const {
   MangaChapterFetch,
   DownloadChapters,
+  fetchEpisode,
   fetchEpisodeSources,
   processServer,
 } = require("./AnimeManga");
@@ -23,6 +24,7 @@ const {
 const { sortSourcesByPreferredQuality } = require("./constants");
 const { verifyStreamReachability } = require("./streamVerifier");
 const { updateHistory } = require("./history");
+const { getBestProviderForMalId } = require("./mappingResolver");
 
 let _bgDownloadDepth = 0;
 let isProcessorRunning = false;
@@ -36,6 +38,12 @@ function parseBoolSetting(val) {
 
 let AnimeQueue = [];
 let isQueuePausedState = false;
+
+// Mirror hosts proven dead for an episode (keyed by epid). When segment
+// downloads abort with failedHost, retries resolve servers again but skip
+// any server whose stream lives on an excluded host, so attempt 2/3 lands
+// on a different mirror instead of re-downloading from the dead one.
+const hostSkipByEpid = new Map();
 
 (async () => {
   try {
@@ -567,6 +575,17 @@ async function continuousExecution() {
               await removeQueue(currentTask.epid, false);
             }
           } else if (isRetryableError(err)) {
+            // Remember dead mirror hosts so the retry resolves a different server.
+            if (err.failedHost && currentTask?.epid) {
+              const known = hostSkipByEpid.get(currentTask.epid) || [];
+              if (!known.includes(err.failedHost)) {
+                known.push(err.failedHost);
+                hostSkipByEpid.set(currentTask.epid, known);
+                logger.warn(
+                  `[queueWorker] Excluding dead host ${err.failedHost} for ${currentTask.epid} on retry`,
+                );
+              }
+            }
             currentTask.retryCount = (currentTask.retryCount || 0) + 1;
             const maxRetries = 3;
             if (currentTask.retryCount >= maxRetries) {
@@ -584,6 +603,7 @@ async function continuousExecution() {
                 });
               } catch (ipcErr) {}
               if (currentTask?.epid) {
+                hostSkipByEpid.delete(currentTask.epid);
                 await removeQueue(currentTask.epid, false);
               }
             } else {
@@ -637,6 +657,7 @@ async function continuousExecution() {
               logger.warn(
                 `[queueWorker] Task ${currentTask.epid} fatal error: ${err.message}. Removing from queue.`,
               );
+              hostSkipByEpid.delete(currentTask.epid);
               await removeQueue(currentTask.epid, false);
             }
           }
@@ -800,6 +821,40 @@ async function downloadEpisodeByQuality(
       sourcesList = extractSources(sourcesArray, subdub);
     }
 
+    // Stale queued episode IDs (e.g. anikoto session tokens expire, so a
+    // task queued days ago resolves to nothing). Refresh via mapping: look
+    // up the anime's current provider id, walk its episode list for the
+    // same EP number, and retry sources once with the fresh episode id.
+    if ((!sourcesList || sourcesList.length === 0) && malid && episodeNumber !== undefined && episodeNumber !== null) {
+      try {
+        const provName = provider.provider_name || config.Animeprovider;
+        const best = await getBestProviderForMalId(Number(malid), "Anime", provName);
+        if (best && best.id) {
+          for (let pg = 1; pg <= 5; pg++) {
+            const eps = await fetchEpisode(provider, best.id, pg);
+            const match = eps?.episodes?.find(
+              (e) => Number(e.number) === Number(episodeNumber),
+            );
+            if (match?.id && String(match.id) !== String(resolvedEpid)) {
+              logger.info(
+                `[Download] Refreshing stale episode id via mapping: ${resolvedEpid} -> ${match.id}`,
+              );
+              const fresh = await fetchEpisodeSources(provider, String(match.id), subdub);
+              const freshList = extractSources(fresh, subdub);
+              if (freshList && freshList.length > 0) {
+                sourcesArray = fresh;
+                sourcesList = freshList;
+                break;
+              }
+            }
+            if (!eps?.hasNextPage) break;
+          }
+        }
+      } catch (refreshErr) {
+        logger.warn(`[Download] Stale-id refresh failed: ${refreshErr.message}`);
+      }
+    }
+
     let subtitles =
       sourcesArray?.subtitles ||
       sourcesArray?.[subdub]?.subtitles ||
@@ -826,6 +881,17 @@ async function downloadEpisodeByQuality(
           );
           const resolved = await processServer(Animeprovider, src);
           if (resolved && resolved.url) {
+            let rHost = "";
+            try {
+              rHost = new URL(resolved.url).hostname;
+            } catch (_) {}
+            const skipHosts = hostSkipByEpid.get(epid) || [];
+            if (rHost && skipHosts.includes(rHost)) {
+              logger.warn(
+                `[Download] Server #${i + 1} "${src.name || src.quality}" resolved to excluded host ${rHost}, trying next server...`,
+              );
+              continue;
+            }
             selectedSource = {
               ...src,
               ...resolved,
@@ -849,6 +915,17 @@ async function downloadEpisodeByQuality(
           );
         }
       } else {
+        let aliveHost = "";
+        try {
+          aliveHost = new URL(src.url).hostname;
+        } catch (_) {}
+        const skipHostsAlive = hostSkipByEpid.get(epid) || [];
+        if (aliveHost && skipHostsAlive.includes(aliveHost)) {
+          logger.warn(
+            `[Download] Server #${i + 1} "${src.name || src.quality}" is on excluded host ${aliveHost}, trying next server...`,
+          );
+          continue;
+        }
         const isAlive = await verifyStreamReachability(
           src.url,
           src.headers || {},
@@ -931,6 +1008,7 @@ async function downloadEpisodeByQuality(
       (config?.subtitleFormat ?? "vtt") === "srt",
       selectedSource.headers ?? {},
     );
+    hostSkipByEpid.delete(epid);
 
     if (malid && animeId) {
       try {
@@ -1028,7 +1106,10 @@ async function downloadVideo(
       throw err;
     }
     const errMsg = err?.message || String(err);
-    throw new Error(`Failed To Download: ${errMsg}`);
+    const wrapped = new Error(`Failed To Download: ${errMsg}`);
+    // Preserve dead-host info so the queue can exclude the mirror on retry.
+    if (err?.failedHost) wrapped.failedHost = err.failedHost;
+    throw wrapped;
   }
 }
 
