@@ -12,6 +12,7 @@ const { directoryMaker, MangaDir } = require("./DirectoryMaker");
 const {
   MangaChapterFetch,
   DownloadChapters,
+  fetchEpisode,
   fetchEpisodeSources,
   processServer,
 } = require("./AnimeManga");
@@ -23,6 +24,7 @@ const {
 const { sortSourcesByPreferredQuality } = require("./constants");
 const { verifyStreamReachability } = require("./streamVerifier");
 const { updateHistory } = require("./history");
+const { getBestProviderForMalId } = require("./mappingResolver");
 
 let _bgDownloadDepth = 0;
 let isProcessorRunning = false;
@@ -817,6 +819,40 @@ async function downloadEpisodeByQuality(
     if ((!sourcesList || sourcesList.length === 0) && resolvedEpid !== epid) {
       sourcesArray = await fetchEpisodeSources(provider, epid, subdub);
       sourcesList = extractSources(sourcesArray, subdub);
+    }
+
+    // Stale queued episode IDs (e.g. anikoto session tokens expire, so a
+    // task queued days ago resolves to nothing). Refresh via mapping: look
+    // up the anime's current provider id, walk its episode list for the
+    // same EP number, and retry sources once with the fresh episode id.
+    if ((!sourcesList || sourcesList.length === 0) && malid && episodeNumber !== undefined && episodeNumber !== null) {
+      try {
+        const provName = provider.provider_name || config.Animeprovider;
+        const best = await getBestProviderForMalId(Number(malid), "Anime", provName);
+        if (best && best.id) {
+          for (let pg = 1; pg <= 5; pg++) {
+            const eps = await fetchEpisode(provider, best.id, pg);
+            const match = eps?.episodes?.find(
+              (e) => Number(e.number) === Number(episodeNumber),
+            );
+            if (match?.id && String(match.id) !== String(resolvedEpid)) {
+              logger.info(
+                `[Download] Refreshing stale episode id via mapping: ${resolvedEpid} -> ${match.id}`,
+              );
+              const fresh = await fetchEpisodeSources(provider, String(match.id), subdub);
+              const freshList = extractSources(fresh, subdub);
+              if (freshList && freshList.length > 0) {
+                sourcesArray = fresh;
+                sourcesList = freshList;
+                break;
+              }
+            }
+            if (!eps?.hasNextPage) break;
+          }
+        }
+      } catch (refreshErr) {
+        logger.warn(`[Download] Stale-id refresh failed: ${refreshErr.message}`);
+      }
     }
 
     let subtitles =

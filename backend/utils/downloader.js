@@ -600,16 +600,16 @@ class downloader {
 
       let CONCURRENCY = await getInitialDomainConcurrency(domainName, 8);
       // Hard ceiling: the adaptive loop below has no upper bound on its own
-      // (it kept climbing to 20+ threads, got the host to 429, and then a
+      // (it kept climbing past 20 threads, got the host to 429, and then a
       // single bad segment aborted the whole episode).
-      const MAX_CONCURRENCY = 12;
+      const MAX_CONCURRENCY = 16;
       CONCURRENCY = Math.min(CONCURRENCY, MAX_CONCURRENCY);
       // Slow-mirror escape: kwik mirrors throttle per-host (0.04 MB/s seen
       // on akirax.buzz vs 5 MB/s bursts on mikora.top). If the first 16
       // freshly-downloaded segments average under the floor, abort with the
       // host attached so the queue retries on a different server instead of
       // trickling for over an hour.
-      const SLOW_HOST_FLOOR_BPS = 200 * 1024;
+      const SLOW_HOST_FLOOR_BPS = 350 * 1024;
       const SLOW_HOST_AFTER_FRESH = 16;
       const dlStartTime = Date.now();
       let freshCount = 0;
@@ -691,7 +691,10 @@ class downloader {
               headers: await this.getRequestHeaders(segUrl),
               responseType: "buffer",
               agent: keepAliveAgent,
-              http2: segUrl.startsWith("https://"),
+              // NOTE: HTTP/1.1 only. With http2:true, got multiplexes all
+              // segment "threads" onto one throttled TCP connection, which
+              // defeats parallelism on per-connection-throttled hosts.
+              http2: false,
               // Generous total timeout: throttled hosts (0.1 MB/s) still make
               // progress; a truly dead connection is reaped after 60s while
               // other workers keep flowing.
@@ -712,7 +715,9 @@ class downloader {
               headers: await this.getRequestHeaders(segUrl),
               responseType: "buffer",
               agent: keepAliveAgent,
-              http2: segUrl.startsWith("https://"),
+              // NOTE: HTTP/1.1 only (see above): one TCP connection per
+              // thread instead of all threads multiplexed onto one.
+              http2: false,
               // See above: throttled hosts need room to trickle.
               timeout: { request: 60000 },
             });
@@ -868,7 +873,7 @@ class downloader {
                   sampleBytesDownloaded = 0;
                   sampleStartTime = Date.now();
                   CONCURRENCY = Math.min(
-                    await getDomainConcurrency(domainName, 12),
+                    await getDomainConcurrency(domainName, 16),
                     MAX_CONCURRENCY,
                   );
                 }
