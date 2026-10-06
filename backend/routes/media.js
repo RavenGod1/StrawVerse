@@ -186,22 +186,26 @@ router.post("/api/list/:AnimeManga/:provider/", async (req, res) => {
         );
       } else if (provider === "provider") {
         const pObj = await getProviderOrThrow("Manga");
-        data = await latestMangas(pObj, filters?.page);
+        data = await latestMangas(pObj, filters?.page, filters);
+        data = { ...data, site: config.Mangaprovider };
       } else if (provider === "search") {
         const pObj = await getProviderOrThrow("Manga");
         data = await MangaSearch(
           pObj,
           req?.query?.query || req?.body?.keyword,
           filters?.page,
+          filters,
         );
+        data = { ...data, site: config.Mangaprovider };
       } else {
         const pObj = await getProviderOrThrow("Manga", provider);
         const searchKeyword = req?.body?.keyword || req?.query?.query || "";
         if (searchKeyword) {
-          data = await MangaSearch(pObj, searchKeyword, filters?.page);
+          data = await MangaSearch(pObj, searchKeyword, filters?.page, filters);
         } else {
-          data = await latestMangas(pObj, filters?.page);
+          data = await latestMangas(pObj, filters?.page, filters);
         }
+        data = { ...data, site: provider };
       }
     }
 

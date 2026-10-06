@@ -332,14 +332,14 @@ async function fetchEpisodeSources(provider, episodeId, category = null) {
 //====================================== Manga ================================
 
 // Latest Manga
-async function latestMangas(provider, Page = 1) {
+async function latestMangas(provider, Page = 1, filters = {}) {
   if (!provider?.provider)
     throw new Error(
       "Missing Provider! ( try downloading from settings > marketplace )",
     );
 
   const cacheKey = CreateHashKey(
-    `latestmanga_${provider.provider_name}_${Page}`,
+    `latestmanga_${provider.provider_name}_${Page}_${JSON.stringify(filters)}`,
   );
 
   const cachedData = cache.get(cacheKey);
@@ -351,7 +351,7 @@ async function latestMangas(provider, Page = 1) {
     return cachedData;
   }
 
-  let data = await provider.provider.latestManga(Page);
+  let data = await provider.provider.latestManga(Page, filters);
   if (data?.results) await enrichWithLibraryTags("Manga", data.results);
   if (data?.data) await enrichWithLibraryTags("Manga", data.data);
   cache.set(cacheKey, data, 60);
@@ -359,7 +359,7 @@ async function latestMangas(provider, Page = 1) {
 }
 
 // Manga Search
-async function MangaSearch(provider, MANGA_NAME, PAGE = 1) {
+async function MangaSearch(provider, MANGA_NAME, PAGE = 1, filters = {}) {
   if (!provider?.provider)
     throw new Error(
       "Missing Provider! ( try downloading from settings > marketplace )",
@@ -367,7 +367,7 @@ async function MangaSearch(provider, MANGA_NAME, PAGE = 1) {
 
   try {
     const cacheKey = CreateHashKey(
-      `mangasearch_${provider.provider_name}_${MANGA_NAME}_${PAGE}`,
+      `mangasearch_${provider.provider_name}_${MANGA_NAME}_${PAGE}_${JSON.stringify(filters)}`,
     );
 
     const cachedData = cache.get(cacheKey);
@@ -380,7 +380,11 @@ async function MangaSearch(provider, MANGA_NAME, PAGE = 1) {
       return cachedData;
     }
 
-    const data = await provider.provider.searchManga(MANGA_NAME, PAGE);
+    const data = await provider.provider.searchManga(
+      MANGA_NAME,
+      PAGE,
+      filters,
+    );
     if (data?.results) await enrichWithLibraryTags("Manga", data.results);
     if (data?.data) await enrichWithLibraryTags("Manga", data.data);
     cache.set(cacheKey, data, 60);
