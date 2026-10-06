@@ -13,8 +13,11 @@ import {
   Eye,
   EyeOff,
   Check,
+  FolderOpen,
+  RotateCcw,
 } from "lucide-react";
 import { swalSuccess, swalError, swalConfirm } from "../../utils/swal";
+import { isMobileApp } from "../../utils/nativeBridge";
 import {
   apiPost,
   applyThemeVars,
@@ -154,6 +157,8 @@ export default function SettingsView({
   const [imageCacheSizeLimit, setImageCacheSizeLimit] = useState(5);
   const [developerMode, setDeveloperMode] = useState(false);
   const [downloadNotification, setDownloadNotification] = useState(true);
+  const [downloadLocation, setDownloadLocation] = useState("");
+  const [browsingFolder, setBrowsingFolder] = useState(false);
   const [autoSkipIntro, setAutoSkipIntro] = useState(true);
   const [subFontSize, setSubFontSize] = useState(46);
   const [subColor, setSubColor] = useState("#FFFFFF");
@@ -240,6 +245,35 @@ export default function SettingsView({
   const handleCatalogColumnsChange = (val) => {
     setCatalogColumns(val);
     applyThemeVars({ catalogColumns: val });
+  };
+
+  const handleBrowseDownloadLocation = async () => {
+    if (!window.sharedStateAPI?.selectDirectory) {
+      swalError(
+        "Not Supported",
+        "Folder picker is not available on this platform.",
+      );
+      return;
+    }
+    setBrowsingFolder(true);
+    try {
+      const result =
+        await window.sharedStateAPI.selectDirectory(downloadLocation);
+      if (result?.success && result.path) {
+        setDownloadLocation(result.path);
+      } else if (result && !result.canceled && result.error) {
+        swalError("Could Not Pick Folder", result.error);
+      }
+    } catch (err) {
+      console.error("Failed to pick download folder:", err);
+      swalError("Could Not Pick Folder", err.message);
+    } finally {
+      setBrowsingFolder(false);
+    }
+  };
+
+  const handleResetDownloadLocation = () => {
+    setDownloadLocation("");
   };
 
   useEffect(() => {
@@ -651,6 +685,7 @@ export default function SettingsView({
         setDownloadNotification(
           s.downloadNotification !== undefined ? s.downloadNotification : true,
         );
+        setDownloadLocation(s.CustomDownloadLocation || "");
         setAutoSkipIntro(s.autoSkipIntro);
         const layoutVal = s.mangaReaderLayout || "long-strip";
         setMangaReaderLayout(layoutVal);
@@ -840,6 +875,8 @@ export default function SettingsView({
         : true)
     )
       dirty.downloadNotification = downloadNotification;
+    if (downloadLocation !== (settings.CustomDownloadLocation || ""))
+      dirty.CustomDownloadLocation = downloadLocation;
     if (autoSkipIntro !== settings.autoSkipIntro)
       dirty.autoSkipIntro = autoSkipIntro;
     if (mangaReaderLayout !== (settings.mangaReaderLayout || "long-strip"))
@@ -967,6 +1004,7 @@ export default function SettingsView({
         (settings.downloadNotification !== undefined
           ? settings.downloadNotification
           : true) ||
+      downloadLocation !== (settings.CustomDownloadLocation || "") ||
       autoSkipIntro !== settings.autoSkipIntro ||
       mangaReaderLayout !== (settings.mangaReaderLayout || "long-strip") ||
       mangaReaderWidth !== (parseInt(settings.mangaReaderWidth, 10) || 800) ||
@@ -1014,6 +1052,7 @@ export default function SettingsView({
     playerSpeed,
     developerMode,
     downloadNotification,
+    downloadLocation,
     autoSkipIntro,
     mangaReaderLayout,
     mangaReaderWidth,
@@ -1199,6 +1238,43 @@ export default function SettingsView({
                     minWidth={200}
                   />
                 </SettingsRow>
+                {!isMobileApp() && (
+                  <SettingsRow
+                    label="Download Location"
+                    desc="Where new anime episodes and manga chapters are saved. Takes effect for new downloads; move existing Anime/Manga folders over manually to keep them visible."
+                  >
+                    <div className="download-location-picker">
+                      <input
+                        type="text"
+                        className="settings-text-input download-location-path"
+                        value={downloadLocation}
+                        placeholder="Default (system Downloads folder)"
+                        readOnly
+                        title={downloadLocation || "Default (system Downloads folder)"}
+                      />
+                      <button
+                        type="button"
+                        className="settings-market-btn download-location-btn"
+                        onClick={handleBrowseDownloadLocation}
+                        disabled={browsingFolder}
+                      >
+                        <FolderOpen size={14} />
+                        {browsingFolder ? "Browsing..." : "Browse"}
+                      </button>
+                      {downloadLocation && (
+                        <button
+                          type="button"
+                          className="theme-reset-btn"
+                          onClick={handleResetDownloadLocation}
+                          title="Reset to default Downloads folder"
+                          aria-label="Reset download location to default"
+                        >
+                          <RotateCcw size={16} />
+                        </button>
+                      )}
+                    </div>
+                  </SettingsRow>
+                )}
                 <SettingsRow
                   label="Developer Mode"
                   desc="Enable advanced logs viewer tab and debug utilities."

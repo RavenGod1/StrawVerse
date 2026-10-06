@@ -65,6 +65,8 @@ contextBridge.exposeInMainWorld("sharedStateAPI", {
   getAppVersion: () => ipcRenderer.invoke("get-app-version"),
   openLocalPath: (targetPath, openFolder) =>
     ipcRenderer.invoke("open-local-path", targetPath, openFolder),
+  selectDirectory: (currentPath) =>
+    ipcRenderer.invoke("select-directory", currentPath),
   playInMpv: (options) => ipcRenderer.invoke("play-in-mpv", options),
   controlMpv: (command, args) =>
     ipcRenderer.invoke("control-mpv", command, args),

@@ -290,6 +290,11 @@ function createPolyfill() {
         customPath: targetPath,
         action: openFolder ? "open_folder" : "open_file",
       }),
+    selectDirectory: () =>
+      Promise.resolve({
+        success: false,
+        error: "Folder picker is not supported on mobile",
+      }),
     checkWtHealth: (url) => invoke("check-wt-health", url),
     cancelNativeRequests: () => invoke("native-cancel"),
   };

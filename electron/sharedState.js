@@ -1,6 +1,6 @@
 const path = require("path");
 const fs = require("fs");
-const { ipcMain } = require("electron");
+const { ipcMain, dialog, BrowserWindow } = require("electron");
 const backendDir = fs.existsSync(path.join(__dirname, "backend"))
   ? path.join(__dirname, "backend")
   : path.join(__dirname, "..", "backend");
@@ -128,6 +128,34 @@ function registerSharedStateHandlers() {
   ipcMain.handle("update-settings", async (event, settingsObj) => {
     await settingupdate(settingsObj);
     return { success: true };
+  });
+
+  ipcMain.handle("select-directory", async (event, currentPath) => {
+    const win =
+      BrowserWindow.getFocusedWindow() ||
+      BrowserWindow.getAllWindows()[0] ||
+      null;
+    try {
+      const options = {
+        properties: ["openDirectory", "createDirectory"],
+      };
+      if (
+        currentPath &&
+        typeof currentPath === "string" &&
+        fs.existsSync(currentPath)
+      ) {
+        options.defaultPath = currentPath;
+      }
+      const result = win
+        ? await dialog.showOpenDialog(win, options)
+        : await dialog.showOpenDialog(options);
+      if (result.canceled || !result.filePaths?.length) {
+        return { success: false, canceled: true };
+      }
+      return { success: true, path: result.filePaths[0] };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
   });
 }
 
