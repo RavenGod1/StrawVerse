@@ -30,3 +30,7 @@ capacitor/www/nodejs/*.md
 capacitor/android/app/release/
 node_modules
 app.log
+*.db
+*.db-journal
+*.db-wal
+*.db-shm

@@ -198,6 +198,35 @@ async function getFfmpegPath() {
   throw new Error("FFmpeg binary not found.");
 }
 
+// Tracks the last vault-clearance refresh so parallel segment workers
+// share one solver run instead of stampeding it.
+const clearanceRefresh = { at: 0, pending: null };
+
+async function refreshCdnClearance(targetUrl) {
+  try {
+    if (typeof global.cloudflarebypass !== "function") return false;
+    if (Date.now() - clearanceRefresh.at < 60000) return true;
+    if (!clearanceRefresh.pending) {
+      const target = /owocdn|uwucdn|kwik/i.test(targetUrl || "")
+        ? "https://kwik.cx/"
+        : targetUrl;
+      clearanceRefresh.pending = global
+        .cloudflarebypass(target, true)
+        .then(() => {
+          clearanceRefresh.at = Date.now();
+        })
+        .catch(() => {})
+        .finally(() => {
+          clearanceRefresh.pending = null;
+        });
+    }
+    await clearanceRefresh.pending;
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 class downloader {
   constructor({
     directory,
@@ -364,6 +393,49 @@ class downloader {
     return finalHeaders;
   }
 
+  // Server-set cookies (e.g. CDN session cookies issued with the
+  // playlist) must travel with segment/key requests, otherwise hosts
+  // that gate segments on them answer every segment with 403.
+  // Same recovery the local stream proxy uses: on 403/503 refresh CDN
+  // clearance once, then retry a single time with fresh headers/cookies.
+  // The request thunk re-resolves headers on every attempt.
+  async fetchWithClearanceRetry(targetUrl, requestThunk) {
+    try {
+      return await requestThunk();
+    } catch (err) {
+      const status = err?.response?.statusCode ?? err?.response?.status;
+      if ((status === 403 || status === 503) && (await refreshCdnClearance(targetUrl))) {
+        return await requestThunk();
+      }
+      throw err;
+    }
+  }
+
+  absorbResponseCookies(headers) {
+    try {
+      const setCookies = headers?.["set-cookie"];
+      if (!Array.isArray(setCookies) || setCookies.length === 0) return;
+      const merged = new Map();
+      const existing = this.headers?.Cookie || this.headers?.cookie || "";
+      for (const part of String(existing).split(";")) {
+        const trimmed = part.trim();
+        if (!trimmed) continue;
+        const sep = trimmed.indexOf("=");
+        merged.set(sep === -1 ? trimmed : trimmed.slice(0, sep), trimmed);
+      }
+      for (const c of setCookies) {
+        const pair = String(c).split(";")[0].trim();
+        if (!pair) continue;
+        const sep = pair.indexOf("=");
+        merged.set(sep === -1 ? pair : pair.slice(0, sep), pair);
+      }
+      if (merged.size > 0) {
+        delete this.headers.cookie;
+        this.headers["Cookie"] = [...merged.values()].join("; ");
+      }
+    } catch (_) {}
+  }
+
   // Additional Checks
   async DownloadsChecking() {
     if (
@@ -387,10 +459,12 @@ class downloader {
     if (!this.streamUrl || this.streamUrl.length <= 0) {
       throw new Error("No Stream Url Provided");
     } else {
-      let Playlist = await got(this.streamUrl, {
+      const masterRes = await got(this.streamUrl, {
         headers: await this.getRequestHeaders(this.streamUrl),
         http2: true,
-      }).text();
+      });
+      this.absorbResponseCookies(masterRes.headers);
+      let Playlist = masterRes.body;
 
       if (!Playlist) throw new Error("No Stream Found!");
 
@@ -470,10 +544,12 @@ class downloader {
           }
 
           this.streamUrl = selectedStream.url;
-          Playlist = await got(this.streamUrl, {
+          const mediaRes = await got(this.streamUrl, {
             headers: await this.getRequestHeaders(this.streamUrl),
             http2: true,
-          }).text();
+          });
+          this.absorbResponseCookies(mediaRes.headers);
+          Playlist = mediaRes.body;
 
           if (!Playlist)
             throw new Error("No Stream Found for selected quality!");
@@ -667,13 +743,14 @@ class downloader {
           if (typeof Segment === "object" && Segment.encrypted) {
             if (!this._keyPromiseCache[Segment.keyUrl]) {
               this._keyPromiseCache[Segment.keyUrl] = (async () => {
-                const keyRes = await got(Segment.keyUrl, {
+                const keyRes = await this.fetchWithClearanceRetry(Segment.keyUrl, async () =>
+                  got(Segment.keyUrl, {
                   headers: await this.getRequestHeaders(Segment.keyUrl),
                   responseType: "buffer",
                   agent: keepAliveAgent,
                   http2: Segment.keyUrl.startsWith("https://"),
                   timeout: { request: 15000 },
-                });
+                }));
                 return keyRes.body;
               })().catch((err) => {
                 delete this._keyPromiseCache[Segment.keyUrl];
@@ -687,7 +764,8 @@ class downloader {
             } else {
               iv.writeUInt32BE(parseInt(Segment.iv, 10), 12);
             }
-            const encRes = await got(segUrl, {
+            const encRes = await this.fetchWithClearanceRetry(segUrl, async () =>
+              got(segUrl, {
               headers: await this.getRequestHeaders(segUrl),
               responseType: "buffer",
               agent: keepAliveAgent,
@@ -699,7 +777,7 @@ class downloader {
               // progress; a truly dead connection is reaped after 60s while
               // other workers keep flowing.
               timeout: { request: 60000 },
-            });
+            }));
             const cipherText = stripPngHeader(encRes.body);
             const decipher = crypto.createDecipheriv(
               "aes-128-cbc",
@@ -711,7 +789,8 @@ class downloader {
               decipher.final(),
             ]);
           } else {
-            const response = await got(segUrl, {
+            const response = await this.fetchWithClearanceRetry(segUrl, async () =>
+              got(segUrl, {
               headers: await this.getRequestHeaders(segUrl),
               responseType: "buffer",
               agent: keepAliveAgent,
@@ -720,7 +799,7 @@ class downloader {
               http2: false,
               // See above: throttled hosts need room to trickle.
               timeout: { request: 60000 },
-            });
+            }));
             body = stripPngHeader(response.body);
           }
 

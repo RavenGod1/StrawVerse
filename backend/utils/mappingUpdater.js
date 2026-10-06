@@ -485,7 +485,7 @@ async function checkForMappingUpdates() {
                 [rot.oldUuid, rot.newUuid, rot.oldUuid, `${rot.oldUuid}-%`],
               );
               await run(
-                "UPDATE SkipTimes SET anime_id = REPLACE(anime_id, ?, ?) WHERE anime_id = ? OR anime_id LIKE ?",
+                "UPDATE OR REPLACE SkipTimes SET anime_id = REPLACE(anime_id, ?, ?) WHERE anime_id = ? OR anime_id LIKE ?",
                 [rot.oldUuid, rot.newUuid, rot.oldUuid, `${rot.oldUuid}-%`],
               );
               await run(
@@ -691,7 +691,7 @@ async function syncLibraryIdsWithMapping() {
           );
 
           await run(
-            "UPDATE SkipTimes SET anime_id = REPLACE(anime_id, ?, ?) WHERE anime_id = ? OR anime_id LIKE ?",
+            "UPDATE OR REPLACE SkipTimes SET anime_id = REPLACE(anime_id, ?, ?) WHERE anime_id = ? OR anime_id LIKE ?",
             [anime.id, latestId, anime.id, `${anime.id}-%`],
           );
 
@@ -935,7 +935,7 @@ async function syncLibraryIdsWithMapping() {
                 [item.anime_id, latestId, item.anime_id, `${item.anime_id}-%`],
               );
               await run(
-                "UPDATE SkipTimes SET anime_id = REPLACE(anime_id, ?, ?) WHERE anime_id = ? OR anime_id LIKE ?",
+                "UPDATE OR REPLACE SkipTimes SET anime_id = REPLACE(anime_id, ?, ?) WHERE anime_id = ? OR anime_id LIKE ?",
                 [item.anime_id, latestId, item.anime_id, `${item.anime_id}-%`],
               );
               try {
