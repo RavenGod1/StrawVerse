@@ -136,7 +136,9 @@ Beyond standard downloading, StrawVerse includes real-time playback synchronizat
 
 ### How to download and use `StrawVerse.exe`?
 
-[Download Guide Video](<iframe width="560" height="315" src="https://www.youtube.com/embed/ZmcE-LrofgQ?si=ky1ZLibFpiVDcChZ" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>)
+[Download Guide Video]
+
+[![Watch the demo](https://img.youtube.com/vi/ZmcE-LrofgQ/0.jpg)](https://www.youtube.com/watch?v=ZmcE-LrofgQ)
 
 ## Configuration
 
