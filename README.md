@@ -141,11 +141,11 @@ Beyond standard downloading, StrawVerse includes real-time playback synchronizat
 [![Watch the YT demo](https://img.youtube.com/vi/ZmcE-LrofgQ/0.jpg)](https://www.youtube.com/watch?v=ZmcE-LrofgQ)
 
 
-(
+
 
 https://github.com/user-attachments/assets/9042f0f9-be25-4705-a6a5-dace3a3539e0
 
-)
+
 
 ## Configuration
 
