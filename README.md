@@ -134,13 +134,9 @@ Beyond standard downloading, StrawVerse includes real-time playback synchronizat
 
 ## Videos
 
-### How to download `StrawVerse.exe`?
+### How to download and use `StrawVerse.exe`?
 
-[Download Guide Video](https://github.com/Incredibleflamer/Anime-batch-downloader-gui/assets/84078595/662413b3-cf34-49d1-a99d-4c5e42330d05)
-
-### How to download anime from `StrawVerse.exe`?
-
-[Anime Download Guide Video](https://github.com/Incredibleflamer/Anime-batch-downloader-gui/assets/84078595/24c68567-aaf5-4953-bda7-8fcec50e193c)
+[Download Guide Video](<iframe width="560" height="315" src="https://www.youtube.com/embed/ZmcE-LrofgQ?si=ky1ZLibFpiVDcChZ" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>)
 
 ## Configuration
 
