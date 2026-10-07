@@ -71,6 +71,18 @@ async function downloadMediaMulti({
     }
   }
 
+  const unresolved = items.filter((it) => !it || !it.id);
+  if (unresolved.length > 0) {
+    logger.warn(`[queueWorker] Dropping ${unresolved.length} ${unitName.toLowerCase()} with unresolvable IDs (numbers: ${unresolved.map((u) => u?.number ?? "?").join(", ")}).`);
+    items = items.filter((it) => it && it.id);
+    if (items.length === 0) {
+      return {
+        error: true,
+        message: `Could not resolve ${unitName.toLowerCase()} IDs — nothing queued. Open the title to load its list, then try again.`,
+      };
+    }
+  }
+
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
     const data = await singleDownloadFn(
@@ -144,6 +156,12 @@ async function downloadAnimeSingle(
   malid = null,
   subdub = null,
 ) {
+  if (!episodeid) {
+    return {
+      error: true,
+      message: "Missing episode ID — cannot queue download. Re-add it from the episode list.",
+    };
+  }
   try {
     const config = preFetchedConfig || (await settingfetch());
     const Animeprovider =
@@ -359,6 +377,12 @@ async function downloadMangaSingle(
   returnItemOnly = false,
   malid = null,
 ) {
+  if (!chapterid) {
+    return {
+      error: true,
+      message: "Missing chapter ID — cannot queue download. Re-add it from the chapter list.",
+    };
+  }
   try {
     const config = preFetchedConfig || (await settingfetch());
     const Mangaprovider =

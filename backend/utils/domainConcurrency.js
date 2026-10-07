@@ -6,6 +6,17 @@ const circuitBreaker = {};
 const throughputCache = {};
 const domainMaxCap = {};
 const coolDownCache = {};
+const lastTuningLogAt = {};
+const TUNING_LOG_INTERVAL_MS = 30000;
+
+function logTuning(domain, level, msg) {
+  try {
+    const now = Date.now();
+    if (now - (lastTuningLogAt[domain] || 0) < TUNING_LOG_INTERVAL_MS) return;
+    lastTuningLogAt[domain] = now;
+    logger[level === "warn" ? "warn" : "info"](msg);
+  } catch (_) {}
+}
 
 function markCoolingDown(key, durationMs = 60000) {
   if (!key) return;
@@ -190,8 +201,10 @@ function stepDownConcurrency(domain) {
     : Math.max(1, current - 1);
   const stepped = Math.max(1, targetCap);
   cache[domain] = stepped;
-  logger.info(
-    `[DomainConcurrency] Download speed degraded. Decreasing concurrency on '${domain}' from ${current} -> ${stepped}`,
+  logTuning(
+    domain,
+    "info",
+    `[DomainConcurrency] Download speed degraded. Concurrency on '${domain}' now ${stepped} (was ${current})`,
   );
   return stepped;
 }
@@ -277,31 +290,41 @@ function recordDomainBatchSuccess(domain, batchThroughput = null) {
         newConcurrency = current + (speedDiffRatio > 0.25 ? 2 : 1);
         if (domainMaxCap[domain] && newConcurrency > domainMaxCap[domain]) {
           newConcurrency = domainMaxCap[domain];
-          logger.info(
-            `[DomainConcurrency] 404/Rate-limit ceiling reached (${mbps}). Keeping speed constant on '${domain}' at max speed ${newConcurrency}`,
+          logTuning(
+            domain,
+            "info",
+            `[DomainConcurrency] '${domain}' at ceiling: ${mbps}, concurrency ${newConcurrency}`,
           );
         } else {
-          logger.info(
-            `[DomainConcurrency] Good speed (+${(speedDiffRatio * 100).toFixed(1)}%, ${mbps}). Increasing concurrency on '${domain}' from ${current} -> ${newConcurrency}`,
+          logTuning(
+            domain,
+            "info",
+            `[DomainConcurrency] '${domain}' good speed (+${(speedDiffRatio * 100).toFixed(1)}%, ${mbps}), concurrency ${current} -> ${newConcurrency}`,
           );
         }
       } else if (speedDiffRatio < -0.05 && current > 1) {
         newConcurrency = Math.max(1, current - 1);
-        logger.warn(
-          `[DomainConcurrency] Bad speed (${(speedDiffRatio * 100).toFixed(1)}%, ${mbps}). Decreasing concurrency on '${domain}' from ${current} -> ${newConcurrency}`,
+        logTuning(
+          domain,
+          "warn",
+          `[DomainConcurrency] '${domain}' slow (${(speedDiffRatio * 100).toFixed(1)}%, ${mbps}), concurrency ${current} -> ${newConcurrency}`,
         );
       } else {
         newConcurrency = current;
-        logger.info(
-          `[DomainConcurrency] Mid speed (${mbps}). Keeping speed constant on '${domain}' at ${current}`,
+        logTuning(
+          domain,
+          "info",
+          `[DomainConcurrency] '${domain}' steady (${mbps}), concurrency ${current}`,
         );
       }
       throughputCache[domain] = 0.3 * batchThroughput + 0.7 * prevThroughput;
     } else {
       throughputCache[domain] = batchThroughput;
       newConcurrency = Math.max(1, current);
-      logger.info(
-        `[DomainConcurrency] Initial speed sample (${mbps}). Keeping speed constant on '${domain}' at ${newConcurrency}`,
+      logTuning(
+        domain,
+        "info",
+        `[DomainConcurrency] '${domain}' initial sample (${mbps}), concurrency ${newConcurrency}`,
       );
     }
   }

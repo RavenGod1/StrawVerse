@@ -159,6 +159,9 @@ export default function SettingsView({
   const [downloadNotification, setDownloadNotification] = useState(true);
   const [downloadLocation, setDownloadLocation] = useState("");
   const [browsingFolder, setBrowsingFolder] = useState(false);
+  const [externalLogEnabled, setExternalLogEnabled] = useState(true);
+  const [maxLogFiles, setMaxLogFiles] = useState(5);
+  const [logDirectory, setLogDirectory] = useState("");
   const [autoSkipIntro, setAutoSkipIntro] = useState(true);
   const [subFontSize, setSubFontSize] = useState(46);
   const [subColor, setSubColor] = useState("#FFFFFF");
@@ -653,6 +656,7 @@ export default function SettingsView({
         const data = await window.sharedStateAPI.getSettings();
         setSettings(data.settings);
         setUrl(data.url);
+        setLogDirectory(data.logDirectory || "");
         setMalLoggedIn(data.MalLoggedIn);
 
         // Load values into form states
@@ -686,6 +690,12 @@ export default function SettingsView({
           s.downloadNotification !== undefined ? s.downloadNotification : true,
         );
         setDownloadLocation(s.CustomDownloadLocation || "");
+        setExternalLogEnabled(
+          s.externalLogEnabled !== undefined ? s.externalLogEnabled : true,
+        );
+        setMaxLogFiles(
+          s.maxLogFiles !== undefined ? parseInt(s.maxLogFiles, 10) || 5 : 5,
+        );
         setAutoSkipIntro(s.autoSkipIntro);
         const layoutVal = s.mangaReaderLayout || "long-strip";
         setMangaReaderLayout(layoutVal);
@@ -877,6 +887,18 @@ export default function SettingsView({
       dirty.downloadNotification = downloadNotification;
     if (downloadLocation !== (settings.CustomDownloadLocation || ""))
       dirty.CustomDownloadLocation = downloadLocation;
+    if (
+      externalLogEnabled !==
+      (settings.externalLogEnabled !== undefined
+        ? settings.externalLogEnabled
+        : true)
+    )
+      dirty.externalLogEnabled = externalLogEnabled;
+    {
+      const finalCount = parseInt(maxLogFiles, 10);
+      if (!isNaN(finalCount) && finalCount !== (settings.maxLogFiles || 5))
+        dirty.maxLogFiles = finalCount;
+    }
     if (autoSkipIntro !== settings.autoSkipIntro)
       dirty.autoSkipIntro = autoSkipIntro;
     if (mangaReaderLayout !== (settings.mangaReaderLayout || "long-strip"))
@@ -1005,6 +1027,11 @@ export default function SettingsView({
           ? settings.downloadNotification
           : true) ||
       downloadLocation !== (settings.CustomDownloadLocation || "") ||
+      externalLogEnabled !==
+        (settings.externalLogEnabled !== undefined
+          ? settings.externalLogEnabled
+          : true) ||
+      (parseInt(maxLogFiles, 10) || 5) !== (settings.maxLogFiles || 5) ||
       autoSkipIntro !== settings.autoSkipIntro ||
       mangaReaderLayout !== (settings.mangaReaderLayout || "long-strip") ||
       mangaReaderWidth !== (parseInt(settings.mangaReaderWidth, 10) || 800) ||
@@ -1053,6 +1080,8 @@ export default function SettingsView({
     developerMode,
     downloadNotification,
     downloadLocation,
+    externalLogEnabled,
+    maxLogFiles,
     autoSkipIntro,
     mangaReaderLayout,
     mangaReaderWidth,
@@ -1627,6 +1656,57 @@ export default function SettingsView({
                     </button>
                   </div>
                 </div>
+                <SettingsRow
+                  label="Save Log Files"
+                      desc="Keep a log file per app session in a folder outside the app, useful for troubleshooting and sharing."
+                    >
+                      <Dropdown
+                        value={String(externalLogEnabled)}
+                        onChange={(val) =>
+                          setExternalLogEnabled(val === "true")
+                        }
+                        options={[
+                          { value: "true", label: "Enabled" },
+                          { value: "false", label: "Disabled" },
+                        ]}
+                        minWidth={200}
+                      />
+                    </SettingsRow>
+                    {externalLogEnabled && (
+                      <>
+                        <SettingsRow
+                          label="Kept Log Files"
+                          desc="How many recent log files to keep (1–10, default 5). Older files are deleted automatically and the total is kept under 500 MB."
+                        >
+                          <Dropdown
+                            value={String(maxLogFiles)}
+                            onChange={(val) =>
+                              setMaxLogFiles(parseInt(val, 10) || 5)
+                            }
+                            options={[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(
+                              (n) => ({
+                                value: String(n),
+                                label: `${n} file${n > 1 ? "s" : ""}`,
+                              }),
+                            )}
+                            minWidth={200}
+                          />
+                        </SettingsRow>
+                        <SettingsRow
+                          label="Log Folder"
+                          desc="Where the log files are stored."
+                        >
+                          <input
+                            type="text"
+                            className="settings-text-input download-location-path"
+                            value={logDirectory}
+                            placeholder="Default log folder"
+                            readOnly
+                            title={logDirectory || "Default log folder"}
+                          />
+                        </SettingsRow>
+                      </>
+                    )}
               </div>
               {/* Community & Support */}
               <div className="settings-section glass-panel">

@@ -423,6 +423,20 @@ async function addMultipleToQueue(items) {
 }
 
 const activeProcessingEpids = new Set();
+const activeEpidSince = new Map();
+
+function describeStuckWorker() {
+  try {
+    const parts = [];
+    for (const epid of activeProcessingEpids) {
+      const since = activeEpidSince.get(epid) || Date.now();
+      parts.push(`${epid} (${Math.round((Date.now() - since) / 1000)}s)`);
+    }
+    return parts.length > 0 ? parts.join(", ") : "unknown";
+  } catch (_) {
+    return "unknown";
+  }
+}
 
 function isRetryableError(err) {
   if (!err || !err.message) return false;
@@ -476,10 +490,34 @@ async function continuousExecution() {
     }
 
     if (activeProcessingEpids.size >= 1) {
+      logger.warn(`[queueWorker] Worker busy, holding queue. Active: ${describeStuckWorker()}`);
       return;
     }
 
     logger.info("[queueWorker] Checking download queue...");
+
+    // Poison rows (queued without an episode ID) can never start since
+    // epid is the task key. Drop them loudly instead of letting them
+    // sit in Upcoming Queue forever with zero log output.
+    try {
+      const poisoned = (currentQueue || []).filter((t) => t && !t.epid);
+      if (poisoned.length > 0) {
+        await run("DELETE FROM DownloadQueue WHERE epid IS NULL OR epid = ''");
+        AnimeQueue = AnimeQueue.filter((t) => t && t.epid);
+        currentQueue = currentQueue.filter((t) => t && t.epid);
+        const names = poisoned
+          .map((t) => t.Title || t.ChapterTitle || "item")
+          .slice(0, 3)
+          .join(", ");
+        logger.warn(`[queueWorker] Dropped ${poisoned.length} queued item(s) with missing episode ID (${names}). Re-add them from the episode list.`);
+        try {
+          global.sendToRenderer("download-error", {
+            title: "Download Failed",
+            message: `Could not start ${names}: missing episode ID. Re-add it from the episode list.`,
+          });
+        } catch (_) {}
+      }
+    } catch (_) {}
 
     let startedNewTask = false;
 
@@ -487,6 +525,7 @@ async function continuousExecution() {
       if (isQueuePausedState) break;
 
       if (activeProcessingEpids.size >= 1) {
+        logger.warn(`[queueWorker] Slot taken, deferring remaining tasks. Active: ${describeStuckWorker()}`);
         break;
       }
 
@@ -495,10 +534,14 @@ async function continuousExecution() {
         !currentTask.epid ||
         activeProcessingEpids.has(currentTask.epid)
       ) {
+        if (currentTask && !currentTask.epid) {
+          logger.warn(`[queueWorker] Skipping queue row without episode ID (Title: ${currentTask.Title || currentTask.ChapterTitle || "unknown"}).`);
+        }
         continue;
       }
 
       activeProcessingEpids.add(currentTask.epid);
+      activeEpidSince.set(currentTask.epid, Date.now());
       startedNewTask = true;
 
       (async () => {
@@ -663,6 +706,7 @@ async function continuousExecution() {
           }
         } finally {
           activeProcessingEpids.delete(currentTask.epid);
+          activeEpidSince.delete(currentTask.epid);
           setTimeout(() => {
             continuousExecution().catch(() => {});
           }, 500);
@@ -686,6 +730,7 @@ async function downloadep(
   malid,
   animeId,
 ) {
+  logger.info(`[queueWorker] ${AnimeEpId} phase: dir-start`);
   const directoryPath = await directoryMaker(
     Title,
     EpNum,
@@ -693,6 +738,7 @@ async function downloadep(
     animeId || AnimeEpId,
   );
   _bgDownloadDepth++;
+  logger.info(`[queueWorker] ${AnimeEpId} phase: dir-ready ${directoryPath}`);
   try {
     const qualStr = Videoconfig?.quality ? ` ( ${Videoconfig.quality} )` : "";
     const cleanEp =
@@ -710,6 +756,7 @@ async function downloadep(
       isPaused: isQueuePaused(),
     });
 
+    logger.info(`[queueWorker] ${AnimeEpId} phase: resolving-sources`);
     await downloadEpisodeByQuality(
       Videoconfig,
       EpNum,
@@ -738,6 +785,7 @@ async function downloadEpisodeByQuality(
 ) {
   try {
     const provider = await providerFetch("Anime", config.Animeprovider);
+    logger.info(`[queueWorker] ${epid} phase: provider-ok, fetching sources`);
     let resolvedEpid = epid;
     if (subdub && !epid.endsWith(`-${subdub}`) && !epid.endsWith("-both")) {
       resolvedEpid = `${epid}-${subdub}`;
@@ -768,6 +816,7 @@ async function downloadEpisodeByQuality(
       }
     }
 
+    logger.info(`[queueWorker] ${epid} phase: sources-${sourcesArray ? "ok" : "empty"}`);
     if (!sourcesArray && lastFetchErr) {
       throw new Error(`SCRAPER_TEMPORARY_ERROR: ${lastFetchErr.message}`);
     }

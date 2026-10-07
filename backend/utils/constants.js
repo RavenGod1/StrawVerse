@@ -256,7 +256,7 @@ function getCurrentAppVersion() {
     if (pkg && pkg.version) return pkg.version;
   } catch (_) {}
 
-  return process.env.STRAWVERSE_APP_VERSION || "10.0.0";
+  return process.env.STRAWVERSE_APP_VERSION || "10.1.2";
 }
 
 function sortSourcesByPreferredQuality(sources, preferredQuality = "highest") {

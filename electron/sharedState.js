@@ -12,6 +12,11 @@ const {
   settingupdate,
   getScraperIconsPath,
 } = require(path.join(backendDir, "utils", "settings"));
+const { getEffectiveLogDir } = require(path.join(
+  backendDir,
+  "utils",
+  "settings",
+));
 const { MalCreateUrl } = require(path.join(backendDir, "utils", "mal"));
 
 let PageHistory = [];
@@ -112,11 +117,16 @@ function registerSharedStateHandlers() {
       url = await MalCreateUrl();
     }
 
+    let logDirectory = null;
+    try {
+      logDirectory = getEffectiveLogDir();
+    } catch (_) {}
     return {
       settings: settingsObj,
       url: url,
       MalLoggedIn: global.MalLoggedIn || false,
       malUsername: setting?.malUsername || global.malUsername || null,
+      logDirectory: logDirectory,
     };
   });
 

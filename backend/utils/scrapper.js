@@ -618,18 +618,36 @@ function createScrapperWindow() {
   });
 }
 
+const BYPASS_TASK_TIMEOUT_MS = 90000;
+
 async function processBypassQueue() {
   if (bypassBusy || bypassQueue.length === 0) return;
   bypassBusy = true;
   const { runBypass, resolve, reject } = bypassQueue.shift();
-  try {
-    const result = await runBypass();
-    resolve(result);
-  } catch (err) {
-    reject(err);
-  } finally {
+  let done = false;
+  const finish = (fn, val) => {
+    if (done) return;
+    done = true;
+    clearTimeout(timer);
+    fn(val);
+  };
+  const timer = setTimeout(() => {
+    finish(reject, new Error("Bypass queue task timed out after 90s"));
     bypassBusy = false;
     processBypassQueue();
+  }, BYPASS_TASK_TIMEOUT_MS);
+  // Unref so a wedged task alone never keeps the process alive.
+  if (timer && typeof timer.unref === "function") timer.unref();
+  try {
+    const result = await runBypass();
+    finish(resolve, result);
+  } catch (err) {
+    finish(reject, err);
+  } finally {
+    if (done && bypassBusy) {
+      bypassBusy = false;
+      processBypassQueue();
+    }
   }
 }
 
@@ -935,7 +953,10 @@ global.scrapperFetch = (url, options = {}) => {
     const js = `
       (async () => {
         try {
-          const res = await fetch(${JSON.stringify(url)}, ${JSON.stringify(fetchOptions)});
+          const ctrl = new AbortController();
+          const t = setTimeout(() => ctrl.abort(), 25000);
+          const res = await fetch(${JSON.stringify(url)}, { ...${JSON.stringify(fetchOptions)}, signal: ctrl.signal });
+          clearTimeout(t);
           return JSON.stringify({ status: res.status, headers: Object.fromEntries(res.headers.entries()), text: await res.text() });
         } catch (err) {
           return "__FETCH_ERR__:" + err.message;
@@ -944,7 +965,10 @@ global.scrapperFetch = (url, options = {}) => {
     `;
 
     try {
-      const raw = await global.ScrapperWindow.webContents.executeJavaScript(js);
+      const raw = await Promise.race([
+        global.ScrapperWindow.webContents.executeJavaScript(js),
+        sleep(30000).then(() => "__FETCH_ERR__:execute timeout"),
+      ]);
       if (typeof raw === "string" && raw.startsWith("__FETCH_ERR__:")) {
         console.error(`[scrapperFetch] Browser fetch failed:`, raw);
         return null;
@@ -991,7 +1015,10 @@ global.scrapperFetchDataUrl = (url) => {
     const js = `
       (async () => {
         try {
-          const res = await fetch(${JSON.stringify(url)}, { credentials: "include" });
+          const ctrl = new AbortController();
+          const t = setTimeout(() => ctrl.abort(), 25000);
+          const res = await fetch(${JSON.stringify(url)}, { credentials: "include", signal: ctrl.signal });
+          clearTimeout(t);
           if (!res.ok) return null;
           const blob = await res.blob();
           return new Promise((resolve) => {
@@ -1007,8 +1034,10 @@ global.scrapperFetchDataUrl = (url) => {
     `;
 
     try {
-      const dataUrl =
-        await global.ScrapperWindow.webContents.executeJavaScript(js);
+      const dataUrl = await Promise.race([
+        global.ScrapperWindow.webContents.executeJavaScript(js),
+        sleep(30000).then(() => null),
+      ]);
       return dataUrl;
     } catch (e) {
       return null;

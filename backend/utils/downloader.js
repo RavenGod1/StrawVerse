@@ -411,6 +411,46 @@ class downloader {
     }
   }
 
+  // Media bytes use the platform HTTP stack (global.axios), the same
+  // recipe as the working local stream proxy: Chromium net stack on
+  // desktop, native stack on mobile. Plain `got` requests carry a Node
+  // fingerprint plus XHR-style sec-fetch-*/Origin/cache-buster headers
+  // that vault WAFs reject with 403 while the proxy sails through.
+  async getMediaRequestHeaders(url) {
+    const headers = await this.getRequestHeaders(url);
+    for (const key of Object.keys(headers)) {
+      const kl = key.toLowerCase();
+      if (
+        kl === "origin" ||
+        kl === "pragma" ||
+        kl === "cache-control" ||
+        kl === "sec-fetch-dest" ||
+        kl === "sec-fetch-mode" ||
+        kl === "sec-fetch-site" ||
+        kl === "sec-ch-ua" ||
+        kl === "sec-ch-ua-mobile" ||
+        kl === "sec-ch-ua-platform"
+      ) {
+        delete headers[key];
+      }
+    }
+    return headers;
+  }
+
+  async fetchMediaBytes(url, timeoutMs = 60000) {
+    const client = global.axios || require("axios");
+    const res = await client.get(url, {
+      headers: await this.getMediaRequestHeaders(url),
+      responseType: "arraybuffer",
+      timeout: timeoutMs,
+    });
+    const data = res?.data;
+    if (!data || data.length === 0) {
+      throw new Error("Received empty segment payload");
+    }
+    return Buffer.isBuffer(data) ? data : Buffer.from(data);
+  }
+
   absorbResponseCookies(headers) {
     try {
       const setCookies = headers?.["set-cookie"];
@@ -462,6 +502,7 @@ class downloader {
       const masterRes = await got(this.streamUrl, {
         headers: await this.getRequestHeaders(this.streamUrl),
         http2: true,
+        timeout: { request: 30000 },
       });
       this.absorbResponseCookies(masterRes.headers);
       let Playlist = masterRes.body;
@@ -547,6 +588,7 @@ class downloader {
           const mediaRes = await got(this.streamUrl, {
             headers: await this.getRequestHeaders(this.streamUrl),
             http2: true,
+            timeout: { request: 30000 },
           });
           this.absorbResponseCookies(mediaRes.headers);
           Playlist = mediaRes.body;
@@ -743,15 +785,9 @@ class downloader {
           if (typeof Segment === "object" && Segment.encrypted) {
             if (!this._keyPromiseCache[Segment.keyUrl]) {
               this._keyPromiseCache[Segment.keyUrl] = (async () => {
-                const keyRes = await this.fetchWithClearanceRetry(Segment.keyUrl, async () =>
-                  got(Segment.keyUrl, {
-                  headers: await this.getRequestHeaders(Segment.keyUrl),
-                  responseType: "buffer",
-                  agent: keepAliveAgent,
-                  http2: Segment.keyUrl.startsWith("https://"),
-                  timeout: { request: 15000 },
-                }));
-                return keyRes.body;
+                const keyBytes = await this.fetchWithClearanceRetry(Segment.keyUrl, async () =>
+                  this.fetchMediaBytes(Segment.keyUrl, 15000));
+                return keyBytes;
               })().catch((err) => {
                 delete this._keyPromiseCache[Segment.keyUrl];
                 throw err;
@@ -764,21 +800,9 @@ class downloader {
             } else {
               iv.writeUInt32BE(parseInt(Segment.iv, 10), 12);
             }
-            const encRes = await this.fetchWithClearanceRetry(segUrl, async () =>
-              got(segUrl, {
-              headers: await this.getRequestHeaders(segUrl),
-              responseType: "buffer",
-              agent: keepAliveAgent,
-              // NOTE: HTTP/1.1 only. With http2:true, got multiplexes all
-              // segment "threads" onto one throttled TCP connection, which
-              // defeats parallelism on per-connection-throttled hosts.
-              http2: false,
-              // Generous total timeout: throttled hosts (0.1 MB/s) still make
-              // progress; a truly dead connection is reaped after 60s while
-              // other workers keep flowing.
-              timeout: { request: 60000 },
-            }));
-            const cipherText = stripPngHeader(encRes.body);
+            const cipherBytes = await this.fetchWithClearanceRetry(segUrl, async () =>
+              this.fetchMediaBytes(segUrl, 60000));
+            const cipherText = stripPngHeader(cipherBytes);
             const decipher = crypto.createDecipheriv(
               "aes-128-cbc",
               keyBuffer,
@@ -789,18 +813,9 @@ class downloader {
               decipher.final(),
             ]);
           } else {
-            const response = await this.fetchWithClearanceRetry(segUrl, async () =>
-              got(segUrl, {
-              headers: await this.getRequestHeaders(segUrl),
-              responseType: "buffer",
-              agent: keepAliveAgent,
-              // NOTE: HTTP/1.1 only (see above): one TCP connection per
-              // thread instead of all threads multiplexed onto one.
-              http2: false,
-              // See above: throttled hosts need room to trickle.
-              timeout: { request: 60000 },
-            }));
-            body = stripPngHeader(response.body);
+            const segBytes = await this.fetchWithClearanceRetry(segUrl, async () =>
+              this.fetchMediaBytes(segUrl, 60000));
+            body = stripPngHeader(segBytes);
           }
 
           if (!body || body.length === 0) {

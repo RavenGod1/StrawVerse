@@ -1,5 +1,23 @@
 # Changelog
 
+# [10.1.2] - 2026-10-07
+
+### Downloads
+
+- **Custom Download Location:** Pick your own download folder from Settings, with one-click reset to the default.
+- **Manga Discover Filters:** Genre, status, and sort filters for manga, matching the anime experience.
+- **Tougher Downloads:** Segment downloads recover through clearance refresh, carry CDN session cookies, and mirror the working streaming path, fixing vault 403 failures.
+- **Quieter Logs:** Download speed tuning now logs one summary per domain every 30 seconds instead of every batch.
+
+### Logging
+
+- **External Log Files:** Per-session log files in a folder outside the app, with a setting for how many to keep (1–10, default 5, total under 500 MB). Available on Desktop and Android.
+
+### Extensions & Maintenance
+
+- **Scraper Remove Fix:** Removing a scraper from the marketplace works again.
+- **Mapping Sync Hardening:** Collision-safe history healing and an hourly directory sync that can no longer wedge the app.
+
 # [10.0.0] - 2026-09-16
 
 ### Desktop & Android Now Share One Codebase

@@ -9,7 +9,24 @@ const {
   getDownloadsFolder,
   ensureDirectoryExists,
 } = require("./DirectoryMaker");
-const { logger } = require("./AppLogger.js");
+const { logger, configureExternalLogs } = require("./AppLogger.js");
+
+// Log folder users can actually reach: shared StrawVerse/logs on
+// mobile, ~/StrawVerse/logs on desktop.
+function getEffectiveLogDir() {
+  if (
+    process.env.NODEJS_MOBILE_DATA_DIR &&
+    process.env.STRAWVERSE_PUBLIC_ROOT
+  ) {
+    try {
+      const dir = path.join(process.env.STRAWVERSE_PUBLIC_ROOT, "logs");
+      fs.mkdirSync(dir, { recursive: true });
+      return dir;
+    } catch (_) {}
+  }
+  const { getExternalLogDir } = require("./AppLogger.js");
+  return getExternalLogDir();
+}
 const { setKeyValue, queryAll, unwrapJson } = require("./db");
 const { getUserDataPath, isAndroid } = require("./constants");
 
@@ -89,6 +106,14 @@ async function settingupdate(newSettings = {}) {
     }
   }
 
+  try {
+    configureExternalLogs({
+      enabled: config.externalLogEnabled !== false,
+      maxFiles: config.maxLogFiles,
+      dir: getEffectiveLogDir(),
+    });
+  } catch (_) {}
+
   await settingSave();
   return config;
 }
@@ -118,6 +143,15 @@ async function settingfetch() {
         config.CustomDownloadLocation = getDownloadsFolder();
         changes = true;
       }
+    }
+    // kept log files: default 5, user range 1..10
+    const parsedLogFiles = parseInt(config?.maxLogFiles, 10);
+    const clampedLogFiles = isNaN(parsedLogFiles)
+      ? 5
+      : Math.min(Math.max(parsedLogFiles, 1), 10);
+    if (config?.maxLogFiles !== clampedLogFiles) {
+      config.maxLogFiles = clampedLogFiles;
+      changes = true;
     }
     // checking Animeprovider is valid
     if (
@@ -254,6 +288,8 @@ async function SettingsLoad() {
             status: "watching",
             malToken: null,
             CustomDownloadLocation: getDownloadsFolder(),
+            externalLogEnabled: true,
+            maxLogFiles: 5,
             Animeprovider: 0,
             Mangaprovider: 0,
             autoLoadNextChapter: true,
@@ -301,8 +337,20 @@ async function SettingsLoad() {
       config.imageCacheSizeLimit = 5;
     }
 
-    if (process.env.NODEJS_MOBILE_DATA_DIR) {
-      config.CustomDownloadLocation = getDownloadsFolder();
+    if (config && !config.hasOwnProperty("externalLogEnabled")) {
+      config.externalLogEnabled = true;
+    }
+    // One-time migration: external logs were force-disabled on mobile
+    // before this setting existed there, so flip it on exactly once.
+    if (config && !config.hasOwnProperty("maxLogFiles")) {
+      config.maxLogFiles = 5;
+    }
+    if (
+      process.env.NODEJS_MOBILE_DATA_DIR &&
+      !config.hasOwnProperty("logPolicyMigrated")
+    ) {
+      config.externalLogEnabled = true;
+      config.logPolicyMigrated = true;
     }
 
     if (config && !config.hasOwnProperty("developerMode")) {
@@ -366,6 +414,14 @@ async function SettingsLoad() {
         logger.error(err);
       }
     }
+  try {
+    configureExternalLogs({
+      enabled: config.externalLogEnabled !== false,
+      maxFiles: config.maxLogFiles,
+      dir: getEffectiveLogDir(),
+    });
+  } catch (_) {}
+
     await settingSave();
   } catch (err) {
     logger.error("Failed To Load Config");
@@ -694,8 +750,15 @@ async function HandleExtensions(TaskType, AnimeManga, ExtensionName) {
         message: err.message,
       };
     }
-  } else if (TaskType === "delete") {
-    if (fs.existsSync(extensionPath)) {
+  } else if (TaskType === "remove" || TaskType === "delete") {
+    try {
+      if (!fs.existsSync(extensionPath)) {
+        return {
+          type: "error",
+          title: "Scraper Not Found",
+          message: `${ExtensionName} is not installed`,
+        };
+      }
       fs.unlinkSync(extensionPath);
 
       await unloadSingleScraper(AnimeManga, ExtensionName);
@@ -704,8 +767,20 @@ async function HandleExtensions(TaskType, AnimeManga, ExtensionName) {
         title: `Removed ${AnimeManga} Extention!`,
         message: `${ExtensionName} is Removed SuccessFully`,
       };
+    } catch (err) {
+      logger.error(`Failed to remove scraper ${ExtensionName}: ${err.message}`);
+      return {
+        type: "error",
+        title: `Failed to Remove ${AnimeManga} Extention!`,
+        message: err.message,
+      };
     }
   }
+  return {
+    type: "error",
+    title: "Unknown scraper task",
+    message: `Unsupported task type: ${TaskType}`,
+  };
 }
 
 // return provider
@@ -814,5 +889,6 @@ module.exports = {
   patchModulePaths,
   disableWhatsNew,
   isLanguagePreferred,
+  getEffectiveLogDir,
   getScraperIconsPath: () => ScraperIcons,
 };

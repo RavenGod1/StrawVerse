@@ -266,7 +266,7 @@ async function boot() {
           global.pendingRequests.delete(requestId);
           callback(value);
         };
-        const reqTimeout = config.bridgeTimeout || 3000;
+        const reqTimeout = config.bridgeTimeout || 10000;
         const timeout = setTimeout(() => {
           broadcast("native-cancel", { requestIds: [requestId] });
           finish(reject, new Error(`Native request timeout for ${config.url}`));
@@ -1077,6 +1077,33 @@ async function boot() {
             );
           } catch (e) {}
         }
+        // Cloudflare bot-fight often requires __cf_bm / _cfuvid alongside
+        // cf_clearance. They were discarded, so retries went out with
+        // clearance but no bot-manager cookie and kept 403ing.
+        if (name === "__cf_bm" || name === "_cfuvid") {
+          await dbRun(upsertSql, [
+            `${domain}-${name}`,
+            value,
+            name,
+            domain,
+            targetUrl,
+            "/",
+            1,
+            1,
+            expiry.toString(),
+            Date.now().toString(),
+          ]);
+          try {
+            const proxyHeaders = require("../../../backend/utils/proxyHeaders");
+            proxyHeaders.updateCache(
+              domain,
+              name,
+              value,
+              expiry.toString(),
+              Date.now().toString(),
+            );
+          } catch (e) {}
+        }
         if (name === "cf_user_agent" || name === "user_agent") {
           await dbRun(upsertSql, [
             `${domain}-cf_user_agent`,
@@ -1231,6 +1258,10 @@ async function boot() {
         url = await MalCreateUrl();
       }
 
+      let mobileLogDirectory = null;
+      try {
+        mobileLogDirectory = require("../../../backend/utils/settings").getEffectiveLogDir();
+      } catch (_) {}
       res.json({
         ok: true,
         result: {
@@ -1238,6 +1269,7 @@ async function boot() {
           url: url,
           MalLoggedIn: global.MalLoggedIn || false,
           malUsername: setting?.malUsername || global.malUsername || null,
+          logDirectory: mobileLogDirectory,
         },
       });
     } catch (e) {
