@@ -23,7 +23,7 @@ export default function Marketplace({ initialType }) {
     try {
       // 1. Fetch online scrapers from repository
       const response = await fetch(
-        "https://raw.githubusercontent.com/RavenGod1/extensions/refs/heads/main/marketplace.json",
+        "https://raw.githubusercontent.com/TheYogMehta/extensions/refs/heads/main/marketplace.json",
       );
       const data = await response.json();
       setExtensions(data[activeType] || []);
@@ -151,7 +151,7 @@ export default function Marketplace({ initialType }) {
           {extensions.map((provider) => {
             const installed = isInstalled(provider.name);
             const isProcessing = processingId === provider.name;
-            const logoUrl = `https://raw.githubusercontent.com/RavenGod1/extensions/refs/heads/main/ico/${provider.name}.ico`;
+            const logoUrl = `https://raw.githubusercontent.com/TheYogMehta/extensions/refs/heads/main/ico/${provider.name}.ico`;
             const installedVer = getInstalledVersion(provider.name);
             const hasUpdate = installedVer
               ? isUpdateAvailable(installedVer, provider.version)

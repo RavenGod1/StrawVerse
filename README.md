@@ -38,9 +38,9 @@ Whether you want high-speed **anime download** queues in 1080p, full Sub and Dub
 
 | Platform    | Download Link                                                              | Format                           | OS Compatibility             |
 | :---------- | :------------------------------------------------------------------------- | :------------------------------- | :--------------------------- |
-| **Windows** | [StrawVerse.Setup.exe](https://github.com/RavenGod1/StrawVerse/releases) | Installer (`.exe`)               | Windows 10, 11 (64-bit)      |
-| **Linux**   | [StrawVerse.AppImage](https://github.com/RavenGod1/StrawVerse/releases)  | Portable (`.AppImage` / `.snap`) | Ubuntu, Fedora, Arch, Debian |
-| **Android** | [StrawVerse.apk](https://github.com/RavenGod1/StrawVerse/releases)       | Mobile APK (`.apk`)              | Android 7.0+                 |
+| **Windows** | [StrawVerse.Setup.exe](https://github.com/TheYogMehta/StrawVerse/releases) | Installer (`.exe`)               | Windows 10, 11 (64-bit)      |
+| **Linux**   | [StrawVerse.AppImage](https://github.com/TheYogMehta/StrawVerse/releases)  | Portable (`.AppImage` / `.snap`) | Ubuntu, Fedora, Arch, Debian |
+| **Android** | [StrawVerse.apk](https://github.com/TheYogMehta/StrawVerse/releases)       | Mobile APK (`.apk`)              | Android 7.0+                 |
 
 ---
 
@@ -104,19 +104,19 @@ Beyond standard downloading, StrawVerse includes real-time playback synchronizat
 
 ### For Android
 
-1. Go to [StrawVerse Releases](https://github.com/RavenGod1/StrawVerse/releases).
+1. Go to [StrawVerse Releases](https://github.com/TheYogMehta/StrawVerse/releases).
 2. Download the APK file `StrawVerse-<version>.apk`.
 3. Open and install the APK on your Android device!
 
 ### For Windows
 
-1. Go to [StrawVerse Releases](https://github.com/RavenGod1/StrawVerse/releases).
+1. Go to [StrawVerse Releases](https://github.com/TheYogMehta/StrawVerse/releases).
 2. Download the setup file `StrawVerse.Setup.<version>.exe`.
 3. Run the installer to install the application, and enjoy!
 
 ### For Linux
 
-1. Go to [StrawVerse Releases](https://github.com/RavenGod1/StrawVerse/releases).
+1. Go to [StrawVerse Releases](https://github.com/TheYogMehta/StrawVerse/releases).
 2. Download the AppImage `StrawVerse-<version>.AppImage` or the snap / deb / zip package.
 3. For AppImage: Make it executable using `chmod +x StrawVerse-<version>.AppImage` and run it.
 
@@ -140,12 +140,7 @@ Beyond standard downloading, StrawVerse includes real-time playback synchronizat
 
 [![Watch the YT demo](https://img.youtube.com/vi/ZmcE-LrofgQ/0.jpg)](https://www.youtube.com/watch?v=ZmcE-LrofgQ)
 
-
-
-
 https://github.com/user-attachments/assets/9042f0f9-be25-4705-a6a5-dace3a3539e0
-
-
 
 ## Configuration
 

@@ -18,15 +18,16 @@ android {
         }
     }
     // True when a release keystore + password are available; else debug-sign.
-    def ksPath = System.getenv("STRAWVERSE_KEYSTORE_FILE") ?: "C:/Users/JACKDUDE/strawverse-release.jks"
-    def hasReleaseKeystore = new File(ksPath).exists() && System.getenv("STRAWVERSE_KEYSTORE_PASSWORD")
+    def ksPath = System.getenv("STRAWVERSE_KEYSTORE_FILE") ?: ""
+    def hasReleaseKeystore = ksPath && new File(ksPath).exists() && System.getenv("STRAWVERSE_KEYSTORE_PASSWORD")
     signingConfigs {
         release {
-            def ksFile = System.getenv("STRAWVERSE_KEYSTORE_FILE") ?: "C:/Users/JACKDUDE/strawverse-release.jks"
-            storeFile file(ksFile)
-            storePassword System.getenv("STRAWVERSE_KEYSTORE_PASSWORD")
-            keyAlias System.getenv("STRAWVERSE_KEY_ALIAS") ?: "strawverse"
-            keyPassword System.getenv("STRAWVERSE_KEY_PASSWORD") ?: System.getenv("STRAWVERSE_KEYSTORE_PASSWORD")
+            if (hasReleaseKeystore) {
+                storeFile file(ksPath)
+                storePassword System.getenv("STRAWVERSE_KEYSTORE_PASSWORD")
+                keyAlias System.getenv("STRAWVERSE_KEY_ALIAS") ?: "strawverse"
+                keyPassword System.getenv("STRAWVERSE_KEY_PASSWORD") ?: System.getenv("STRAWVERSE_KEYSTORE_PASSWORD")
+            }
         }
     }
     buildTypes {
