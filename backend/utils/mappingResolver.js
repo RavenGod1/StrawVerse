@@ -9,6 +9,51 @@ function invalidateMappingMetadataCache() {
   lastProviderMetadataFetch = 0;
 }
 
+const DEFAULT_PROVIDERS = [
+  {
+    table_name: "pahe",
+    media_type: "Anime",
+    primary_key_field: "uuid",
+    display_name: "AnimePahe",
+  },
+  {
+    table_name: "anikoto",
+    media_type: "Anime",
+    primary_key_field: "id",
+    display_name: "Anikoto",
+  },
+  {
+    table_name: "anineko",
+    media_type: "Anime",
+    primary_key_field: "id",
+    display_name: "Anineko",
+  },
+  {
+    table_name: "weebcentral",
+    media_type: "Manga",
+    primary_key_field: "id",
+    display_name: "WeebCentral",
+  },
+  {
+    table_name: "asurascans",
+    media_type: "Manga",
+    primary_key_field: "id",
+    display_name: "AsuraScans",
+  },
+  {
+    table_name: "comix",
+    media_type: "Manga",
+    primary_key_field: "id",
+    display_name: "Comix",
+  },
+  {
+    table_name: "mangafire",
+    media_type: "Manga",
+    primary_key_field: "id",
+    display_name: "MangaFire",
+  },
+];
+
 async function getMappingProviders(
   mediaType = null,
   { installedOnly = false } = {},
@@ -28,7 +73,10 @@ async function getMappingProviders(
     } catch (_) {}
   }
 
-  let list = cachedProviderMetadata ? [...cachedProviderMetadata] : [];
+  let list =
+    cachedProviderMetadata && cachedProviderMetadata.length > 0
+      ? [...cachedProviderMetadata]
+      : [...DEFAULT_PROVIDERS];
 
   if (mediaType) {
     const targetType = String(mediaType).toLowerCase();

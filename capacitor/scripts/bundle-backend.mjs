@@ -48,13 +48,45 @@ try {
         "/^[a-zA-Z_$][a-zA-Z0-9_$\\u200c\\u200d]*$/",
       );
 
+    const intlPolyfillHeader = `if (typeof globalThis.Intl === "undefined" || typeof Intl === "undefined") {
+  const _LF = class { constructor() {} format(l = []) { return Array.isArray(l) ? l.join(", ") : String(l); } formatToParts(l = []) { return (Array.isArray(l) ? l : [l]).map((v) => ({ type: "element", value: String(v) })); } };
+  const _DTF = class { constructor() {} format(d = new Date()) { return new Date(d).toISOString(); } };
+  const _NF = class { constructor() {} format(n = 0) { return String(n); } };
+  const _PR = class { constructor() {} select(n = 0) { return n === 1 ? "one" : "other"; } };
+  const _RTF = class { constructor() {} format(v, u) { return v + " " + u; } };
+  const _Col = class { constructor() {} compare(a, b) { return String(a).localeCompare(String(b)); } };
+  const _Intl = { ListFormat: _LF, DateTimeFormat: _DTF, NumberFormat: _NF, PluralRules: _PR, RelativeTimeFormat: _RTF, Collator: _Col, getCanonicalLocales: (l) => (Array.isArray(l) ? l : [l].filter(Boolean)) };
+  globalThis.Intl = _Intl;
+  if (typeof global !== "undefined") global.Intl = _Intl;
+}
+`;
+    if (!bundleContent.startsWith("if (typeof globalThis.Intl")) {
+      bundleContent = intlPolyfillHeader + bundleContent;
+    }
+
+    bundleContent = bundleContent.replaceAll(
+      "new Intl.ListFormat",
+      "new (globalThis.Intl?.ListFormat || class { constructor() {} format(l = []) { return Array.isArray(l) ? l.join(', ') : String(l); } })",
+    );
+
+    const rootChangelog = path.resolve(capacitorRoot, "..", "changelog.md");
+    if (fs.existsSync(rootChangelog)) {
+      const changelogText = fs.readFileSync(rootChangelog, "utf8");
+      bundleContent = bundleContent.replace(
+        '"__EMBEDDED_CHANGELOG_PLACEHOLDER__"',
+        JSON.stringify(changelogText),
+      );
+      console.log("[bundle] Injected root changelog into main.bundle.js");
+    }
+
     if (
       bundleContent.length !== originalLength ||
-      bundleContent.includes("/^[a-zA-Z_$]$/")
+      bundleContent.includes("/^[a-zA-Z_$]$/") ||
+      bundleContent.includes(rootChangelog)
     ) {
       fs.writeFileSync(bundlePath, bundleContent, "utf8");
       console.log(
-        "[bundle] Sanitized Unicode property escapes for Android Node.js compatibility.",
+        "[bundle] Sanitized Unicode property escapes and updated main.bundle.js.",
       );
     }
   }

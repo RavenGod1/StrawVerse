@@ -17,12 +17,30 @@ import { apiPost } from "../utils/common";
 function LazyMangaPage({ src, alt, style, shouldLoad }) {
   const [isVisible, setIsVisible] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [currentSrc, setCurrentSrc] = useState(src);
+  const [didProxyRetry, setDidProxyRetry] = useState(false);
 
   useEffect(() => {
     if (shouldLoad) {
       setIsVisible(true);
     }
   }, [shouldLoad]);
+
+  useEffect(() => {
+    setCurrentSrc(src);
+    setDidProxyRetry(false);
+    setLoaded(false);
+  }, [src]);
+
+  const handleError = () => {
+    if (!didProxyRetry && src && (src.startsWith("http://") || src.startsWith("https://"))) {
+      setDidProxyRetry(true);
+      setCurrentSrc(`/api/image?url=${encodeURIComponent(src)}`);
+    } else {
+      setCurrentSrc("/images/image-404.png");
+      setLoaded(true);
+    }
+  };
 
   return (
     <div className="lazy-page-container" style={style}>
@@ -34,7 +52,7 @@ function LazyMangaPage({ src, alt, style, shouldLoad }) {
             </div>
           )}
           <img
-            src={src}
+            src={currentSrc}
             alt={alt}
             onLoad={() => setLoaded(true)}
             style={{
@@ -42,10 +60,7 @@ function LazyMangaPage({ src, alt, style, shouldLoad }) {
             }}
             className="lazy-page-img"
             loading="lazy"
-            onError={(e) => {
-              e.target.src = "/images/image-404.png";
-              setLoaded(true);
-            }}
+            onError={handleError}
           />
         </>
       ) : (

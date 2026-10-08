@@ -109,6 +109,7 @@ public class PlayerActivity extends Activity {
     // Dynamic player states
     private String animeTitle = "Anime Stream";
     private String currentVideoUrl;
+    private JSONArray rawSubtitlesArray = new JSONArray();
     private JSONArray subtitlesArray = new JSONArray();
     private JSONArray sourcesArray = new JSONArray();
     private JSONArray skipTimesArray = new JSONArray();
@@ -243,6 +244,36 @@ public class PlayerActivity extends Activity {
         }
         if (intent.hasExtra("autoPlayNextEpisode")) {
             autoPlayNextEpisode = intent.getBooleanExtra("autoPlayNextEpisode", true);
+        }
+        if (intent.hasExtra("playerSpeed")) {
+            double spd = intent.getDoubleExtra("playerSpeed", 1.0);
+            if (spd <= 0) {
+                spd = intent.getFloatExtra("playerSpeed", 1.0f);
+            }
+            if (spd > 0) {
+                savedSpeed = (float) spd;
+            }
+        }
+        if (intent.hasExtra("preferredSubtitleLanguages")) {
+            String pSub = intent.getStringExtra("preferredSubtitleLanguages");
+            if (pSub != null && !pSub.isEmpty()) {
+                try {
+                    JSONArray arr = new JSONArray(pSub);
+                    preferredSubtitleLanguagesList.clear();
+                    for (int i = 0; i < arr.length(); i++) {
+                        String l = arr.optString(i, "").trim();
+                        if (!l.isEmpty()) preferredSubtitleLanguagesList.add(l);
+                    }
+                    preferredSubtitleLanguagesExplicitlyLoaded = true;
+                    if (!preferredSubtitleLanguagesList.isEmpty()) {
+                        preferredSubtitleLang = preferredSubtitleLanguagesList.get(0);
+                    } else {
+                        preferredSubtitleLang = "off";
+                    }
+                } catch (Exception e) {
+                    Log.e("PlayerActivity", "Error parsing preferredSubtitleLanguages from intent: " + e.getMessage());
+                }
+            }
         }
 
         String episodesListStr = intent.getStringExtra("episodesList");
@@ -917,8 +948,10 @@ public class PlayerActivity extends Activity {
 
         if (matchedIdx != -1) {
             selectedSubtitleIndex = matchedIdx;
-        } else {
+        } else if (subtitlesArray.length() > 0 && !preferredSubtitleLanguagesExplicitlyLoaded) {
             selectedSubtitleIndex = 0;
+        } else {
+            selectedSubtitleIndex = -1;
         }
     }
 
@@ -986,8 +1019,11 @@ public class PlayerActivity extends Activity {
             hudTextView.setVisibility(View.GONE);
 
             sourcesArray = data.optJSONArray("sources");
-            JSONArray rawSubs = data.optJSONArray("subtitles");
-            subtitlesArray = filterSubtitlesByPreference(rawSubs);
+            rawSubtitlesArray = data.optJSONArray("subtitles");
+            if (rawSubtitlesArray == null) {
+                rawSubtitlesArray = new JSONArray();
+            }
+            subtitlesArray = filterSubtitlesByPreference(rawSubtitlesArray);
             skipTimesArray = data.optJSONArray("skipTimes");
 
             if (sourcesArray == null) {
@@ -1142,7 +1178,8 @@ public class PlayerActivity extends Activity {
                                         }
                                         JSONArray resSubs = resolved.optJSONArray("subtitles");
                                         if (resSubs != null && resSubs.length() > 0) {
-                                            subtitlesArray = filterSubtitlesByPreference(resSubs);
+                                            rawSubtitlesArray = resSubs;
+                                            subtitlesArray = filterSubtitlesByPreference(rawSubtitlesArray);
                                             applyPreferredSubtitleLanguage();
                                         }
                                     } catch (Exception ignored) {}
@@ -2702,11 +2739,24 @@ public class PlayerActivity extends Activity {
                     conn.setRequestMethod("POST");
                     conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
                     conn.setDoOutput(true);
-                    conn.setConnectTimeout(3000);
-                    conn.setReadTimeout(3000);
+                    conn.setConnectTimeout(10000);
+                    conn.setReadTimeout(10000);
                     
                     JSONObject payload = new JSONObject();
-                    payload.put("args", new JSONArray());
+                    JSONArray argsArr = new JSONArray();
+                    JSONArray keysArr = new JSONArray();
+                    keysArr.put("playerSpeed");
+                    keysArr.put("preferredSubtitleLanguages");
+                    keysArr.put("subtitleLang");
+                    keysArr.put("autoSkipIntro");
+                    keysArr.put("autoPlayNextEpisode");
+                    keysArr.put("quality");
+                    keysArr.put("subColor");
+                    keysArr.put("subBorderColor");
+                    keysArr.put("subBgColor");
+                    keysArr.put("subFontSize");
+                    argsArr.put(keysArr);
+                    payload.put("args", argsArr);
                     try (OutputStream os = conn.getOutputStream()) {
                         byte[] input = payload.toString().getBytes("utf-8");
                         os.write(input, 0, input.length);
@@ -2755,8 +2805,8 @@ public class PlayerActivity extends Activity {
                                 runOnUiThread(new Runnable() {
                                     @Override
                                     public void run() {
-                                        if (subtitlesArray != null && subtitlesArray.length() > 0) {
-                                            JSONArray filtered = filterSubtitlesByPreference(subtitlesArray);
+                                        if (rawSubtitlesArray != null && rawSubtitlesArray.length() > 0) {
+                                            JSONArray filtered = filterSubtitlesByPreference(rawSubtitlesArray);
                                             if (filtered.length() > 0 || (preferredSubtitleLanguagesExplicitlyLoaded && preferredSubtitleLanguagesList.isEmpty())) {
                                                 subtitlesArray = filtered;
                                             }

@@ -15,7 +15,6 @@ const routeMap = {
   "update-settings": { path: "/api/settings/update-multiple", method: "POST" },
   "native-response": { path: "/api/ipc/native-response", method: "POST" },
   "native-cancel": { path: "/api/ipc/native-cancel", method: "POST" },
-  "check-wt-health": { path: "/api/update/health", method: "GET" },
   "get-app-version": { path: "/api/version", method: "GET" },
   "open-local-path": { path: "/api/local/open", method: "POST" },
 };
@@ -261,7 +260,8 @@ function createPolyfill() {
     set: (newState) => invoke("set-shared-state", newState),
     discordrpc: () => Promise.resolve(),
     playInMpv: (options) => invoke("play-in-mpv", options).catch(() => {}),
-    controlMpv: (command, args) => invoke("control-mpv", command, args).catch(() => {}),
+    controlMpv: (command, args) =>
+      invoke("control-mpv", command, args).catch(() => {}),
     on: (channel, callback) => {
       ensureEventSource();
       if (!eventListeners.has(channel)) eventListeners.set(channel, new Set());

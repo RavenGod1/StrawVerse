@@ -395,6 +395,13 @@ const createWindow = () => {
           );
       }
 
+      if (details.url && details.url.includes("comix")) {
+        delete details.requestHeaders["Referer"];
+        delete details.requestHeaders["referer"];
+        delete details.requestHeaders["Origin"];
+        delete details.requestHeaders["origin"];
+      }
+
       callback({ requestHeaders: details.requestHeaders });
     },
   );
@@ -686,7 +693,7 @@ app.whenReady().then(async () => {
     );
   });
 
-  const malToken = getKeyValue("Settings", "malToken");
+  const malToken = await getKeyValue("Settings", "malToken");
   if (malToken) {
     logger.info("[Main] Refreshing MAL token in the background...");
     MalRefreshTokenGen(malToken)

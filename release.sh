@@ -120,13 +120,6 @@ update_pkg_version "$ELECTRON_PKG"
 update_pkg_version "$CAPACITOR_PKG"
 update_pkg_version "$CAPACITOR_DIR/www/nodejs/package.json"
 
-# Sync changelog.md to capacitor folders
-mkdir -p "$CAPACITOR_DIR/www/nodejs"
-cp "$CHANGELOG" "$CAPACITOR_DIR/www/nodejs/changelog.md"
-if [ -d "$CAPACITOR_DIR/android/app/src/main/assets/public/nodejs" ]; then
-  cp "$CHANGELOG" "$CAPACITOR_DIR/android/app/src/main/assets/public/nodejs/changelog.md"
-fi
-ok "Synced changelog.md across all targets"
 
 # ── 7. Build Unified Frontend & Desktop Application ─────────
 log "Building Unified React GUI..."

@@ -18,17 +18,35 @@
 - **Scraper Remove Fix:** Removing a scraper from the marketplace works again.
 - **Mapping Sync Hardening:** Collision-safe history healing and an hourly directory sync that can no longer wedge the app.
 
-# [10.0.0] - 2026-09-16
+# [10.0.0] - 2026-10-06
 
-### Desktop & Android Now Share One Codebase
+### Desktop & Android Unified
 
-- **Single Shared UI:** Merged the separate Desktop and Android frontends into one unified codebase. Both platforms now run the same code with platform-aware branching. no more duplicated components or out-of-sync features.
-- **Root Monorepo Scripts:** New top-level `package.json` with one-command workflows: `build:gui`, `build:desktop`, `sync:android`, and `build:android`.
+- **Shared App Experience:** Android and Desktop now share the exact same modern interface and features. No more missing features, outdated layouts, or mismatched settings on mobile.
+- **Polished UI:** Cleaner menus, dropdowns, and smoother navigation across all screen sizes.
 
-### Video Player
+### Fixed Broken AnimePahe Episodes & History
 
-- **Platform-Aware Player:** Video playback now automatically uses the MPV player on Desktop and the HLS web player on Android, with a shared interface for controls, progress tracking, and episode switching.
-- **Subtitle Configuration:** Added subtitle track configuration support for both Desktop and Android.
+- **Auto-Fix Broken Anime & 404s:** Fixed an issue where AnimePahe shows would suddenly stop working or throw 404 errors when the site changed its internal links.
+- **Automatic History & Library Repair:** Your watch history, saved library bookmarks, custom tags, and downloads now automatically repair themselves in the background, so you never lose your progress or have to re-add your anime.
+
+### Smarter Downloads
+
+- **Automatic Server Switching:** Downloads no longer get stuck on dead or slow download links—the app now automatically detects stalled downloads and switches to faster working servers.
+- **Android Download Fixes:** Fixed download freezes, database lockups, and crashes on Android during heavy downloads.
+
+### Discover Filters
+
+- **Filter Anime on Anikoto:** Find what to watch faster with new filters in Discover. Filter by Genre, Airing Status (Airing, Completed), Media Type (TV, Movie, OVA, Special), and Sort order (Trending, Rating, Latest, Popular).
+
+### Video Player & Streaming
+
+- **Smoother Playback:** Better video streaming performance with improved subtitle and audio track switching on both Desktop and Android.
+- **Cloudflare Verification Fix:** Resolved issues where Cloudflare checks would fail or get stuck when loading video streams.
+
+### New Contributors
+
+- Special thanks to **@RavenGod1** for their contributions to download engine optimizations, discover catalog filters!
 
 # [9.5.3] - 2026-08-14
 

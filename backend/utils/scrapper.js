@@ -323,6 +323,9 @@ const BYPASSABLE_DOMAINS = [
   "anineko",
   "allmanga",
   "weebcentral",
+  "asurascans",
+  "comix",
+  "mangafire",
   "megaplay",
   "vidplay",
   "vidstream",
@@ -737,6 +740,16 @@ global.cloudflarebypass = async (targetUrl, force = false, referer = null) => {
       global.LastScrapperResponseCode = 200;
 
       let navUrl = targetUrl;
+      try {
+        const parsed = new URL(targetUrl);
+        if (
+          parsed.pathname.includes("/api") ||
+          parsed.pathname.includes("/stream") ||
+          parsed.search
+        ) {
+          navUrl = parsed.origin + "/";
+        }
+      } catch (_) {}
       let navFailed = false;
 
       if (

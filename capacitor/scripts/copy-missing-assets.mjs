@@ -45,28 +45,21 @@ try {
   const destNodejs = path.join(destDir, "nodejs");
   fs.mkdirSync(destNodejs, { recursive: true });
 
-  for (const file of [
-    "main.bundle.js",
-    "package.json",
-    "sql-wasm.wasm",
-    "changelog.md",
-  ]) {
+  for (const file of ["main.bundle.js", "package.json", "sql-wasm.wasm"]) {
     const src = path.join(srcDir, "nodejs", file);
     if (fs.existsSync(src)) {
       fs.copyFileSync(src, path.join(destNodejs, file));
     }
   }
 
-  const rootChangelog = path.resolve(capacitorRoot, "..", "changelog.md");
-  if (fs.existsSync(rootChangelog)) {
-    fs.copyFileSync(rootChangelog, path.join(srcDir, "nodejs", "changelog.md"));
-    fs.copyFileSync(rootChangelog, path.join(destNodejs, "changelog.md"));
-  }
-
   // 3. Copy gui/dist
   const guiSrc = path.join(srcDir, "nodejs", "gui");
+  const guiDest = path.join(destNodejs, "gui");
   if (fs.existsSync(guiSrc)) {
-    copyDir(guiSrc, path.join(destNodejs, "gui"));
+    if (fs.existsSync(guiDest)) {
+      fs.rmSync(guiDest, { recursive: true, force: true });
+    }
+    copyDir(guiSrc, guiDest);
   }
 
   // 4. Clean up any residual unbundled files from native assets

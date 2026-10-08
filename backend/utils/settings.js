@@ -760,6 +760,12 @@ async function HandleExtensions(TaskType, AnimeManga, ExtensionName) {
         };
       }
       fs.unlinkSync(extensionPath);
+      const iconPath = path.join(ScraperIcons, `${ExtensionName}.ico`);
+      if (fs.existsSync(iconPath)) {
+        try {
+          fs.unlinkSync(iconPath);
+        } catch (_) {}
+      }
 
       await unloadSingleScraper(AnimeManga, ExtensionName);
       return {

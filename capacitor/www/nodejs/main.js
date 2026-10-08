@@ -1,3 +1,59 @@
+if (typeof globalThis.Intl === "undefined" || typeof Intl === "undefined") {
+  const _LF = class {
+    constructor() {}
+    format(l = []) {
+      return Array.isArray(l) ? l.join(", ") : String(l);
+    }
+    formatToParts(l = []) {
+      return (Array.isArray(l) ? l : [l]).map((v) => ({
+        type: "element",
+        value: String(v),
+      }));
+    }
+  };
+  const _DTF = class {
+    constructor() {}
+    format(d = new Date()) {
+      return new Date(d).toISOString();
+    }
+  };
+  const _NF = class {
+    constructor() {}
+    format(n = 0) {
+      return String(n);
+    }
+  };
+  const _PR = class {
+    constructor() {}
+    select(n = 0) {
+      return n === 1 ? "one" : "other";
+    }
+  };
+  const _RTF = class {
+    constructor() {}
+    format(v, u) {
+      return `${v} ${u}`;
+    }
+  };
+  const _Col = class {
+    constructor() {}
+    compare(a, b) {
+      return String(a).localeCompare(String(b));
+    }
+  };
+  const _Intl = {
+    ListFormat: _LF,
+    DateTimeFormat: _DTF,
+    NumberFormat: _NF,
+    PluralRules: _PR,
+    RelativeTimeFormat: _RTF,
+    Collator: _Col,
+    getCanonicalLocales: (l) => (Array.isArray(l) ? l : [l].filter(Boolean)),
+  };
+  globalThis.Intl = _Intl;
+  if (typeof global !== "undefined") global.Intl = _Intl;
+}
+
 if (!process.env.NODEJS_MOBILE_DATA_DIR && process.env.DATADIR) {
   process.env.NODEJS_MOBILE_DATA_DIR = process.env.DATADIR;
 }
@@ -688,22 +744,21 @@ async function boot() {
         return res.json({ ok: true, result: null });
       }
 
-      let changelogPath = path.join(__dirname, "CHANGELOG.md");
-      if (!fs.existsSync(changelogPath)) {
-        changelogPath = path.join(__dirname, "..", "CHANGELOG.md");
-      }
+      const { getChangelog } = require("../../../backend/utils/changelog");
       let changelog = "";
-      if (fs.existsSync(changelogPath)) {
-        changelog = fs.readFileSync(changelogPath, "utf-8");
-        const parts = changelog.split(
+      const fullChangelog = getChangelog();
+      if (fullChangelog) {
+        const parts = fullChangelog.split(
           /(?:^|\n)#+\s*\[\d+\.\d+\.\d+(?:-[a-zA-Z0-9.]+)?\][^\n]*/,
         );
         if (parts.length > 1) {
-          const match = changelog.match(
+          const match = fullChangelog.match(
             /(?:^|\n)(#+\s*\[\d+\.\d+\.\d+(?:-[a-zA-Z0-9.]+)?\]\s*-\s*\d{4}-\d{2}-\d{2})/,
           );
           const versionHeader = match ? match[1].trim() : "# What's New";
           changelog = `${versionHeader}\n\n${parts[1].trim()}`;
+        } else {
+          changelog = fullChangelog;
         }
       } else {
         return res.json({ ok: true, result: null });

@@ -321,10 +321,27 @@ function getHeaders(url, method = "GET") {
     ) {
       headers.Referer = "https://kwik.cx/";
     } else if (
+      url.includes("youtube-anime.com") ||
+      url.includes("allmanga") ||
+      url.includes("allanime")
+    ) {
+      headers.Referer = "https://allmanga.to/";
+    } else if (
+      url.includes("asurascans") ||
+      url.includes("asura-images") ||
+      url.includes("asuracomic")
+    ) {
+      headers.Referer = "https://asurascans.com/";
+    } else if (
       url.includes("temp.compsci88.com") ||
-      url.includes("weebcentral")
+      url.includes("weebcentral") ||
+      url.includes("lastation.us")
     ) {
       headers.Referer = "https://weebcentral.com/";
+    } else if (url.includes("mangafire")) {
+      headers.Referer = "https://mangafire.to/";
+    } else if (url.includes("comix")) {
+      delete headers.Referer;
     } else if (url.includes("animepahe")) {
       try {
         headers.Referer = new URL(url).origin + "/";
@@ -338,7 +355,7 @@ function getHeaders(url, method = "GET") {
     }
   }
 
-  if (!headers.Referer) {
+  if (!headers.Referer && !url.includes("comix")) {
     try {
       const urlObj = new URL(url);
       if (urlObj.protocol === "http:" || urlObj.protocol === "https:") {

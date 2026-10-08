@@ -117,7 +117,12 @@ export default function Marketplace({ initialType }) {
   };
 
   // Actually, we can get versions by loading local extensions. But wait! Let's check if the React app can just show Install / Remove buttons, which is already 95% of what's needed. If we want update check, we can just show "Update" if it's installed and version doesn't match!
-  // Wait, let's see if we should fetch version. Let's just look at how EJS rendered it. EJS rendered Install, Update, Remove. Let's support Install and Remove, and if it's already installed, we can let user update it or remove it.
+  const visibleExtensions = extensions.filter((provider) => {
+    if (provider.disabled) {
+      return isInstalled(provider.name);
+    }
+    return true;
+  });
 
   return (
     <div className="market-wrapper">
@@ -148,89 +153,95 @@ export default function Marketplace({ initialType }) {
         </div>
       ) : (
         <div className="market-grid">
-          {extensions.map((provider) => {
-            const installed = isInstalled(provider.name);
-            const isProcessing = processingId === provider.name;
-            const logoUrl = `https://raw.githubusercontent.com/TheYogMehta/extensions/refs/heads/main/ico/${provider.name}.ico`;
-            const installedVer = getInstalledVersion(provider.name);
-            const hasUpdate = installedVer
-              ? isUpdateAvailable(installedVer, provider.version)
-              : false;
+          {visibleExtensions.length === 0 ? (
+            <div className="market-loading-center">
+              <p>No extensions available.</p>
+            </div>
+          ) : (
+            visibleExtensions.map((provider) => {
+              const installed = isInstalled(provider.name);
+              const isProcessing = processingId === provider.name;
+              const logoUrl = `https://raw.githubusercontent.com/TheYogMehta/extensions/refs/heads/main/ico/${provider.name}.ico`;
+              const installedVer = getInstalledVersion(provider.name);
+              const hasUpdate = installedVer
+                ? isUpdateAvailable(installedVer, provider.version)
+                : false;
 
-            return (
-              <div key={provider.name} className="market-card glass-panel">
-                <div className="market-card-header">
-                  <div className="market-logo-wrapper">
-                    <img
-                      src={logoUrl}
-                      alt={provider.name}
-                      className="market-logo"
-                      onError={(e) => {
-                        e.target.src = "/images/image-404.png";
-                      }}
-                    />
+              return (
+                <div key={provider.name} className="market-card glass-panel">
+                  <div className="market-card-header">
+                    <div className="market-logo-wrapper">
+                      <img
+                        src={logoUrl}
+                        alt={provider.name}
+                        className="market-logo"
+                        onError={(e) => {
+                          e.target.src = "/images/image-404.png";
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <h3 className="market-card-title">{provider.name}</h3>
+                      <span className="market-version">
+                        v{provider.version}
+                      </span>
+                    </div>
                   </div>
-                  <div>
-                    <h3 className="market-card-title">{provider.name}</h3>
-                    <span className="market-version">v{provider.version}</span>
-                  </div>
-                </div>
 
-                {provider.disabled && (
-                  <div className="market-disabled-banner">
-                    <ShieldAlert size={14} />
-                    <span>Scraper Disabled / Obsolete</span>
-                  </div>
-                )}
-
-                <div className="market-card-actions">
-                  {isProcessing ? (
-                    <button disabled className="btn-market-loading">
-                      <Loader2 size={16} className="spin" />
-                      <span>Processing...</span>
-                    </button>
-                  ) : installed ? (
-                    <>
-                      {hasUpdate ? (
-                        <button
-                          onClick={() => handleAction("add", provider.name)}
-                          className="btn-update"
-                          disabled={provider.disabled}
-                          title={`New version v${provider.version} available!`}
-                        >
-                          Update
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => handleAction("add", provider.name)}
-                          className="btn-reinstall"
-                          disabled={provider.disabled}
-                          title="Reinstall current version"
-                        >
-                          Reinstall
-                        </button>
-                      )}
-                      <button
-                        onClick={() => handleAction("remove", provider.name)}
-                        className="btn-remove"
-                      >
-                        Remove
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      onClick={() => handleAction("add", provider.name)}
-                      className="btn-install"
-                      disabled={provider.disabled}
-                    >
-                      <Download size={14} />
-                      <span>Install Scraper</span>
-                    </button>
+                  {provider.disabled && (
+                    <div className="market-disabled-banner">
+                      <ShieldAlert size={14} />
+                      <span>Scraper Disabled / Obsolete</span>
+                    </div>
                   )}
+
+                  <div className="market-card-actions">
+                    {isProcessing ? (
+                      <button disabled className="btn-market-loading">
+                        <Loader2 size={16} className="spin" />
+                        <span>Processing...</span>
+                      </button>
+                    ) : installed ? (
+                      <>
+                        {!provider.disabled &&
+                          (hasUpdate ? (
+                            <button
+                              onClick={() => handleAction("add", provider.name)}
+                              className="btn-update"
+                              title={`New version v${provider.version} available!`}
+                            >
+                              Update
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => handleAction("add", provider.name)}
+                              className="btn-reinstall"
+                              title="Reinstall current version"
+                            >
+                              Reinstall
+                            </button>
+                          ))}
+                        <button
+                          onClick={() => handleAction("remove", provider.name)}
+                          className="btn-remove"
+                        >
+                          Remove
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        onClick={() => handleAction("add", provider.name)}
+                        className="btn-install"
+                      >
+                        <Download size={14} />
+                        <span>Install Scraper</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })
+          )}
         </div>
       )}
     </div>

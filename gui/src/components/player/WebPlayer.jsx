@@ -204,7 +204,6 @@ export default function VideoPlayer({
       e.target.closest(".player-controls-footer") ||
       e.target.closest(".player-settings-dropdown") ||
       e.target.closest(".player-status-overlay") ||
-      e.target.closest(".wt-overlay-panel") ||
       e.target.closest(".player-touch-zone")
     ) {
       return;
@@ -239,6 +238,7 @@ export default function VideoPlayer({
 
   const [settingsActiveMenu, setSettingsActiveMenu] = useState("main");
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
+  const [preferredSubLangs, setPreferredSubLangs] = useState(["English"]);
   const [selectedSubtitleIndex, setSelectedSubtitleIndex] = useState(0);
 
   const [showUI, setShowUI] = useState(true);
@@ -273,6 +273,7 @@ export default function VideoPlayer({
             "playerSubtitlePref",
             "playerSubsEnabled",
             "playerSpeed",
+            "preferredSubtitleLanguages",
           ]);
           if (res?.settings?.autoSkipIntro !== undefined) {
             setAutoSkip(res.settings.autoSkipIntro);
@@ -284,6 +285,9 @@ export default function VideoPlayer({
           if (res?.settings?.playerSpeed !== undefined) {
             const spd = parseFloat(res.settings.playerSpeed);
             if (!isNaN(spd) && spd > 0) setPlaybackSpeed(spd);
+          }
+          if (Array.isArray(res?.settings?.preferredSubtitleLanguages)) {
+            setPreferredSubLangs(res.settings.preferredSubtitleLanguages);
           }
         }
       } catch (err) {
@@ -1216,6 +1220,8 @@ export default function VideoPlayer({
         image: image || "",
         malid: String(malid || ""),
         autoSkipIntro: Boolean(autoSkip),
+        playerSpeed: playbackSpeed || 1.0,
+        preferredSubtitleLanguages: preferredSubLangs || [],
       })
         .then(() => {
           if (onBack) onBack();

@@ -417,15 +417,17 @@ async function healAnimePaheUuid({ oldId, malid, title, folderName }) {
           logger.info(
             `[pahe-heal] Server auto-healed UUID ${cleanOldId} -> ${newId}`,
           );
-        }
 
-        if (typeof global.sendToRenderer === "function") {
-          global.sendToRenderer("info-loading-status", {
-            text: "Updating database with healed mapping, please wait...",
-          });
-        }
+          if (typeof global.sendToRenderer === "function") {
+            global.sendToRenderer("info-loading-status", {
+              text: "Updating database with healed mapping, please wait...",
+            });
+          }
 
-        await checkForMappingUpdates();
+          try {
+            await checkForMappingUpdates(true);
+          } catch (_) {}
+        }
 
         if (!newId && global.mappingDb) {
           try {
@@ -447,13 +449,54 @@ async function healAnimePaheUuid({ oldId, malid, title, folderName }) {
             (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
           const cleanTitle = normalize(title);
           const cleanFolder = normalize(folderName);
-          const found = links.find((l) => {
+          let found = links.find((l) => {
             const cleanLinkName = normalize(l.name);
             return (
               (cleanTitle && cleanLinkName === cleanTitle) ||
               (cleanFolder && cleanLinkName === cleanFolder)
             );
           });
+
+          if (!found) {
+            const extractTokens = (str) => {
+              if (!str) return [];
+              return str
+                .toLowerCase()
+                .replace(/[^a-z0-9\s]/g, " ")
+                .split(/\s+/)
+                .filter(
+                  (w) =>
+                    w.length >= 3 &&
+                    !/^(the|and|for|with|movie|season|part|ova|special)$/.test(
+                      w,
+                    ),
+                );
+            };
+
+            const titleTokens = extractTokens(title || folderName);
+            if (titleTokens.length >= 2) {
+              let bestScore = 0;
+              let bestLink = null;
+
+              for (const l of links) {
+                const linkTokens = extractTokens(l.name);
+                if (linkTokens.length === 0) continue;
+                const matchCount = titleTokens.filter((t) =>
+                  linkTokens.includes(t),
+                ).length;
+                const score =
+                  matchCount / Math.min(titleTokens.length, linkTokens.length);
+                if (matchCount >= 2 && score >= 0.5 && score > bestScore) {
+                  bestScore = score;
+                  bestLink = l;
+                }
+              }
+              if (bestLink) {
+                found = bestLink;
+              }
+            }
+          }
+
           if (found?.uuid && found.uuid !== cleanOldId) {
             newId = found.uuid;
             logger.info(

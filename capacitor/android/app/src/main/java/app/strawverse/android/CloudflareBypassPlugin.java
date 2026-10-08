@@ -669,6 +669,9 @@ public class CloudflareBypassPlugin extends Plugin {
         final String episodesList = call.getString("episodesList", "[]");
         final boolean autoSkipIntro = call.getBoolean("autoSkipIntro", false);
         final boolean autoPlayNextEpisode = call.getBoolean("autoPlayNextEpisode", true);
+        final double playerSpeed = call.getDouble("playerSpeed", 1.0);
+        com.getcapacitor.JSArray prefSubLangsArray = call.getArray("preferredSubtitleLanguages");
+        final String preferredSubtitleLanguages = prefSubLangsArray != null ? prefSubLangsArray.toString() : call.getString("preferredSubtitleLanguages", "[]");
 
         getActivity().runOnUiThread(new Runnable() {
             @Override
@@ -688,6 +691,8 @@ public class CloudflareBypassPlugin extends Plugin {
                     intent.putExtra("episodesList", episodesList);
                     intent.putExtra("autoSkipIntro", autoSkipIntro);
                     intent.putExtra("autoPlayNextEpisode", autoPlayNextEpisode);
+                    intent.putExtra("playerSpeed", playerSpeed);
+                    intent.putExtra("preferredSubtitleLanguages", preferredSubtitleLanguages);
                     context.startActivity(intent);
                     call.resolve();
                 } catch (Exception e) {

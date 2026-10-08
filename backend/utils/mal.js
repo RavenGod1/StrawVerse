@@ -103,6 +103,9 @@ async function MalVerifyToken(code) {
 // Refresh Token Generator
 async function MalRefreshTokenGen(json) {
   try {
+    if (json && typeof json.then === "function") {
+      json = await json;
+    }
     let JsonToken = typeof json === "string" ? JSON.parse(json) : json;
 
     if (!JsonToken || !JsonToken.refresh_token) {
@@ -185,7 +188,13 @@ async function MalRefreshTokenGen(json) {
     };
   } catch (err) {
     logger.error(`Failed to refresh MAL token: ${err.message}`);
-    await clearMalSession();
+    const isAuthError =
+      err.response?.status === 400 ||
+      err.response?.status === 401 ||
+      err.message === "Invalid token data!";
+    if (isAuthError) {
+      await clearMalSession();
+    }
 
     return {
       mal_on_off: false,

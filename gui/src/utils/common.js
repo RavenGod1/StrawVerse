@@ -1,11 +1,27 @@
 export async function apiPost(url, body = {}, options = {}) {
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    ...options,
-  });
-  return response.json();
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      ...options,
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok) {
+      return (
+        data || {
+          success: false,
+          error: `Request failed with status ${response.status}`,
+        }
+      );
+    }
+    return data || { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error: err.message || "Network request failed",
+    };
+  }
 }
 
 export function hexToRgba(hex, alpha = 1, fallback = null) {

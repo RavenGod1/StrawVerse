@@ -215,17 +215,28 @@ export default function InfoView({
 
       let currentAutoSkip = false;
       let currentAutoPlayNext = true;
+      let currentPlayerSpeed = 1.0;
+      let currentPreferredSubLangs = ["English"];
       if (window.sharedStateAPI && window.sharedStateAPI.getSettings) {
         try {
           const sRes = await window.sharedStateAPI.getSettings([
             "autoSkipIntro",
             "autoPlayNextEpisode",
+            "playerSpeed",
+            "preferredSubtitleLanguages",
           ]);
           if (sRes?.settings?.autoSkipIntro !== undefined) {
             currentAutoSkip = Boolean(sRes.settings.autoSkipIntro);
           }
           if (sRes?.settings?.autoPlayNextEpisode !== undefined) {
             currentAutoPlayNext = Boolean(sRes.settings.autoPlayNextEpisode);
+          }
+          if (sRes?.settings?.playerSpeed !== undefined) {
+            const spd = parseFloat(sRes.settings.playerSpeed);
+            if (!isNaN(spd) && spd > 0) currentPlayerSpeed = spd;
+          }
+          if (Array.isArray(sRes?.settings?.preferredSubtitleLanguages)) {
+            currentPreferredSubLangs = sRes.settings.preferredSubtitleLanguages;
           }
         } catch (_) {}
       }
@@ -248,6 +259,8 @@ export default function InfoView({
         episodesList: JSON.stringify(episodesOrChapters || []),
         autoSkipIntro: currentAutoSkip,
         autoPlayNextEpisode: currentAutoPlayNext,
+        playerSpeed: currentPlayerSpeed,
+        preferredSubtitleLanguages: currentPreferredSubLangs,
       }).catch((err) => {
         console.error("Failed to start native player:", err);
       });

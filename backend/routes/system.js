@@ -5,6 +5,7 @@ const { logger, getLogs, clearLogs } = require("../utils/AppLogger");
 const { getQueue, updateQueue, isQueuePaused } = require("../utils/queue");
 const ImageCacheManager = require("../utils/ImageCacheManager");
 const { getCurrentAppVersion } = require("../utils/constants");
+const { getChangelog } = require("../utils/changelog");
 
 const router = express.Router();
 
@@ -36,14 +37,8 @@ router.get("/api/version", (req, res) => {
 // Get application changelog / release notes
 router.get("/api/changelog", (req, res) => {
   try {
-    const changelogPath = fs.existsSync(
-      path.resolve(__dirname, "../../changelog.md"),
-    )
-      ? path.resolve(__dirname, "../../changelog.md")
-      : path.resolve(__dirname, "changelog.md");
-
-    if (fs.existsSync(changelogPath)) {
-      const changelog = fs.readFileSync(changelogPath, "utf-8");
+    const changelog = getChangelog();
+    if (changelog) {
       return res.json({ changelog });
     }
     res.status(404).json({ error: "changelog.md not found" });
