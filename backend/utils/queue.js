@@ -918,6 +918,7 @@ async function downloadEpisodeByQuality(
     );
 
     let selectedSource = null;
+    let fallbackExcludedSource = null;
 
     for (let i = 0; i < sortedSources.length; i++) {
       const src = sortedSources[i];
@@ -939,6 +940,13 @@ async function downloadEpisodeByQuality(
               logger.warn(
                 `[Download] Server #${i + 1} "${src.name || src.quality}" resolved to excluded host ${rHost}, trying next server...`,
               );
+              if (!fallbackExcludedSource) {
+                fallbackExcludedSource = {
+                  ...src,
+                  ...resolved,
+                  isUnresolved: false,
+                };
+              }
               continue;
             }
             selectedSource = {
@@ -973,6 +981,9 @@ async function downloadEpisodeByQuality(
           logger.warn(
             `[Download] Server #${i + 1} "${src.name || src.quality}" is on excluded host ${aliveHost}, trying next server...`,
           );
+          if (!fallbackExcludedSource) {
+            fallbackExcludedSource = src;
+          }
           continue;
         }
         const isAlive = await verifyStreamReachability(
@@ -988,6 +999,13 @@ async function downloadEpisodeByQuality(
           );
         }
       }
+    }
+
+    if (!selectedSource && fallbackExcludedSource) {
+      logger.warn(
+        `[Download] All available servers are on previously excluded host(s). Reusing best available server to allow download to proceed.`,
+      );
+      selectedSource = fallbackExcludedSource;
     }
 
     if (!selectedSource || !selectedSource.url) {

@@ -157,13 +157,26 @@ export default function CatalogGrid({
                 src={getProxiedImageUrl(item.image || item.scraper_image)}
                 alt={item.title}
                 className="media-img"
+                loading="lazy"
                 draggable={false}
                 onError={(e) => {
+                  const currentSrc = e.target.getAttribute("src");
+                  if (
+                    currentSrc &&
+                    !e.target.dataset.retried &&
+                    !currentSrc.includes("/images/")
+                  ) {
+                    e.target.dataset.retried = "1";
+                    setTimeout(() => {
+                      const separator = currentSrc.includes("?") ? "&" : "?";
+                      e.target.src = `${currentSrc}${separator}_r=${Date.now()}`;
+                    }, 800);
+                    return;
+                  }
                   const fallback = item.scraper_image || item.fallback_image;
                   const proxiedFallback = fallback
                     ? getProxiedImageUrl(fallback)
                     : null;
-                  const currentSrc = e.target.getAttribute("src");
                   if (
                     proxiedFallback &&
                     currentSrc !== proxiedFallback &&

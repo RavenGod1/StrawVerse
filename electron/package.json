@@ -4,7 +4,7 @@
   "description": "Download anime in batches & its fast :3",
   "main": "gui.js",
   "scripts": {
-    "start": "electron . --trace-warnings",
+    "start": "electron .",
     "prebuild": "node scripts/download-binaries.js",
     "build": "npm run build --prefix ../gui",
     "prepackage": "node scripts/download-binaries.js",

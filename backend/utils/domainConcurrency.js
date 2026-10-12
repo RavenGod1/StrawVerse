@@ -168,7 +168,7 @@ async function getDomainConcurrency(domain, defaultInitial = 4) {
 
 function setDomainErrorCap(domain, failedAtConcurrency) {
   if (!domain) return;
-  const cap = Math.max(1, failedAtConcurrency - 1);
+  const cap = Math.max(2, failedAtConcurrency - 1);
   const shouldLog = !domainMaxCap[domain] || cap < domainMaxCap[domain];
   if (!domainMaxCap[domain] || cap < domainMaxCap[domain]) {
     domainMaxCap[domain] = cap;
@@ -289,11 +289,12 @@ function recordDomainBatchSuccess(domain, batchThroughput = null) {
         // still capped by domainMaxCap below.
         newConcurrency = current + (speedDiffRatio > 0.25 ? 2 : 1);
         if (domainMaxCap[domain] && newConcurrency > domainMaxCap[domain]) {
+          domainMaxCap[domain] = Math.min(16, domainMaxCap[domain] + 1);
           newConcurrency = domainMaxCap[domain];
           logTuning(
             domain,
             "info",
-            `[DomainConcurrency] '${domain}' at ceiling: ${mbps}, concurrency ${newConcurrency}`,
+            `[DomainConcurrency] '${domain}' recovering ceiling: ${mbps}, concurrency ${newConcurrency}`,
           );
         } else {
           logTuning(
@@ -311,6 +312,9 @@ function recordDomainBatchSuccess(domain, batchThroughput = null) {
         );
       } else {
         newConcurrency = current;
+        if (domainMaxCap[domain] && current >= domainMaxCap[domain]) {
+          domainMaxCap[domain] = Math.min(16, domainMaxCap[domain] + 1);
+        }
         logTuning(
           domain,
           "info",

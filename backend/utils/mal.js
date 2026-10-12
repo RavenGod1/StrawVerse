@@ -2,7 +2,7 @@ const { logger } = require("./AppLogger");
 const axios = require("axios");
 const { MalEpMap, MalMangaMap } = require("./Metadata");
 const verifyChallenge = require("./pkce");
-const { getKeyValue, setKeyValue, queryOne } = require("./db");
+const { getKeyValue, setKeyValue, queryOne, run } = require("./db");
 const { resolveMalIdFromMapping } = require("./mappingResolver");
 
 const MalAppID = "d0b22d129a541dac4d28207f77b15b5f";

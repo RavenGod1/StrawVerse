@@ -404,7 +404,10 @@ class downloader {
       return await requestThunk();
     } catch (err) {
       const status = err?.response?.statusCode ?? err?.response?.status;
-      if ((status === 403 || status === 503) && (await refreshCdnClearance(targetUrl))) {
+      if (
+        (status === 403 || status === 503 || status === 530) &&
+        (await refreshCdnClearance(targetUrl))
+      ) {
         return await requestThunk();
       }
       throw err;
@@ -727,7 +730,7 @@ class downloader {
       // freshly-downloaded segments average under the floor, abort with the
       // host attached so the queue retries on a different server instead of
       // trickling for over an hour.
-      const SLOW_HOST_FLOOR_BPS = 350 * 1024;
+      const SLOW_HOST_FLOOR_BPS = 60 * 1024;
       const SLOW_HOST_AFTER_FRESH = 16;
       const dlStartTime = Date.now();
       let freshCount = 0;
@@ -836,7 +839,12 @@ class downloader {
           )
             throw err;
 
-          const RETRY_DELAYS = [1000, 3000, 5000];
+          const status = err?.response?.statusCode ?? err?.response?.status;
+          const isServerRateOrError =
+            status === 429 || status === 502 || status === 503 || status === 530;
+          const RETRY_DELAYS = isServerRateOrError
+            ? [2000, 5000, 8000]
+            : [1000, 3000, 5000];
 
           if (retryCount >= RETRY_DELAYS.length) {
             logger.error(
@@ -1065,9 +1073,15 @@ class downloader {
         failedIndices = stillFailing;
         if (failedIndices.length > 0) {
           failedSegmentsCount = failedIndices.length;
-          throw new Error(
+          let host = "unknown-host";
+          try {
+            host = new URL(this.streamUrl).hostname;
+          } catch (_) {}
+          const finalErr = new Error(
             `SCRAPER_TEMPORARY_ERROR: ${failedIndices.length} segment(s) failed after retries (e.g. #${failedIndices[0]})`,
           );
+          finalErr.failedHost = host;
+          throw finalErr;
         }
       }
 

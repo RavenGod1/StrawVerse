@@ -89,8 +89,15 @@ async function prepareSubtitles(validSubs, activeReferer) {
 
   const results = await Promise.allSettled(
     validSubs.map(async (sub, idx) => {
-      const cleanLang = formatSubtitleLabel(sub, idx);
-      const rawUrl = resolvePathOrUrl(sub.url);
+      let rawUrl = resolvePathOrUrl(sub.url);
+      if (rawUrl && rawUrl.startsWith("/subtitles?file=")) {
+        const decodedPath = decodeURIComponent(
+          rawUrl.slice("/subtitles?file=".length),
+        );
+        if (decodedPath && fs.existsSync(decodedPath)) {
+          return { lang: cleanLang, path: decodedPath };
+        }
+      }
       if (!rawUrl || !rawUrl.startsWith("http")) {
         return { lang: cleanLang, path: rawUrl };
       }
@@ -1137,6 +1144,12 @@ async function playInMpv(window, options) {
       global.activeMpvSession.currentTime = startSeek;
       global.activeMpvSession.lastSavedTime = startSeek;
       global.activeMpvSession.duration = options.duration || 0;
+      global.activeMpvSession.hasNext = options.hasNext;
+      global.activeMpvSession.hasPrev = options.hasPrev;
+      global.activeMpvSession.episodes = options.episodes;
+      global.activeMpvSession.autoPlayNextEpisode = autoPlayNextEpisode;
+      global.activeMpvSession.hasTriggeredAutoNext = false;
+      global.activeMpvSession.options = options;
     }
 
     const client = global.activeMpvClient;
@@ -1144,6 +1157,51 @@ async function playInMpv(window, options) {
       activeSources[0]?.name || activeSources[0]?.quality || "Server 1";
 
     try {
+      client.write(
+        JSON.stringify({
+          command: [
+            "set_property",
+            "user-data/strawverse-episode",
+            String(episode),
+          ],
+        }) + "\n",
+      );
+      client.write(
+        JSON.stringify({
+          command: [
+            "set_property",
+            "user-data/strawverse-title",
+            String(title),
+          ],
+        }) + "\n",
+      );
+      client.write(
+        JSON.stringify({
+          command: [
+            "set_property",
+            "user-data/strawverse-mediaId",
+            String(mediaId),
+          ],
+        }) + "\n",
+      );
+      client.write(
+        JSON.stringify({
+          command: [
+            "set_property",
+            "user-data/strawverse-has-next",
+            options.hasNext ? "yes" : "no",
+          ],
+        }) + "\n",
+      );
+      client.write(
+        JSON.stringify({
+          command: [
+            "set_property",
+            "user-data/strawverse-has-prev",
+            options.hasPrev ? "yes" : "no",
+          ],
+        }) + "\n",
+      );
       client.write(
         JSON.stringify({
           command: [
@@ -1362,6 +1420,12 @@ async function playInMpv(window, options) {
     currentTime: startSeek,
     lastSavedTime: startSeek,
     duration: options.duration || 0,
+    hasNext: options.hasNext,
+    hasPrev: options.hasPrev,
+    episodes: options.episodes,
+    autoPlayNextEpisode,
+    hasTriggeredAutoNext: false,
+    options,
   };
 
   const mpvExe = getMpvPath();
@@ -1469,6 +1533,7 @@ async function playInMpv(window, options) {
   let pendingAction = null;
   let pendingSeekOnLoad = null;
   let hasStartedSent = false;
+  let hasTriggeredAutoNext = false;
 
   const sendStarted = () => {
     if (global.activePlayRequestId !== currentRequestId) return;
@@ -1606,29 +1671,74 @@ async function playInMpv(window, options) {
     client.write(
       JSON.stringify({ command: ["observe_property", 15, "seeking"] }) + "\n",
     );
+    client.write(
+      JSON.stringify({ command: ["observe_property", 16, "eof-reached"] }) +
+        "\n",
+    );
 
     let lastPeriodicSave = Date.now();
 
+    const triggerAutoNext = (reason) => {
+      const sess = global.activeMpvSession;
+      const isAutoPlay =
+        sess?.autoPlayNextEpisode !== undefined
+          ? sess.autoPlayNextEpisode
+          : autoPlayNextEpisode;
+      const hasNextEp =
+        sess?.hasNext !== undefined ? sess.hasNext : options.hasNext;
+      const alreadyTriggered = sess
+        ? sess.hasTriggeredAutoNext
+        : hasTriggeredAutoNext;
+
+      if (isAutoPlay && hasNextEp && !alreadyTriggered) {
+        if (sess) sess.hasTriggeredAutoNext = true;
+        hasTriggeredAutoNext = true;
+        logger.info(`[MPV] Auto-playing next episode (${reason})...`);
+        saveProgressToDb(currentTime);
+        if (window && window.webContents && !window.isDestroyed()) {
+          window.webContents.send("mpv-action", { action: "next" });
+        }
+      }
+    };
+
     const saveProgressToDb = (currT) => {
       if (!currT || currT <= 0) return;
+      const sess = global.activeMpvSession;
+      const curMediaId = sess?.mediaId || mediaId;
+      const curTitle = sess?.title || title;
+      const curEpisode = sess?.episode || episode;
+      const curImage = sess?.image || image;
+      const curProvider = sess?.provider || provider;
+      const curMalid = sess?.malid || malid;
+      const curSubdub =
+        sess?.activeSources?.[0]?.lang ||
+        sess?.activeSources?.[0]?.type ||
+        sess?.subdub ||
+        subdub ||
+        "sub";
+      const curDuration = duration || sess?.duration || options.duration || 0;
       const deltaSpent = Math.max(0, currT - lastSavedTime);
+
       updateHistory({
-        mediaId: mediaId,
+        mediaId: curMediaId,
         type: "Anime",
-        title: title,
-        number: episode,
+        title: curTitle,
+        number: curEpisode,
         currentTime: currT,
-        duration: duration || options.duration || 0,
+        duration: curDuration,
         timeSpent: deltaSpent,
-        image: image,
-        provider: provider,
-        malid: malid,
-        subdub:
-          activeSources[0]?.lang || activeSources[0]?.type || subdub || "sub",
+        image: curImage,
+        provider: curProvider,
+        malid: curMalid,
+        subdub: curSubdub,
       }).catch((e) =>
         logger.error(`[MPV] Periodic watch history sync failed: ${e.message}`),
       );
       lastSavedTime = currT;
+      if (sess) {
+        sess.currentTime = currT;
+        sess.lastSavedTime = currT;
+      }
       lastPeriodicSave = Date.now();
     };
 
@@ -1636,6 +1746,10 @@ async function playInMpv(window, options) {
       try {
         const msg = JSON.parse(dataStr);
         if (msg.event === "file-loaded") {
+          hasTriggeredAutoNext = false;
+          if (global.activeMpvSession) {
+            global.activeMpvSession.hasTriggeredAutoNext = false;
+          }
           sendStarted();
           if (pendingSeekOnLoad !== null && pendingSeekOnLoad > 0) {
             const seekPos = Math.floor(pendingSeekOnLoad);
@@ -1660,6 +1774,9 @@ async function playInMpv(window, options) {
             }
           } catch (_) {}
         }
+        if (msg.event === "end-file" && msg.reason === "eof") {
+          triggerAutoNext("end-file eof");
+        }
         if (msg.event === "property-change") {
           if (
             msg.name === "user-data/strawverse-action" &&
@@ -1667,6 +1784,9 @@ async function playInMpv(window, options) {
             msg.data !== ""
           ) {
             pendingAction = msg.data;
+            if (pendingAction === "next") {
+              hasTriggeredAutoNext = true;
+            }
             if (pendingAction === "open-subtitle-settings") {
               logger.info(`[MPV IPC] Received open-subtitle-settings request`);
               try {
@@ -1958,11 +2078,23 @@ async function playInMpv(window, options) {
               });
               lastSyncTime = now;
             }
+
+            if (duration > 0 && currentTime >= duration - 1.5) {
+              triggerAutoNext("video end");
+            }
           } else if (msg.name === "duration" && typeof msg.data === "number") {
             duration = msg.data;
           } else if (msg.name === "seeking" && msg.data === false) {
             lastSavedTime = currentTime;
+            if (duration > 0 && currentTime < duration - 5) {
+              hasTriggeredAutoNext = false;
+              if (global.activeMpvSession) {
+                global.activeMpvSession.hasTriggeredAutoNext = false;
+              }
+            }
             saveProgressToDb(currentTime);
+          } else if (msg.name === "eof-reached" && msg.data === true) {
+            triggerAutoNext("eof-reached");
           } else if (msg.name === "pause" && typeof msg.data === "boolean") {
             paused = msg.data;
             saveProgressToDb(currentTime);

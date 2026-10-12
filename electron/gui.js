@@ -4,6 +4,13 @@ process.on("warning", (w) => {
   if (w.name !== "ExperimentalWarning") console.warn(w);
 });
 
+try {
+  const dns = require("node:dns");
+  if (dns && typeof dns.setDefaultResultOrder === "function") {
+    dns.setDefaultResultOrder("ipv4first");
+  }
+} catch (_) {}
+
 function makeStreamSafe(stream) {
   if (!stream) return;
   if (typeof stream.on === "function") {

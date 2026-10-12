@@ -34,7 +34,14 @@ export default function VideoPlayer({
     if (!isElectronMpvAvailable) return;
 
     const allEpisodes = episodes.length > 0 ? episodes : episodesList;
-    const currentEpisodeObj = allEpisodes.find(
+    const sortedEpisodes = [...allEpisodes].sort((a, b) => {
+      const numA = Number(a.number !== undefined ? a.number : a.id);
+      const numB = Number(b.number !== undefined ? b.number : b.id);
+      if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+      return 0;
+    });
+
+    const currentEpisodeObj = sortedEpisodes.find(
       (item) =>
         String(item.id) === String(currentEpNumOrId) ||
         Number(item.number) === Number(currentEpNumOrId),
@@ -51,19 +58,19 @@ export default function VideoPlayer({
         ? Number(currentEpNumOrId)
         : 1;
 
-    const currentIdx = allEpisodes.findIndex(
+    const currentIdx = sortedEpisodes.findIndex(
       (item) =>
         String(item.id) === String(currentEpNumOrId) ||
         Number(item.number) === Number(targetEpNum),
     );
     const hasNext =
       currentIdx !== -1
-        ? currentIdx < allEpisodes.length - 1
-        : allEpisodes.length > 0
-          ? allEpisodes.some((e) => Number(e.number) > Number(targetEpNum))
-          : true;
+        ? currentIdx < sortedEpisodes.length - 1
+        : sortedEpisodes.some((e) => Number(e.number) > Number(targetEpNum));
     const hasPrev =
-      currentIdx !== -1 ? currentIdx > 0 : Number(targetEpNum) > 1;
+      currentIdx !== -1
+        ? currentIdx > 0
+        : Number(targetEpNum) > 1;
 
     setLoading(true);
     setStatusMsg(`Opening MPV player for Episode ${targetEpNum}...`);
@@ -79,7 +86,7 @@ export default function VideoPlayer({
         provider: provider,
         malid: malid,
         subdub: subdub || playerSubDub,
-        episodes: allEpisodes,
+        episodes: sortedEpisodes,
         hasNext,
         hasPrev,
       })
@@ -120,11 +127,11 @@ export default function VideoPlayer({
       });
 
     const handleNextEpisode = () => {
-      let nextEp;
-      if (currentIdx !== -1 && currentIdx < allEpisodes.length - 1) {
-        nextEp = allEpisodes[currentIdx + 1];
+      let nextEp = null;
+      if (currentIdx !== -1 && currentIdx < sortedEpisodes.length - 1) {
+        nextEp = sortedEpisodes[currentIdx + 1];
       } else {
-        nextEp = allEpisodes.find(
+        nextEp = sortedEpisodes.find(
           (e) => Number(e.number) > Number(targetEpNum),
         );
       }
@@ -140,7 +147,14 @@ export default function VideoPlayer({
     const handlePrevEpisode = () => {
       let prevEp = null;
       if (currentIdx > 0) {
-        prevEp = allEpisodes[currentIdx - 1];
+        prevEp = sortedEpisodes[currentIdx - 1];
+      } else {
+        const prevCandidates = sortedEpisodes.filter(
+          (e) => Number(e.number) < Number(targetEpNum),
+        );
+        if (prevCandidates.length > 0) {
+          prevEp = prevCandidates[prevCandidates.length - 1];
+        }
       }
       if (prevEp) {
         setLoading(true);

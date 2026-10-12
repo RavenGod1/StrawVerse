@@ -319,6 +319,63 @@ async function healAnimePaheUuid({ oldId, malid, title, folderName }) {
           folderName = animeRow.folder_name;
       }
     } catch (_) {}
+
+    if (!title) {
+      try {
+        const histRow = await global.db
+          .prepare(
+            "SELECT anime_title FROM WatchHistory WHERE anime_id = ? OR anime_id LIKE ? LIMIT 1",
+          )
+          .get(cleanOldId, `${cleanOldId}-%`);
+        if (histRow?.anime_title) {
+          title = histRow.anime_title;
+        }
+      } catch (_) {}
+    }
+
+    if (!resolvedMalId) {
+      try {
+        const opSaved = await global.db
+          .prepare(
+            "SELECT value FROM Settings WHERE key = 'pahe_one_piece_uuid'",
+          )
+          .get();
+        if (opSaved?.value) {
+          const cleanSaved = String(opSaved.value)
+            .replace(/['"]/g, "")
+            .trim()
+            .toLowerCase();
+          if (cleanSaved === cleanOldId.toLowerCase()) {
+            resolvedMalId = 21;
+            if (!title) title = "One Piece";
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (!resolvedMalId) {
+      try {
+        const unlinked = await global.db
+          .prepare("SELECT malid FROM unlinked_mal_ids WHERE id = ?")
+          .get(cleanOldId);
+        if (unlinked?.malid) {
+          resolvedMalId = Number(unlinked.malid);
+        }
+      } catch (_) {}
+    }
+
+    if (!resolvedMalId && title) {
+      try {
+        const malRow = await global.db
+          .prepare(
+            "SELECT id FROM MyAnimeList WHERE LOWER(title) = LOWER(?) LIMIT 1",
+          )
+          .get(title);
+        if (malRow?.id) {
+          resolvedMalId = Number(malRow.id);
+        }
+      } catch (_) {}
+    }
   }
 
   // Check local mappingDb for the active entry
@@ -330,8 +387,10 @@ async function healAnimePaheUuid({ oldId, malid, title, folderName }) {
           .get(resolvedMalId);
       } else {
         mappingRow = await global.mappingDb
-          .prepare("SELECT id, uuid, malid FROM pahe WHERE id = ? LIMIT 1")
-          .get(cleanOldId);
+          .prepare(
+            "SELECT id, uuid, malid FROM pahe WHERE id = ? OR uuid = ? LIMIT 1",
+          )
+          .get(cleanOldId, cleanOldId);
       }
       if (mappingRow?.malid && !resolvedMalId) {
         resolvedMalId = Number(mappingRow.malid);
@@ -344,6 +403,44 @@ async function healAnimePaheUuid({ oldId, malid, title, folderName }) {
     newId = mappingRow.uuid;
   }
 
+  // Fast path: One Piece canary UUID check against Settings.pahe_one_piece_uuid
+  if (!newId || newId === cleanOldId) {
+    if (
+      resolvedMalId === 21 ||
+      (title && /^one piece$/i.test(String(title).trim()))
+    ) {
+      if (global.db) {
+        try {
+          const opSaved = await global.db
+            .prepare(
+              "SELECT value FROM Settings WHERE key = 'pahe_one_piece_uuid'",
+            )
+            .get();
+          if (opSaved?.value) {
+            const cleanSaved = String(opSaved.value)
+              .replace(/['"]/g, "")
+              .trim();
+            if (
+              cleanSaved &&
+              cleanSaved.toLowerCase() !== cleanOldId.toLowerCase()
+            ) {
+              newId = cleanSaved;
+              if (global.mappingDb) {
+                try {
+                  await global.mappingDb
+                    .prepare(
+                      "UPDATE pahe SET uuid = ? WHERE malid = 21 OR id = '4'",
+                    )
+                    .run(cleanSaved);
+                } catch (_) {}
+              }
+            }
+          }
+        } catch (_) {}
+      }
+    }
+  }
+
   if (!newId || newId === cleanOldId) {
     if (typeof global.sendToRenderer === "function") {
       global.sendToRenderer("info-loading-status", {
@@ -352,39 +449,20 @@ async function healAnimePaheUuid({ oldId, malid, title, folderName }) {
     }
 
     try {
-      let html = "";
       const paheMirrors = [
-        "https://animepahe.ng",
-        "https://animepahe.ch",
         "https://animepahe.pw",
-        "https://animepahe.com",
         "https://animepahe.org",
+        "https://animepahe.com",
       ];
-      for (const mirror of paheMirrors) {
-        if (html) break;
-        if (typeof global.scrapperFetch === "function") {
-          try {
-            html = await global.scrapperFetch(`${mirror}/anime`);
-          } catch (_) {}
-        }
-        if (!html && global.axios) {
-          try {
-            const res = await global.axios.get(`${mirror}/anime`, {
-              headers: { Referer: `${mirror}/` },
-              timeout: 20000,
-            });
-            html = typeof res.data === "string" ? res.data : "";
-          } catch (_) {}
-        }
-      }
-
       const links = [];
       let tsv = "";
-      if (html) {
+      const parseLinks = (htmlContent) => {
+        if (!htmlContent || typeof htmlContent !== "string") return false;
         const linkRegex =
           /<a\s+[^>]*href="\/anime\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"[^>]*>([\s\S]*?)<\/a>/gi;
         let m;
-        while ((m = linkRegex.exec(html)) !== null) {
+        let count = 0;
+        while ((m = linkRegex.exec(htmlContent)) !== null) {
           const u = m[1].toLowerCase().trim();
           const n = (m[2] || "")
             .replace(/<[^>]+>/g, "")
@@ -393,6 +471,54 @@ async function healAnimePaheUuid({ oldId, malid, title, folderName }) {
           if (u && n) {
             links.push({ uuid: u, name: n });
             tsv += `${u}\t${n}\n`;
+            count++;
+          }
+        }
+        return count > 0;
+      };
+
+      for (const mirror of paheMirrors) {
+        if (links.length > 0) break;
+        if (typeof global.scrapperFetch === "function") {
+          try {
+            const html = await global.scrapperFetch(`${mirror}/anime`);
+            if (parseLinks(html)) break;
+          } catch (_) {}
+        }
+        if (global.axios) {
+          try {
+            const reqHeaders =
+              typeof getHeaders === "function"
+                ? getHeaders(`${mirror}/anime`)
+                : { Referer: `${mirror}/` };
+            reqHeaders.Referer = `${mirror}/`;
+            const res = await global.axios.get(`${mirror}/anime`, {
+              headers: reqHeaders,
+              timeout: 20000,
+            });
+            const html = typeof res.data === "string" ? res.data : "";
+            if (parseLinks(html)) break;
+          } catch (axErr) {
+            if (axErr.response?.status === 403 && global.cloudflarebypass) {
+              try {
+                await global.cloudflarebypass(
+                  `${mirror}/anime`,
+                  false,
+                  `${mirror}/`,
+                );
+                const retryHeaders =
+                  typeof getHeaders === "function"
+                    ? getHeaders(`${mirror}/anime`)
+                    : { Referer: `${mirror}/` };
+                retryHeaders.Referer = `${mirror}/`;
+                const res2 = await global.axios.get(`${mirror}/anime`, {
+                  headers: retryHeaders,
+                  timeout: 20000,
+                });
+                const html2 = typeof res2.data === "string" ? res2.data : "";
+                if (parseLinks(html2)) break;
+              } catch (_) {}
+            }
           }
         }
       }
@@ -553,6 +679,19 @@ async function healAnimePaheUuid({ oldId, malid, title, folderName }) {
             )
             .run(cleanOldId, newId, cleanOldId, `${cleanOldId}-%`);
         } catch (_) {}
+
+        if (
+          resolvedMalId === 21 ||
+          /one piece/i.test(title || folderName || "")
+        ) {
+          try {
+            await global.db
+              .prepare(
+                "INSERT OR REPLACE INTO Settings (key, value) VALUES ('pahe_one_piece_uuid', ?)",
+              )
+              .run(JSON.stringify(newId));
+          } catch (_) {}
+        }
       }
 
       if (typeof global.sendToRenderer === "function") {
@@ -626,6 +765,7 @@ router.post("/api/info/:AnimeManga/:LocalMalProvider", async (req, res) => {
             }
           } catch (_) {}
 
+          let fallbackTitle = null;
           if (!resolvedMalId) {
             try {
               let localRow = await global.db
@@ -645,11 +785,12 @@ router.post("/api/info/:AnimeManga/:LocalMalProvider", async (req, res) => {
                   )
                   .get(id);
                 if (histRow && histRow[titleCol]) {
+                  fallbackTitle = histRow[titleCol];
                   localRow = await global.db
                     .prepare(
                       `SELECT MalID, id, provider FROM ${AnimeManga} WHERE LOWER(title) = LOWER(?) LIMIT 1`,
                     )
-                    .get(histRow[titleCol]);
+                    .get(fallbackTitle);
                 }
               }
               if (localRow) {
@@ -692,7 +833,11 @@ router.post("/api/info/:AnimeManga/:LocalMalProvider", async (req, res) => {
 
         if (!resolvedId && AnimeManga === "Anime" && id) {
           try {
-            const healedId = await healAnimePaheUuid({ oldId: id });
+            const healedId = await healAnimePaheUuid({
+              oldId: id,
+              title: fallbackTitle || data?.title,
+              malid: resolvedMalId,
+            });
             if (healedId) {
               resolvedId = healedId;
               resolvedProvider = "pahe";
@@ -1394,6 +1539,18 @@ router.post("/api/info/items", async (req, res) => {
               }
             } catch (_) {}
           }
+          if (!animeTitle && global.db) {
+            try {
+              const whRow = await global.db
+                .prepare(
+                  "SELECT anime_title FROM WatchHistory WHERE anime_id = ? OR anime_id LIKE ? LIMIT 1",
+                )
+                .get(id, `${id}-%`);
+              if (whRow?.anime_title) {
+                animeTitle = whRow.anime_title;
+              }
+            } catch (_) {}
+          }
           const healedId = await healAnimePaheUuid({
             oldId: id,
             title: animeTitle,
@@ -1737,6 +1894,8 @@ router.post("/api/read", async (req, res) => {
   }
 });
 
+const inFlightImageFetches = new Map();
+
 // Proxy for Images
 router.get("/api/image", async (req, res) => {
   let decodedUrl = "";
@@ -1746,7 +1905,10 @@ router.get("/api/image", async (req, res) => {
       return res.status(400).send("Missing image url");
     }
 
-    decodedUrl = decodeURIComponent(imageUrl);
+    decodedUrl = decodeURIComponent(imageUrl).trim();
+    if (decodedUrl.startsWith("//")) {
+      decodedUrl = "https:" + decodedUrl;
+    }
 
     if (decodedUrl.startsWith("file://") || decodedUrl.startsWith("/")) {
       const filePath = decodedUrl.startsWith("file://")
@@ -1791,14 +1953,12 @@ router.get("/api/image", async (req, res) => {
       logger.error("Error reading from image cache: " + cacheErr.message);
     }
 
-    let imageBuffer = null;
-    let contentType = "image/jpeg";
-
-    try {
-      const resolvedHeaders = getHeaders(decodedUrl);
+    async function fetchImageBuffer(url) {
+      const resolvedHeaders = getHeaders(url);
       const options = {
         responseType: "arraybuffer",
         skipBypass: true,
+        timeout: 12000,
         headers: {
           Accept:
             resolvedHeaders.Accept ||
@@ -1812,32 +1972,52 @@ router.get("/api/image", async (req, res) => {
           ...(resolvedHeaders.Cookie ? { Cookie: resolvedHeaders.Cookie } : {}),
         },
       };
-      const response = await global.axios.get(decodedUrl, options);
-      imageBuffer = Buffer.isBuffer(response.data)
-        ? response.data
-        : Buffer.from(response.data);
-      contentType = response.headers["content-type"] || "image/jpeg";
-    } catch (err) {
-      if (!imageBuffer && global.scrapperFetchDataUrl) {
-        try {
-          const dataUrl = await global.scrapperFetchDataUrl(decodedUrl);
-          if (dataUrl && dataUrl.startsWith("data:")) {
-            const matches = dataUrl.match(
-              /^data:(image\/[a-zA-Z0-9+-]+);base64,(.+)$/,
-            );
-            if (matches) {
-              contentType = matches[1];
-              imageBuffer = Buffer.from(matches[2], "base64");
+
+      try {
+        const response = await global.axios.get(url, options);
+        const buf = Buffer.isBuffer(response.data)
+          ? response.data
+          : Buffer.from(response.data);
+        const ct = response.headers["content-type"] || "image/jpeg";
+        return { buffer: buf, contentType: ct };
+      } catch (err) {
+        const isCfChallenge =
+          err?.response &&
+          (err.response.status === 403 || err.response.status === 503);
+        if (isCfChallenge && global.scrapperFetchDataUrl) {
+          try {
+            const dataUrl = await global.scrapperFetchDataUrl(url);
+            if (dataUrl && dataUrl.startsWith("data:")) {
+              const matches = dataUrl.match(
+                /^data:(image\/[a-zA-Z0-9+-]+);base64,(.+)$/,
+              );
+              if (matches) {
+                return {
+                  contentType: matches[1],
+                  buffer: Buffer.from(matches[2], "base64"),
+                };
+              }
             }
+          } catch (scrapperErr) {
+            console.error(
+              "scrapperFetchDataUrl failed for image:",
+              scrapperErr.message,
+            );
           }
-        } catch (scrapperErr) {
-          console.error(
-            "scrapperFetchDataUrl failed for image:",
-            scrapperErr.message,
-          );
         }
+        throw err;
       }
     }
+
+    let fetchPromise = inFlightImageFetches.get(decodedUrl);
+    if (!fetchPromise) {
+      fetchPromise = fetchImageBuffer(decodedUrl).finally(() => {
+        inFlightImageFetches.delete(decodedUrl);
+      });
+      inFlightImageFetches.set(decodedUrl, fetchPromise);
+    }
+
+    const { buffer: imageBuffer, contentType } = await fetchPromise;
 
     if (imageBuffer) {
       try {

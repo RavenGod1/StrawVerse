@@ -200,9 +200,10 @@ const COOKIE_UPSERT = `
 `;
 
 async function saveClearanceCookiesForDomain(domain) {
-  const cookies = await global.ScrapperWindow.webContents.session.cookies.get(
-    {},
-  );
+  if (!global.ScrapperWindow || global.ScrapperWindow.isDestroyed()) return;
+  const session = global.ScrapperWindow.webContents?.session;
+  if (!session) return;
+  const cookies = await session.cookies.get({});
   for (const cookie of cookies) {
     if (
       cookieMatchesDomain(cookie.domain, domain) &&
@@ -262,18 +263,35 @@ async function clearCookiesForDomain(domain) {
     global.clearCookieCache(domain);
   }
 
-  const sessionCookies =
-    await global.ScrapperWindow.webContents.session.cookies.get({});
-  const domainCookies = sessionCookies.filter((cookie) =>
-    cookieMatchesDomain(cookie.domain, domain),
-  );
-  for (const cookie of domainCookies) {
-    const cookieUrl = `http${cookie.secure ? "s" : ""}://${normalizeHostname(cookie.domain)}${cookie.path || "/"}`;
-    await global.ScrapperWindow.webContents.session.cookies
-      .remove(cookieUrl, cookie.name)
-      .catch(() => {});
-  }
-  return domainCookies.length;
+  if (!global.ScrapperWindow || global.ScrapperWindow.isDestroyed()) return 0;
+  const session = global.ScrapperWindow.webContents?.session;
+  if (!session) return 0;
+  let cleared = 0;
+  try {
+    const sessionCookies = await session.cookies.get({});
+    for (const cookie of sessionCookies) {
+      if (
+        cookieMatchesDomain(cookie.domain, domain) ||
+        (cookie.name === "cf_clearance" && isCloudflareCookie(cookie.name))
+      ) {
+        const norm = normalizeHostname(cookie.domain);
+        const paths = [cookie.path || "/", "/"];
+        for (const p of paths) {
+          await session.cookies
+            .remove(`https://${norm}${p}`, cookie.name)
+            .catch(() => {});
+          await session.cookies
+            .remove(`http://${norm}${p}`, cookie.name)
+            .catch(() => {});
+          await session.cookies
+            .remove(`https://${domain}${p}`, cookie.name)
+            .catch(() => {});
+        }
+        cleared++;
+      }
+    }
+  } catch (_) {}
+  return cleared;
 }
 
 function isVideoStreamUrl(urlStr, cfg) {
@@ -416,8 +434,10 @@ async function loadSavedCookiesIntoSession() {
       "SELECT name, value, domain, path, secure, httpOnly, expirationDate, local_saved_at FROM cookie",
     );
     if (!rows || rows.length === 0) return;
+    if (!global.ScrapperWindow || global.ScrapperWindow.isDestroyed()) return;
 
-    const sess = global.ScrapperWindow.webContents.session;
+    const sess = global.ScrapperWindow.webContents?.session;
+    if (!sess) return;
     const now = Date.now();
     let restoredCount = 0;
 
@@ -469,7 +489,12 @@ function createScrapperWindow() {
   }
   global.LastScrapperResponseCode = 200;
   global.ScrapperWindow = new BrowserWindow({
+    width: 850,
+    height: 650,
+    center: true,
+    title: "StrawVerse - Cloudflare Verification",
     show: false,
+    autoHideMenuBar: true,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -612,7 +637,7 @@ function createScrapperWindow() {
   global.ScrapperWindow.on("close", (event) => {
     if (!isQuitting) {
       event.preventDefault();
-      global.ScrapperWindow.hide();
+      hideScrapperWindow();
     }
   });
 
@@ -621,11 +646,45 @@ function createScrapperWindow() {
   });
 }
 
+function showScrapperWindow() {
+  if (!global.ScrapperWindow || global.ScrapperWindow.isDestroyed()) return;
+  try {
+    global.ScrapperWindow.setTitle("StrawVerse - Cloudflare Verification");
+    global.ScrapperWindow.setAlwaysOnTop(true, "floating");
+    if (typeof global.ScrapperWindow.setVisibleOnAllWorkspaces === "function") {
+      global.ScrapperWindow.setVisibleOnAllWorkspaces(true, {
+        visibleOnFullScreen: true,
+      });
+    }
+    if (global.ScrapperWindow.isMinimized()) {
+      global.ScrapperWindow.restore();
+    }
+    global.ScrapperWindow.show();
+    global.ScrapperWindow.focus();
+    global.ScrapperWindow.moveTop();
+  } catch (e) {
+    console.error("[ScrapperWindow] Failed to show window:", e);
+  }
+}
+
+function hideScrapperWindow() {
+  if (!global.ScrapperWindow || global.ScrapperWindow.isDestroyed()) return;
+  try {
+    global.ScrapperWindow.setAlwaysOnTop(false);
+    if (typeof global.ScrapperWindow.setVisibleOnAllWorkspaces === "function") {
+      global.ScrapperWindow.setVisibleOnAllWorkspaces(false);
+    }
+    global.ScrapperWindow.hide();
+  } catch (_) {}
+}
+
 const BYPASS_TASK_TIMEOUT_MS = 90000;
+let currentBypassTaskId = 0;
 
 async function processBypassQueue() {
   if (bypassBusy || bypassQueue.length === 0) return;
   bypassBusy = true;
+  const taskId = ++currentBypassTaskId;
   const { runBypass, resolve, reject } = bypassQueue.shift();
   let done = false;
   const finish = (fn, val) => {
@@ -635,19 +694,26 @@ async function processBypassQueue() {
     fn(val);
   };
   const timer = setTimeout(() => {
-    finish(reject, new Error("Bypass queue task timed out after 90s"));
-    bypassBusy = false;
-    processBypassQueue();
+    if (!done && currentBypassTaskId === taskId) {
+      finish(reject, new Error("Bypass queue task timed out after 90s"));
+      bypassBusy = false;
+      processBypassQueue();
+    }
   }, BYPASS_TASK_TIMEOUT_MS);
   // Unref so a wedged task alone never keeps the process alive.
   if (timer && typeof timer.unref === "function") timer.unref();
   try {
     const result = await runBypass();
-    finish(resolve, result);
+    if (!done && currentBypassTaskId === taskId) {
+      finish(resolve, result);
+    }
   } catch (err) {
-    finish(reject, err);
+    if (!done && currentBypassTaskId === taskId) {
+      finish(reject, err);
+    }
   } finally {
-    if (done && bypassBusy) {
+    if (currentBypassTaskId === taskId && bypassBusy) {
+      clearTimeout(timer);
       bypassBusy = false;
       processBypassQueue();
     }
@@ -743,6 +809,7 @@ global.cloudflarebypass = async (targetUrl, force = false, referer = null) => {
       try {
         const parsed = new URL(targetUrl);
         if (
+          domain.includes("animepahe") ||
           parsed.pathname.includes("/api") ||
           parsed.pathname.includes("/stream") ||
           parsed.search
@@ -752,12 +819,8 @@ global.cloudflarebypass = async (targetUrl, force = false, referer = null) => {
       } catch (_) {}
       let navFailed = false;
 
-      if (
-        force &&
-        global.ScrapperWindow &&
-        !global.ScrapperWindow.isVisible()
-      ) {
-        global.ScrapperWindow.show();
+      if (force) {
+        showScrapperWindow();
       }
 
       const navReferer = referer || navUrl;
@@ -799,14 +862,30 @@ global.cloudflarebypass = async (targetUrl, force = false, referer = null) => {
         return;
       }
 
+      let initialClearanceValue = null;
+      try {
+        const preCookies =
+          await global.ScrapperWindow.webContents.session.cookies.get({});
+        initialClearanceValue =
+          preCookies.find(
+            (c) =>
+              c.name === "cf_clearance" &&
+              cookieMatchesDomain(c.domain, domain),
+          )?.value || null;
+      } catch (_) {}
+
       for (let i = 0; i < 60; i++) {
         const sessionCookies =
           await global.ScrapperWindow.webContents.session.cookies.get({});
-        const hasClearanceForDomain = sessionCookies.some(
+        const clearanceCookie = sessionCookies.find(
           (cookie) =>
             cookie.name === "cf_clearance" &&
             cookieMatchesDomain(cookie.domain, domain),
         );
+        const hasFreshClearance =
+          Boolean(clearanceCookie) &&
+          (!initialClearanceValue ||
+            clearanceCookie.value !== initialClearanceValue);
 
         const title = global.ScrapperWindow.getTitle() || "";
 
@@ -820,9 +899,7 @@ global.cloudflarebypass = async (targetUrl, force = false, referer = null) => {
         const isChallenge = pageLooksLikeChallenge(title, html);
 
         if (isChallenge) {
-          if (global.ScrapperWindow && !global.ScrapperWindow.isVisible()) {
-            global.ScrapperWindow.show();
-          }
+          showScrapperWindow();
         }
 
         let readyState = "loading";
@@ -837,15 +914,30 @@ global.cloudflarebypass = async (targetUrl, force = false, referer = null) => {
           global.ScrapperWindow.webContents.isLoading() ||
           readyState === "loading";
 
-        if (hasClearanceForDomain && !isChallenge && !isWindowLoading) {
+        const isNotInitialShell =
+          title &&
+          title !== "StrawVerse - Cloudflare Verification" &&
+          (html.length > 50 || !isWindowLoading);
+
+        if (
+          hasFreshClearance &&
+          !isChallenge &&
+          !isWindowLoading &&
+          isNotInitialShell
+        ) {
           console.log(
-            `[Bypass] Solved challenge and loaded destination page: "${title}"`,
+            `[Bypass] Solved challenge and obtained cf_clearance for ${domain}: "${title}"`,
           );
           break;
         }
 
-        if (!isChallenge && html && !pageLooksLikeError(title, html)) {
-          if (!force || hasClearanceForDomain || !isWindowLoading) {
+        if (
+          !isChallenge &&
+          isNotInitialShell &&
+          html &&
+          !pageLooksLikeError(title, html)
+        ) {
+          if (!force || hasFreshClearance || !isWindowLoading) {
             console.log(
               `[Bypass] Destination page ready without challenge: "${title}"`,
             );
@@ -869,7 +961,9 @@ global.cloudflarebypass = async (targetUrl, force = false, referer = null) => {
         await global.ScrapperWindow.webContents.session.cookies.get({});
       const gotClearance = finalCookies.some(
         (c) =>
-          c.name === "cf_clearance" && cookieMatchesDomain(c.domain, domain),
+          c.name === "cf_clearance" &&
+          cookieMatchesDomain(c.domain, domain) &&
+          (!initialClearanceValue || c.value !== initialClearanceValue),
       );
       const title = global.ScrapperWindow.getTitle() || "";
       const isStillChallenge =
@@ -877,9 +971,7 @@ global.cloudflarebypass = async (targetUrl, force = false, referer = null) => {
         global.LastScrapperResponseCode === 403 ||
         global.LastScrapperResponseCode === 503;
 
-      if (global.ScrapperWindow && !global.ScrapperWindow.isDestroyed()) {
-        global.ScrapperWindow.hide();
-      }
+      hideScrapperWindow();
 
       if (
         gotClearance ||

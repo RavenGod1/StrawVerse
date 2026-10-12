@@ -342,12 +342,8 @@ function getHeaders(url, method = "GET") {
       headers.Referer = "https://mangafire.to/";
     } else if (url.includes("comix")) {
       delete headers.Referer;
-    } else if (url.includes("animepahe")) {
-      try {
-        headers.Referer = new URL(url).origin + "/";
-      } catch (_) {
-        headers.Referer = "https://animepahe.ng/";
-      }
+    } else if (url.includes("animepahe") || url.includes("anipixcdn.co")) {
+      headers.Referer = "https://animepahe.pw/";
     } else if (url.includes("anikoto") || url.includes("megaplay.buzz")) {
       headers.Referer = "https://anikoto.to/";
     } else if (url.includes("anineko")) {
@@ -378,6 +374,10 @@ function getHeaders(url, method = "GET") {
       .replace(/^\./, "")
       .toLowerCase(),
   );
+
+  if (cleanDomain && (cleanDomain.includes("animepahe") || cleanDomain.includes("anipixcdn"))) {
+    targetDomains.push("animepahe.pw", "animepahe.com", "animepahe.org");
+  }
 
   if (targetDomains.length > 0) {
     const now = Date.now();

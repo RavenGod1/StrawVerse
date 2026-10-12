@@ -3790,10 +3790,12 @@ mp.observe_property('playback-time', 'number', function(name, val)
             end
         end
 
-        -- 2. Auto Play Next (when entering Outro)
-        if is_autoplay_next_enabled() and ed_start > 0 then
+        -- 2. Auto Play Next (when entering Outro or reaching end of video)
+        if is_autoplay_next_enabled() and (state.has_next ~= "no") then
             local dur = mp.get_property_number("duration", 0)
-            if dur > 0 and val >= ed_start and val < dur then
+            local is_outro = (ed_start > 0 and dur > 0 and val >= ed_start and val < dur)
+            local is_end = (dur > 0 and val >= (dur - 1.5))
+            if is_outro or is_end then
                 if not state.outro_skipped then
                     state.outro_skipped = true
                     if have_pl and (pl_pos < pl_count) then
@@ -3816,6 +3818,26 @@ mp.observe_property('playback-time', 'number', function(name, val)
         end
     end
     request_tick()
+end)
+
+mp.observe_property('eof-reached', 'bool', function(name, val)
+    if val and is_autoplay_next_enabled() and (state.has_next ~= "no") then
+        if not state.outro_skipped then
+            state.outro_skipped = true
+            if have_pl and (pl_pos < pl_count) then
+                mp.commandv("playlist-next")
+            else
+                state.loading_active = true
+                state.switching_episode = true
+                state.loading_message = "Loading next episode..."
+                state.loading_start_time = mp.get_time()
+                mp.set_property("pause", "yes")
+                show_osc()
+                request_tick()
+                mp.set_property("user-data/strawverse-action", "next")
+            end
+        end
+    end
 end)
 mp.observe_property('osd-dimensions', 'native', function(name, val)
     -- (we could use the value instead of re-querying it all the time, but then

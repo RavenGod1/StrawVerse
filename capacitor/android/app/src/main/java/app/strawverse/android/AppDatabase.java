@@ -236,9 +236,9 @@ public class AppDatabase {
         if (url.contains("owocdn.top") || url.contains("uwucdn.top")) {
             headers.put("Referer", "https://kwik.cx/");
         } else if (url.contains("kwik.cx")) {
-            headers.put("Referer", "https://animepahe.ng/");
+            headers.put("Referer", "https://animepahe.pw/");
         } else if (url.contains("animepahe")) {
-            headers.put("Referer", "https://animepahe.ng/");
+            headers.put("Referer", "https://animepahe.pw/");
         } else if (url.contains("temp.compsci88.com")) {
             headers.put("Referer", "https://weebcentral.com/");
         } else if (url.contains("anikototv.to") || url.contains("megaplay.buzz")) {
