@@ -124,6 +124,320 @@ async function enrichResultsWithMappingImages(results, AnimeManga) {
   return results;
 }
 
+async function enrichResultsWithWatchProgress(results, AnimeManga) {
+  if (!results || !Array.isArray(results) || results.length === 0) {
+    return results;
+  }
+
+  const isAnime = AnimeManga === "Anime";
+  const listTable = isAnime ? "MyAnimeList" : "MyMangaList";
+  const histTable = isAnime ? "WatchHistory" : "ReadHistory";
+  const mediaTable = isAnime ? "Anime" : "Manga";
+  const idCol = isAnime ? "anime_id" : "manga_id";
+  const titleCol = isAnime ? "anime_title" : "manga_title";
+  const epCol = isAnime ? "episode_number" : "chapter_number";
+
+  try {
+    const itemIds = new Set();
+    const itemTitles = new Set();
+    const malIdSet = new Set();
+
+    for (const item of results) {
+      if (!item) continue;
+      if (item.id) itemIds.add(String(item.id));
+      if (item.malid || item.MalID) {
+        malIdSet.add(String(item.malid || item.MalID));
+      }
+      if (item.title) {
+        itemTitles.add(String(item.title).toLowerCase().trim());
+      }
+    }
+
+    // 1. Resolve any additional MalIDs from Anime/Manga table for items that don't have malid yet
+    if (global.db && (itemIds.size > 0 || itemTitles.size > 0)) {
+      try {
+        const idArr = Array.from(itemIds);
+        const titleArr = Array.from(itemTitles);
+        const idPlaceholders = idArr.map(() => "?").join(",");
+        const titlePlaceholders = titleArr.map(() => "?").join(",");
+
+        let whereClause = "";
+        let params = [];
+        if (idArr.length > 0 && titleArr.length > 0) {
+          whereClause = `id IN (${idPlaceholders}) OR LOWER(title) IN (${titlePlaceholders})`;
+          params = [...idArr, ...titleArr];
+        } else if (idArr.length > 0) {
+          whereClause = `id IN (${idPlaceholders})`;
+          params = idArr;
+        } else if (titleArr.length > 0) {
+          whereClause = `LOWER(title) IN (${titlePlaceholders})`;
+          params = titleArr;
+        }
+
+        if (whereClause) {
+          const mediaRows = await global.db
+            .prepare(`SELECT id, title, MalID FROM ${mediaTable} WHERE ${whereClause}`)
+            .all(...params);
+          mediaRows?.forEach((r) => {
+            if (r.MalID) malIdSet.add(String(r.MalID));
+          });
+        }
+      } catch (_) {}
+    }
+
+    // 2. Batch query MyAnimeList / MyMangaList
+    const malMap = new Map();
+    if (global.db) {
+      try {
+        const malIdArr = Array.from(malIdSet);
+        const titleArr = Array.from(itemTitles);
+        const malPlaceholders = malIdArr.map(() => "?").join(",");
+        const titlePlaceholders = titleArr.map(() => "?").join(",");
+
+        let malWhere = "";
+        let malParams = [];
+        if (malIdArr.length > 0 && titleArr.length > 0) {
+          malWhere = `id IN (${malPlaceholders}) OR LOWER(title) IN (${titlePlaceholders})`;
+          malParams = [...malIdArr, ...titleArr];
+        } else if (malIdArr.length > 0) {
+          malWhere = `id IN (${malPlaceholders})`;
+          malParams = malIdArr;
+        } else if (titleArr.length > 0) {
+          malWhere = `LOWER(title) IN (${titlePlaceholders})`;
+          malParams = titleArr;
+        }
+
+        if (malWhere) {
+          const selectCols = isAnime
+            ? "id, title, totalEpisodes, watched, status"
+            : "id, title, totalChapters AS totalEpisodes, read AS watched, status";
+          const malRows = await global.db
+            .prepare(`SELECT ${selectCols} FROM ${listTable} WHERE ${malWhere}`)
+            .all(...malParams);
+
+          malRows?.forEach((r) => {
+            if (r.id) {
+              malMap.set(String(r.id), r);
+              malIdSet.add(String(r.id));
+            }
+            if (r.title) {
+              malMap.set("title:" + String(r.title).toLowerCase().trim(), r);
+            }
+          });
+        }
+      } catch (_) {}
+    }
+
+    // Also look up sibling IDs in Anime/Manga table for all resolved MalIDs so WatchHistory matches
+    if (global.db && malIdSet.size > 0) {
+      try {
+        const malIdArr = Array.from(malIdSet);
+        const placeholders = malIdArr.map(() => "?").join(",");
+        const siblingRows = await global.db
+          .prepare(`SELECT id FROM ${mediaTable} WHERE MalID IN (${placeholders})`)
+          .all(...malIdArr);
+        siblingRows?.forEach((r) => {
+          if (r.id) itemIds.add(String(r.id));
+        });
+      } catch (_) {}
+    }
+
+    // 3. Batch query WatchHistory / ReadHistory
+    const histMap = new Map();
+    if (global.db && (itemIds.size > 0 || itemTitles.size > 0)) {
+      try {
+        const idArr = Array.from(itemIds);
+        const titleArr = Array.from(itemTitles);
+        const idPlaceholders = idArr.map(() => "?").join(",");
+        const titlePlaceholders = titleArr.map(() => "?").join(",");
+
+        let histWhere = "";
+        let histParams = [];
+        if (idArr.length > 0 && titleArr.length > 0) {
+          histWhere = `${idCol} IN (${idPlaceholders}) OR LOWER(${titleCol}) IN (${titlePlaceholders})`;
+          histParams = [...idArr, ...titleArr];
+        } else if (idArr.length > 0) {
+          histWhere = `${idCol} IN (${idPlaceholders})`;
+          histParams = idArr;
+        } else if (titleArr.length > 0) {
+          histWhere = `LOWER(${titleCol}) IN (${titlePlaceholders})`;
+          histParams = titleArr;
+        }
+
+        if (histWhere) {
+          const histQuery = `
+            SELECT ${idCol} AS id, ${titleCol} AS title,
+                   COUNT(DISTINCT CASE WHEN is_completed = 1 THEN ${epCol} END) AS completed_count,
+                   COUNT(DISTINCT ${epCol}) AS watched_count,
+                   MAX(${epCol}) AS max_ep,
+                   MAX(is_completed) AS any_completed
+            FROM ${histTable}
+            WHERE ${histWhere}
+            GROUP BY ${idCol}, LOWER(${titleCol})
+          `;
+          const histRows = await global.db.prepare(histQuery).all(...histParams);
+          histRows?.forEach((r) => {
+            if (r.id) histMap.set(String(r.id), r);
+            if (r.title) {
+              histMap.set("title:" + String(r.title).toLowerCase().trim(), r);
+            }
+          });
+        }
+      } catch (_) {}
+    }
+
+    // 4. Batch query upcoming episodes if Anime
+    const upcomingMap = new Map();
+    if (isAnime && global.mappingDb && malIdSet.size > 0) {
+      try {
+        const now = Math.floor(Date.now() / 1000);
+        const localToday = new Date();
+        const localTodayStart =
+          new Date(
+            localToday.getFullYear(),
+            localToday.getMonth(),
+            localToday.getDate(),
+            0,
+            0,
+            0,
+          ).getTime() / 1000;
+        const localYesterdayStart = localTodayStart - 24 * 3600;
+
+        const malIdArr = Array.from(malIdSet);
+        const placeholders = malIdArr.map(() => "?").join(",");
+        const animeMapRows = await global.mappingDb
+          .prepare(
+            `SELECT malid, livechart_id FROM anime WHERE malid IN (${placeholders}) AND livechart_id IS NOT NULL`,
+          )
+          .all(...malIdArr);
+
+        if (animeMapRows && animeMapRows.length > 0) {
+          const lcToMal = new Map();
+          const lcIds = [];
+          for (const row of animeMapRows) {
+            lcToMal.set(row.livechart_id, Number(row.malid));
+            lcIds.push(row.livechart_id);
+          }
+
+          const lcPlaceholders = lcIds.map(() => "?").join(",");
+          const epRows = await global.mappingDb
+            .prepare(
+              `SELECT livechart_id, episode, date FROM next_episodes WHERE livechart_id IN (${lcPlaceholders}) AND date >= ? ORDER BY date ASC`,
+            )
+            .all(...lcIds, localYesterdayStart);
+
+          for (const ep of epRows || []) {
+            const malId = lcToMal.get(ep.livechart_id);
+            if (malId && !upcomingMap.has(malId)) {
+              upcomingMap.set(malId, ep);
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
+    // 5. Enrich results
+    const now = Math.floor(Date.now() / 1000);
+    for (const item of results) {
+      if (!item) continue;
+
+      const cleanTitle = item.title
+        ? String(item.title).toLowerCase().trim()
+        : "";
+      const itemMalId =
+        item.malid || item.MalID ? String(item.malid || item.MalID) : null;
+
+      let malRec = null;
+      if (itemMalId && malMap.has(itemMalId)) {
+        malRec = malMap.get(itemMalId);
+      } else if (cleanTitle && malMap.has("title:" + cleanTitle)) {
+        malRec = malMap.get("title:" + cleanTitle);
+      }
+
+      if (malRec && !item.malid && malRec.id) {
+        item.malid = Number(malRec.id);
+        item.MalID = item.malid;
+      }
+
+      let histRec = null;
+      if (item.id && histMap.has(String(item.id))) {
+        histRec = histMap.get(String(item.id));
+      } else if (cleanTitle && histMap.has("title:" + cleanTitle)) {
+        histRec = histMap.get("title:" + cleanTitle);
+      }
+
+      let watched = 0;
+      let totalEpisodes = item.totalEpisodes || item.totalChapters || 0;
+      let isCompleted = false;
+      let malStatus = "";
+
+      if (malRec) {
+        const malWatched = Number(malRec.watched || 0);
+        const malTotal = Number(malRec.totalEpisodes || 0);
+        malStatus = malRec.status || "";
+        if (malWatched > 0) watched = Math.max(watched, malWatched);
+        if (malTotal > 0) totalEpisodes = Math.max(totalEpisodes, malTotal);
+        if (
+          malStatus === "completed" ||
+          (malTotal > 0 && malWatched >= malTotal)
+        ) {
+          isCompleted = true;
+        }
+      }
+
+      if (histRec) {
+        const histWatched = Number(histRec.max_ep || histRec.watched_count || 0);
+        const completedCount = Number(histRec.completed_count || 0);
+        if (histWatched > 0) watched = Math.max(watched, histWatched);
+        if (totalEpisodes > 0 && completedCount >= totalEpisodes) {
+          isCompleted = true;
+        }
+      }
+
+      if (totalEpisodes > 0 && watched >= totalEpisodes) {
+        isCompleted = true;
+      }
+
+      if (watched > 0 || isCompleted || malStatus) {
+        item.watched = watched;
+        item.totalEpisodes = totalEpisodes || 0;
+        item.isCompleted = isCompleted;
+        item.malStatus = malStatus;
+      }
+
+      const resolvedMalId =
+        item.malid || item.MalID ? Number(item.malid || item.MalID) : null;
+      if (isAnime && resolvedMalId && upcomingMap.has(resolvedMalId)) {
+        const nextEp = upcomingMap.get(resolvedMalId);
+        if (nextEp) {
+          if (nextEp.date < now) {
+            item.nextEpisodeIn = `Ep ${nextEp.episode}: Aired`;
+          } else {
+            const diff = nextEp.date - now;
+            const minutes = Math.ceil(diff / 60);
+            const hours = Math.ceil(diff / 3600);
+            const days = Math.ceil(diff / (24 * 3600));
+
+            if (days > 0) {
+              item.nextEpisodeIn = `Ep ${nextEp.episode}: ${days} day${days > 1 ? "s" : ""}`;
+            } else if (hours > 0) {
+              item.nextEpisodeIn = `Ep ${nextEp.episode}: ${hours} hr${hours > 1 ? "s" : ""}`;
+            } else if (minutes > 0) {
+              item.nextEpisodeIn = `Ep ${nextEp.episode}: ${minutes} min${minutes > 1 ? "s" : ""}`;
+            } else {
+              item.nextEpisodeIn = `Ep ${nextEp.episode}: soon`;
+            }
+          }
+        }
+      }
+    }
+  } catch (err) {
+    logger.error(`Error in enrichResultsWithWatchProgress: ${err.message}`);
+  }
+
+  return results;
+}
+
 // Catalog listing endpoint
 router.post("/api/list/:AnimeManga/:provider/", async (req, res) => {
   const { AnimeManga, provider } = req.params;
@@ -214,6 +528,12 @@ router.post("/api/list/:AnimeManga/:provider/", async (req, res) => {
     if (data?.results && data.results.length > 0) {
       try {
         await enrichResultsWithMappingImages(data.results, AnimeManga);
+      } catch (_) {}
+
+      try {
+        if (provider !== "local") {
+          await enrichResultsWithWatchProgress(data.results, AnimeManga);
+        }
       } catch (_) {}
 
       try {

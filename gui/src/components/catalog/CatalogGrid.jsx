@@ -3,6 +3,8 @@ import {
   Download,
   Film,
   Eye,
+  CheckCircle,
+  BookOpen,
   ArrowLeft,
   ArrowRight,
   Loader2,
@@ -232,7 +234,7 @@ export default function CatalogGrid({
                 )}
               </div>
 
-              {/* Indicator badges for downloaded or watched counts */}
+              {/* Indicator badges for downloaded, schedule, watched progress, or completed */}
               <div className="card-badges-container">
                 {item.Downloaded && item.Downloaded.length > 0 && (
                   <div className="indicator-badge">
@@ -241,7 +243,7 @@ export default function CatalogGrid({
                   </div>
                 )}
 
-                {item.nextEpisodeIn ? (
+                {item.nextEpisodeIn && (
                   <div
                     className="indicator-badge schedule-badge"
                     title="Next release countdown"
@@ -249,12 +251,44 @@ export default function CatalogGrid({
                     <Film size={12} className="u-style-16" />
                     {item.nextEpisodeIn}
                   </div>
+                )}
+
+                {item.isCompleted ||
+                item.status === "completed" ||
+                item.malStatus === "completed" ? (
+                  <div
+                    className="indicator-badge completed-badge"
+                    title={`Completed${
+                      item.watched
+                        ? ` (${item.watched}${item.totalEpisodes ? `/${item.totalEpisodes}` : ""})`
+                        : ""
+                    }`}
+                  >
+                    <CheckCircle size={12} className="u-style-16" />
+                    Completed
+                    {item.watched > 0
+                      ? ` (${item.watched}${item.totalEpisodes ? `/${item.totalEpisodes}` : ""})`
+                      : ""}
+                  </div>
                 ) : (
                   item.watched !== undefined &&
-                  item.watched !== null && (
-                    <div className="indicator-badge">
-                      <Eye size={12} className="u-style-16" />
-                      {item.watched}/{item.totalEpisodes || "?"}
+                  item.watched !== null &&
+                  item.watched > 0 && (
+                    <div
+                      className="indicator-badge watched-badge"
+                      title={`Watched: ${item.watched}${item.totalEpisodes ? `/${item.totalEpisodes}` : ""}`}
+                    >
+                      {type === "Manga" ? (
+                        <BookOpen size={12} className="u-style-16" />
+                      ) : (
+                        <Eye size={12} className="u-style-16" />
+                      )}
+                      {item.watched}
+                      {item.totalEpisodes > 0
+                        ? `/${item.totalEpisodes}`
+                        : type === "Anime"
+                          ? " Eps"
+                          : " Chs"}
                     </div>
                   )
                 )}

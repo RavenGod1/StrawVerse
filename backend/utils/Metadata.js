@@ -644,6 +644,18 @@ async function getAllMetadata(type, baseDir, page = 1, tag = null) {
           watchMap[r.anime_id] = (watchMap[r.anime_id] || 0) + r.count;
         });
       } catch (e) {}
+    } else if (type === "Manga") {
+      try {
+        const readRows = await queryAll(`
+          SELECT manga_id, COUNT(DISTINCT chapter_number) as count 
+          FROM ReadHistory 
+          WHERE is_completed = 1 
+          GROUP BY manga_id
+        `);
+        readRows.forEach((r) => {
+          watchMap[r.manga_id] = (watchMap[r.manga_id] || 0) + r.count;
+        });
+      } catch (e) {}
     }
 
     const mappingMap = {};
@@ -742,18 +754,21 @@ async function getAllMetadata(type, baseDir, page = 1, tag = null) {
         malStatus = malInfo.status;
       }
 
-      if (type === "Anime") {
-        const animeIds = Array.from(
+      if (type === "Anime" || type === "Manga") {
+        const mediaIds = Array.from(
           new Set([item.id, ...(siblingsMap[item.MalID] || [])]),
         );
 
         let localWatched = 0;
-        animeIds.forEach((animeId) => {
-          if (watchMap[animeId]) {
-            localWatched = Math.max(localWatched, watchMap[animeId]);
+        mediaIds.forEach((mediaId) => {
+          if (watchMap[mediaId]) {
+            localWatched = Math.max(localWatched, watchMap[mediaId]);
           }
         });
         watchedEpisodes = Math.max(watchedEpisodes, localWatched);
+      }
+
+      if (type === "Anime") {
 
         if (item.MalID && mappingMap[Number(item.MalID)]) {
           const livechartId = mappingMap[Number(item.MalID)];
@@ -825,6 +840,8 @@ async function getAllMetadata(type, baseDir, page = 1, tag = null) {
       item.watched = watchedEpisodes;
       item.totalEpisodes = totalEpisodes;
       item.nextEpisodeIn = nextEpisodeIn;
+      item.isCompleted = isCompleted;
+      item.status = isCompleted ? "completed" : malStatus || item.status;
     });
 
     // Sort storedMetadata by weight groups, watched progress, and finally recency
