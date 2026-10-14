@@ -45,6 +45,41 @@ let isQueuePausedState = false;
 // on a different mirror instead of re-downloading from the dead one.
 const hostSkipByEpid = new Map();
 
+// Persisted dead-mirror skips (survive restarts). Keyed by a stable episode
+// key (provider|title|ep|subdub) because queue epids embed expiring session
+// tokens. 7-day TTL. Skips only deprioritize: downloadEpisodeByQuality falls
+// back to excluded hosts when nothing else resolves, so a stale entry can
+// never permanently brick an episode.
+const DEAD_HOST_SKIP_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+function deadSkipStableKey(provider, title, epNum, subdub) {
+  const clean = (v) => String(v ?? "").slice(0, 80);
+  return `deadHostSkip:${clean(provider)}|${clean(title)}|${clean(epNum)}|${clean(subdub)}`;
+}
+
+async function loadPersistedDeadHosts(stableKey) {
+  try {
+    const val = await getKeyValue("Settings", stableKey);
+    const hosts = val?.hosts;
+    if (!Array.isArray(hosts) || hosts.length === 0) return [];
+    if (val?.ts && Date.now() - Number(val.ts) > DEAD_HOST_SKIP_TTL_MS) {
+      run("DELETE FROM Settings WHERE key = ?", [stableKey]).catch(() => {});
+      return [];
+    }
+    return hosts.filter((h) => typeof h === "string");
+  } catch (_) {
+    return [];
+  }
+}
+
+async function savePersistedDeadHosts(stableKey, hosts) {
+  try {
+    const list = [...new Set((hosts || []).filter((h) => typeof h === "string"))].slice(0, 8);
+    if (list.length === 0) return;
+    await setKeyValue("Settings", stableKey, { hosts: list, ts: Date.now() });
+  } catch (_) {}
+}
+
 (async () => {
   try {
     const val = await getKeyValue("Settings", "isQueuePaused");
@@ -628,6 +663,13 @@ async function continuousExecution() {
                   `[queueWorker] Excluding dead host ${err.failedHost} for ${currentTask.epid} on retry`,
                 );
               }
+              const stableKey = deadSkipStableKey(
+                currentTask?.config?.Animeprovider,
+                currentTask?.Title,
+                currentTask?.EpNum,
+                currentTask?.SubDub,
+              );
+              await savePersistedDeadHosts(stableKey, hostSkipByEpid.get(currentTask.epid) || []);
             }
             currentTask.retryCount = (currentTask.retryCount || 0) + 1;
             const maxRetries = 3;
@@ -662,7 +704,10 @@ async function continuousExecution() {
                 ? ` ( ${currentTask.config.quality} )`
                 : "";
               const prefix = currentTask.Type === "Manga" ? "CHP" : "EP";
-              const retryCaption = `Downloading ${prefix} ${cleanEp} ${currentTask.Title || ""}${qualStr} Retrying in ${Math.round(backoffMs / 1000)}s...`;
+              const deadNote = err?.failedHost
+                ? ` (dead mirror ${err.failedHost} skipped, trying another server)`
+                : "";
+              const retryCaption = `Downloading ${prefix} ${cleanEp} ${currentTask.Title || ""}${qualStr} Retrying in ${Math.round(backoffMs / 1000)}s...${deadNote}`;
               await updateQueue(currentTask.epid, 0, 0, retryCaption);
               try {
                 global.sendToRenderer("download-logger", {
@@ -731,6 +776,20 @@ async function downloadep(
   animeId,
 ) {
   logger.info(`[queueWorker] ${AnimeEpId} phase: dir-start`);
+  try {
+    const stableKey = deadSkipStableKey(Videoconfig?.Animeprovider, Title, EpNum, SubDub);
+    const persisted = await loadPersistedDeadHosts(stableKey);
+    if (persisted.length > 0) {
+      const known = hostSkipByEpid.get(AnimeEpId) || [];
+      for (const h of persisted) {
+        if (!known.includes(h)) known.push(h);
+      }
+      hostSkipByEpid.set(AnimeEpId, known);
+      logger.warn(
+        `[queueWorker] Re-applied ${persisted.length} persisted dead-host skip(s) for ${AnimeEpId}: ${persisted.join(", ")}`,
+      );
+    }
+  } catch (_) {}
   const directoryPath = await directoryMaker(
     Title,
     EpNum,
@@ -1076,6 +1135,9 @@ async function downloadEpisodeByQuality(
       selectedSource.headers ?? {},
     );
     hostSkipByEpid.delete(epid);
+    run("DELETE FROM Settings WHERE key = ?", [
+      deadSkipStableKey(config?.Animeprovider, Title, episodeNumber, subdub),
+    ]).catch(() => {});
 
     if (malid && animeId) {
       try {

@@ -914,6 +914,13 @@ class downloader {
       // second pass after the main loop, instead of aborting a whole episode
       // over one flaky segment.
       let failedIndices = [];
+      // Dead-mirror fast abort: a run of auth rejections (403/401/404) with
+      // almost nothing downloaded means the mirror link itself is rejected.
+      // Abort now so the queue rotates to another server instead of grinding
+      // every segment through 3 retries each (~minutes of doomed 403s).
+      let authFailCount = 0;
+      let deadHostAborted = false;
+      const DEAD_HOST_FAST_ABORT = 8;
 
       await new Promise((resolve, reject) => {
         const checkDone = () => {
@@ -1032,6 +1039,36 @@ class downloader {
                 completedCount++;
                 failedIndices.push(idx);
                 setDomainErrorCap(domainName, CONCURRENCY);
+                const failStatus =
+                  err?.response?.statusCode ?? err?.response?.status;
+                if (
+                  failStatus === 403 ||
+                  failStatus === 401 ||
+                  failStatus === 404
+                ) {
+                  authFailCount++;
+                }
+                if (
+                  !deadHostAborted &&
+                  authFailCount >= DEAD_HOST_FAST_ABORT &&
+                  freshCount < SLOW_HOST_AFTER_FRESH
+                ) {
+                  deadHostAborted = true;
+                  stopDownloading = true;
+                  let deadHost = domainName;
+                  try {
+                    deadHost = new URL(this.streamUrl).hostname;
+                  } catch (_) {}
+                  const abortErr = new Error(
+                    `SCRAPER_TEMPORARY_ERROR: mirror ${deadHost} is rejecting every segment (${failStatus || 403} x${authFailCount}) — dead mirror, trying another server`,
+                  );
+                  abortErr.failedHost = deadHost;
+                  this.logProgress(
+                    `Mirror ${deadHost} dead (${failStatus || 403}s) — switching server...`,
+                  );
+                  reject(abortErr);
+                  return;
+                }
                 this.logProgress(
                   `Segment ${idx} failed, will retry after the rest finish...`,
                   CONCURRENCY,
