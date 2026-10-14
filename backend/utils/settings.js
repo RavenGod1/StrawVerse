@@ -1251,10 +1251,25 @@ async function HandleExtensions(
         }
       }
 
-      const scriptUrl = `${rawBase.replace(/\/$/, "")}/extensions/${AnimeManga}/${ExtensionName}.js`;
-      const response = await got(scriptUrl, {
-        timeout: { request: 15000 },
-      }).text();
+      const extScriptUrl = `${rawBase.replace(/\/$/, "")}/extensions/${AnimeManga}/${ExtensionName}.js`;
+      const directScriptUrl = `${rawBase.replace(/\/$/, "")}/${AnimeManga}/${ExtensionName}.js`;
+      let scriptUrl = extScriptUrl;
+      let response;
+
+      try {
+        response = await got(extScriptUrl, {
+          timeout: { request: 15000 },
+        }).text();
+      } catch (err) {
+        try {
+          response = await got(directScriptUrl, {
+            timeout: { request: 15000 },
+          }).text();
+          scriptUrl = directScriptUrl;
+        } catch (_) {
+          throw err;
+        }
+      }
 
       if (response.includes("404: Not Found")) {
         return {
@@ -1288,12 +1303,34 @@ async function HandleExtensions(
       }
 
       try {
+        const repoIconDir = path.join(ScraperIcons, RepoOwner);
+        if (!fs.existsSync(repoIconDir)) {
+          fs.mkdirSync(repoIconDir, { recursive: true });
+        }
+        const iconDest = path.join(repoIconDir, `${ExtensionName}.ico`);
+        const legacyIconDest = path.join(ScraperIcons, `${ExtensionName}.ico`);
+        if (fs.existsSync(legacyIconDest)) {
+          try {
+            fs.unlinkSync(legacyIconDest);
+            logger.info(
+              `[Cleanup] Auto-deleted legacy root icon: ${legacyIconDest}`,
+            );
+          } catch (_) {}
+        }
         const iconUrl = `${rawBase.replace(/\/$/, "")}/ico/${ExtensionName}.ico`;
-        const iconDest = path.join(ScraperIcons, `${ExtensionName}.ico`);
-        const iconBuffer = await got(iconUrl, {
-          responseType: "buffer",
-          timeout: { request: 8000 },
-        }).buffer();
+        let iconBuffer;
+        try {
+          iconBuffer = await got(iconUrl, {
+            responseType: "buffer",
+            timeout: { request: 8000 },
+          }).buffer();
+        } catch (_) {
+          const fallbackIconUrl = `${rawBase.replace(/\/$/, "")}/extensions/ico/${ExtensionName}.ico`;
+          iconBuffer = await got(fallbackIconUrl, {
+            responseType: "buffer",
+            timeout: { request: 8000 },
+          }).buffer();
+        }
         if (iconBuffer && iconBuffer.length > 0) {
           await fs.promises.writeFile(iconDest, iconBuffer);
         }
@@ -1337,6 +1374,16 @@ async function HandleExtensions(
         };
       }
 
+      const scopedIconPath = path.join(
+        ScraperIcons,
+        RepoOwner,
+        `${ExtensionName}.ico`,
+      );
+      if (fs.existsSync(scopedIconPath)) {
+        try {
+          fs.unlinkSync(scopedIconPath);
+        } catch (_) {}
+      }
       const iconPath = path.join(ScraperIcons, `${ExtensionName}.ico`);
       if (fs.existsSync(iconPath)) {
         try {

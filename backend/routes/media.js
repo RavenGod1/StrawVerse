@@ -2071,12 +2071,7 @@ router.get("/api/stream/m3u8", async (req, res) => {
           fetchErr.response.status === 503) &&
         global.cloudflarebypass
       ) {
-        const bypassTarget =
-          url.includes("owocdn") ||
-          url.includes("uwucdn") ||
-          url.includes("kwik")
-            ? customReferer || "https://kwik.cx/"
-            : customReferer || url;
+        const bypassTarget = customReferer || url;
         await global.cloudflarebypass(bypassTarget, true);
         const freshHeaders = getHeaders(url);
         if (customReferer) freshHeaders.Referer = customReferer;
@@ -2194,12 +2189,7 @@ router.get("/api/stream/segment", async (req, res) => {
           global.cloudflarebypass
         ) {
           try {
-            const bypassTarget =
-              url.includes("owocdn") ||
-              url.includes("uwucdn") ||
-              url.includes("kwik")
-                ? customReferer || "https://kwik.cx/"
-                : customReferer || url;
+            const bypassTarget = customReferer || url;
             await global.cloudflarebypass(bypassTarget, true);
             const fresh = getHeaders(url);
             if (customReferer) fresh.Referer = customReferer;

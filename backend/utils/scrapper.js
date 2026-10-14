@@ -1654,12 +1654,23 @@ async function electronNetAdapter(config) {
 
       Object.keys(requestHeaders).forEach((key) => {
         const lower = key.toLowerCase();
-        if (lower.startsWith("sec-fetch-") || lower === "host") {
+        if (
+          lower.startsWith("sec-") ||
+          lower === "host" ||
+          lower === "origin" ||
+          lower === "connection" ||
+          lower === "keep-alive" ||
+          lower === "accept-encoding" ||
+          (method &&
+            method.toUpperCase() === "GET" &&
+            lower === "content-length")
+        ) {
           delete requestHeaders[key];
         }
       });
 
       if (reqReferer) {
+        delete requestHeaders.referer;
         requestHeaders["x-proxy-referer"] = reqReferer;
         requestHeaders["Referer"] = reqReferer;
       }
@@ -1761,6 +1772,7 @@ async function electronNetAdapter(config) {
           timeoutError.config = config;
           reject(timeoutError);
         } else {
+          err.config = config;
           reject(err);
         }
       }

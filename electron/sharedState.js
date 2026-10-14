@@ -109,6 +109,11 @@ function registerSharedStateHandlers() {
       if (valScraper?.logo) return valScraper.logo;
       const iconsDir = getScraperIconsPath();
       if (iconsDir) {
+        const repo = valScraper?.repoOwner || "TheYogMehta";
+        const scopedIconPath = path.join(iconsDir, repo, `${name}.ico`);
+        if (fs.existsSync(scopedIconPath)) {
+          return `/api/image?url=${encodeURIComponent(`file://${scopedIconPath}`)}`;
+        }
         const iconPath = path.join(iconsDir, `${name}.ico`);
         if (fs.existsSync(iconPath)) {
           return `/api/image?url=${encodeURIComponent(`file://${iconPath}`)}`;

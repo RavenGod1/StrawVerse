@@ -3,10 +3,14 @@ const axios = require("axios");
 async function verifyStreamReachability(streamUrl, headers = {}) {
   if (!streamUrl || !streamUrl.startsWith("http")) return { ok: true };
   const client = global.axios || axios;
+  const combinedHeaders = {
+    ...(global.getHeaders ? global.getHeaders(streamUrl) : {}),
+    ...headers,
+  };
   try {
     const probeRes = await client.get(streamUrl, {
-      headers,
-      timeout: 4000,
+      headers: combinedHeaders,
+      timeout: 5000,
       skipBypass: true,
       validateStatus: (status) => status < 400,
     });
@@ -39,8 +43,8 @@ async function verifyStreamReachability(streamUrl, headers = {}) {
       if (mediaPlaylistUrl) {
         try {
           const subRes = await client.get(mediaPlaylistUrl, {
-            headers,
-            timeout: 3000,
+            headers: combinedHeaders,
+            timeout: 5000,
             skipBypass: true,
             validateStatus: (s) => s < 400,
           });

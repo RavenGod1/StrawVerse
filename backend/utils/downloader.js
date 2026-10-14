@@ -202,26 +202,30 @@ async function getFfmpegPath() {
 // share one solver run instead of stampeding it.
 const clearanceRefresh = { at: 0, pending: null };
 
-async function refreshCdnClearance(targetUrl) {
+async function refreshCdnClearance(targetUrl, referer = null) {
   try {
     if (typeof global.cloudflarebypass !== "function") return false;
-    if (Date.now() - clearanceRefresh.at < 60000) return true;
+    if (Date.now() - clearanceRefresh.at < 10000 && !clearanceRefresh.pending) {
+      return true;
+    }
     if (!clearanceRefresh.pending) {
-      const target = /owocdn|uwucdn|kwik/i.test(targetUrl || "")
-        ? "https://kwik.cx/"
-        : targetUrl;
-      clearanceRefresh.pending = global
-        .cloudflarebypass(target, true)
-        .then(() => {
-          clearanceRefresh.at = Date.now();
+      const target = referer || targetUrl;
+      clearanceRefresh.pending = (async () => {
+        await global.cloudflarebypass(target, true);
+        clearanceRefresh.at = Date.now();
+        return true;
+      })()
+        .catch((err) => {
+          logger.warn(
+            `[Downloader] Clearance bypass failed for ${target}: ${err.message}`,
+          );
+          return false;
         })
-        .catch(() => {})
         .finally(() => {
           clearanceRefresh.pending = null;
         });
     }
-    await clearanceRefresh.pending;
-    return true;
+    return await clearanceRefresh.pending;
   } catch (_) {
     return false;
   }
@@ -245,52 +249,19 @@ class downloader {
     if (streamUrl?.url) {
       this.streamUrl = streamUrl.url;
       this.headers = streamUrl.headers ?? headers;
+      this.isM3U8 = streamUrl.isM3U8;
     } else {
       this.streamUrl = streamUrl;
       this.headers = headers ?? {};
     }
 
-    if (this.streamUrl) {
-      const resolvedHeaders = getHeaders(this.streamUrl);
-      if (
-        resolvedHeaders.Referer &&
-        !this.headers.Referer &&
-        !this.headers.referer
-      ) {
-        this.headers["Referer"] = resolvedHeaders.Referer;
+    try {
+      const ref = this.headers?.Referer || this.headers?.referer;
+      if (ref && global.setDynamicReferer && this.streamUrl) {
+        global.setDynamicReferer(new URL(this.streamUrl).hostname, ref);
       }
-      if (
-        resolvedHeaders.Origin &&
-        !this.headers.Origin &&
-        !this.headers.origin
-      ) {
-        this.headers["Origin"] = resolvedHeaders.Origin;
-      }
-      if (
-        resolvedHeaders["User-Agent"] &&
-        !this.headers["User-Agent"] &&
-        !this.headers["user-agent"]
-      ) {
-        this.headers["User-Agent"] = resolvedHeaders["User-Agent"];
-      }
-      if (
-        resolvedHeaders.Cookie &&
-        !this.headers.Cookie &&
-        !this.headers.cookie
-      ) {
-        this.headers["Cookie"] = resolvedHeaders.Cookie;
-      }
-    }
+    } catch (_) {}
 
-    const finalReferer = this.headers["Referer"] || this.headers["referer"];
-    if (finalReferer && !this.headers["Origin"] && !this.headers["origin"]) {
-      try {
-        const refUrl = new URL(finalReferer);
-        if (refUrl.protocol === "http:" || refUrl.protocol === "https:") {
-          this.headers["Origin"] = refUrl.origin;
-        }
-      } catch (e) {}
-    }
     this.Epnum = parseInt(Epnum);
     this.caption = caption;
     this.EpID = EpID;
@@ -303,94 +274,30 @@ class downloader {
     this.downloadedPaths = [];
   }
 
-  async getRequestHeaders(url) {
-    const reqHeaders = { ...(this.headers ?? {}) };
-    const resolvedHeaders = getHeaders(url);
-    if (resolvedHeaders.Referer && !reqHeaders.Referer && !reqHeaders.referer) {
-      reqHeaders["Referer"] = resolvedHeaders.Referer;
-    }
-    if (resolvedHeaders.Origin && !reqHeaders.Origin && !reqHeaders.origin) {
-      reqHeaders["Origin"] = resolvedHeaders.Origin;
-    }
-    if (
-      resolvedHeaders["User-Agent"] &&
-      !reqHeaders["User-Agent"] &&
-      !reqHeaders["user-agent"]
-    ) {
-      reqHeaders["User-Agent"] = resolvedHeaders["User-Agent"];
-    }
-    if (resolvedHeaders.Cookie && !reqHeaders.Cookie && !reqHeaders.cookie) {
-      reqHeaders["Cookie"] = resolvedHeaders.Cookie;
-    }
-
-    const finalReferer = reqHeaders["Referer"] || reqHeaders["referer"];
-    if (finalReferer && !reqHeaders["Origin"] && !reqHeaders["origin"]) {
-      try {
-        const refUrl = new URL(finalReferer);
-        if (refUrl.protocol === "http:" || refUrl.protocol === "https:") {
-          reqHeaders["Origin"] = refUrl.origin;
+  async getMediaRequestHeaders(url) {
+    const headers = getHeaders(url);
+    const ref = this.headers?.Referer || this.headers?.referer;
+    if (ref) headers.Referer = ref;
+    if (this.headers && typeof this.headers === "object") {
+      for (const [k, v] of Object.entries(this.headers)) {
+        const kl = k.toLowerCase();
+        if (
+          kl === "referer" ||
+          kl === "cookie" ||
+          kl.startsWith("sec-") ||
+          kl === "host" ||
+          kl === "origin"
+        ) {
+          continue;
         }
-      } catch (e) {}
-    }
-
-    const androidCookie = resolvedHeaders.Cookie || resolvedHeaders.cookie;
-    if (androidCookie) {
-      const cookieValues = new Map();
-      const existingCookie = reqHeaders.Cookie || reqHeaders.cookie || "";
-      for (const part of `${existingCookie};${androidCookie}`.split(";")) {
-        const trimmed = part.trim();
-        if (!trimmed) continue;
-        const separator = trimmed.indexOf("=");
-        const name = separator === -1 ? trimmed : trimmed.slice(0, separator);
-        cookieValues.set(name, trimmed);
+        headers[k] = v;
       }
-      delete reqHeaders.cookie;
-      reqHeaders.Cookie = [...cookieValues.values()].join("; ");
     }
+    return headers;
+  }
 
-    if (process.versions?.electron) {
-      try {
-        const { session } = require("electron");
-        if (session && session.defaultSession) {
-          const cookies = await session.defaultSession.cookies.get({ url });
-          if (cookies && cookies.length > 0) {
-            const cookieValues = new Map();
-            const existingCookie = reqHeaders.Cookie || reqHeaders.cookie || "";
-            for (const part of existingCookie.split(";")) {
-              const trimmed = part.trim();
-              if (!trimmed) continue;
-              const separator = trimmed.indexOf("=");
-              const name =
-                separator === -1 ? trimmed : trimmed.slice(0, separator);
-              cookieValues.set(name, trimmed);
-            }
-            for (const c of cookies) {
-              cookieValues.set(c.name, `${c.name}=${c.value}`);
-            }
-            delete reqHeaders.cookie;
-            reqHeaders.Cookie = [...cookieValues.values()].join("; ");
-          }
-        }
-      } catch (e) {}
-    }
-
-    reqHeaders["accept"] = "*/*";
-    reqHeaders["accept-language"] = "en-US,en;q=0.9";
-    reqHeaders["cache-control"] = "no-cache";
-    reqHeaders["pragma"] = "no-cache";
-    reqHeaders["sec-ch-ua"] = '"Not/A)Brand";v="99", "Chromium";v="148"';
-    reqHeaders["sec-ch-ua-mobile"] = "?0";
-    reqHeaders["sec-ch-ua-platform"] = '"Linux"';
-    reqHeaders["sec-fetch-dest"] = "empty";
-    reqHeaders["sec-fetch-mode"] = "cors";
-    reqHeaders["sec-fetch-site"] = "cross-site";
-
-    const finalHeaders = {};
-    for (const key of Object.keys(reqHeaders)) {
-      finalHeaders[key.toLowerCase()] = reqHeaders[key];
-    }
-
-    return finalHeaders;
+  async getRequestHeaders(url) {
+    return this.getMediaRequestHeaders(url);
   }
 
   // Server-set cookies (e.g. CDN session cookies issued with the
@@ -404,40 +311,22 @@ class downloader {
       return await requestThunk();
     } catch (err) {
       const status = err?.response?.statusCode ?? err?.response?.status;
+      const isCfOrNetErr =
+        status === 403 ||
+        status === 503 ||
+        status === 530 ||
+        (err?.message && String(err.message).includes("net::ERR_"));
       if (
-        (status === 403 || status === 503 || status === 530) &&
-        (await refreshCdnClearance(targetUrl))
+        isCfOrNetErr &&
+        (await refreshCdnClearance(
+          targetUrl,
+          this.headers?.Referer || this.headers?.referer,
+        ))
       ) {
         return await requestThunk();
       }
       throw err;
     }
-  }
-
-  // Media bytes use the platform HTTP stack (global.axios), the same
-  // recipe as the working local stream proxy: Chromium net stack on
-  // desktop, native stack on mobile. Plain `got` requests carry a Node
-  // fingerprint plus XHR-style sec-fetch-*/Origin/cache-buster headers
-  // that vault WAFs reject with 403 while the proxy sails through.
-  async getMediaRequestHeaders(url) {
-    const headers = await this.getRequestHeaders(url);
-    for (const key of Object.keys(headers)) {
-      const kl = key.toLowerCase();
-      if (
-        kl === "origin" ||
-        kl === "pragma" ||
-        kl === "cache-control" ||
-        kl === "sec-fetch-dest" ||
-        kl === "sec-fetch-mode" ||
-        kl === "sec-fetch-site" ||
-        kl === "sec-ch-ua" ||
-        kl === "sec-ch-ua-mobile" ||
-        kl === "sec-ch-ua-platform"
-      ) {
-        delete headers[key];
-      }
-    }
-    return headers;
   }
 
   async fetchMediaBytes(url, timeoutMs = 60000) {
@@ -447,6 +336,7 @@ class downloader {
       responseType: "arraybuffer",
       timeout: timeoutMs,
     });
+    this.absorbResponseCookies(res?.headers);
     const data = res?.data;
     if (!data || data.length === 0) {
       throw new Error("Received empty segment payload");
@@ -454,10 +344,28 @@ class downloader {
     return Buffer.isBuffer(data) ? data : Buffer.from(data);
   }
 
+  async fetchMediaText(url, timeoutMs = 30000) {
+    const client = global.axios || require("axios");
+    const headers = await this.getMediaRequestHeaders(url);
+    const res = await client.get(url, {
+      headers,
+      responseType: "text",
+      timeout: timeoutMs,
+    });
+    this.absorbResponseCookies(res?.headers);
+    const data = res?.data;
+    return typeof data === "string" ? data : String(data || "");
+  }
+
   absorbResponseCookies(headers) {
     try {
-      const setCookies = headers?.["set-cookie"];
-      if (!Array.isArray(setCookies) || setCookies.length === 0) return;
+      let setCookies = headers?.["set-cookie"];
+      if (!setCookies) return;
+      if (!Array.isArray(setCookies)) {
+        setCookies = [setCookies];
+      }
+      if (setCookies.length === 0) return;
+      if (!this.headers) this.headers = {};
       const merged = new Map();
       const existing = this.headers?.Cookie || this.headers?.cookie || "";
       for (const part of String(existing).split(";")) {
@@ -502,15 +410,59 @@ class downloader {
     if (!this.streamUrl || this.streamUrl.length <= 0) {
       throw new Error("No Stream Url Provided");
     } else {
-      const masterRes = await got(this.streamUrl, {
-        headers: await this.getRequestHeaders(this.streamUrl),
-        http2: true,
-        timeout: { request: 30000 },
-      });
-      this.absorbResponseCookies(masterRes.headers);
-      let Playlist = masterRes.body;
+      const isKnownDirectVideo =
+        this.isM3U8 === false ||
+        Boolean(
+          this.streamUrl.split("?")[0].match(/\.(mp4|mkv|webm|mov|avi)$/i),
+        );
+
+      if (isKnownDirectVideo) {
+        this.isDirectVideo = true;
+        this.totalSegments = 1;
+        this.currentSegments = 0;
+        if (this.subtitles && this.subtitles.length > 0) {
+          this.totalSegments += this.subtitles.length;
+        }
+        this.logProgress("Starting direct video download...");
+        return;
+      }
+
+      let Playlist;
+      try {
+        Playlist = await this.fetchWithClearanceRetry(this.streamUrl, () =>
+          this.fetchMediaText(this.streamUrl, 30000),
+        );
+      } catch (err) {
+        try {
+          const masterRes = await got(this.streamUrl, {
+            headers: await this.getMediaRequestHeaders(this.streamUrl),
+            http2: false,
+            timeout: { request: 30000 },
+          });
+          this.absorbResponseCookies(masterRes.headers);
+          Playlist = masterRes.body;
+        } catch (_) {
+          throw err;
+        }
+      }
 
       if (!Playlist) throw new Error("No Stream Found!");
+
+      // Detect direct video files (MP4, MKV, etc.) that are not HLS playlists
+      if (
+        !Playlist.includes("#EXTM3U") ||
+        (this.streamUrl.toLowerCase().includes(".mp4") &&
+          !Playlist.includes("#EXTINF"))
+      ) {
+        this.isDirectVideo = true;
+        this.totalSegments = 1;
+        this.currentSegments = 0;
+        if (this.subtitles && this.subtitles.length > 0) {
+          this.totalSegments += this.subtitles.length;
+        }
+        this.logProgress("Starting direct video download...");
+        return;
+      }
 
       // Resolve master playlist to media playlist if applicable
       if (Playlist.includes("#EXT-X-STREAM-INF")) {
@@ -588,13 +540,29 @@ class downloader {
           }
 
           this.streamUrl = selectedStream.url;
-          const mediaRes = await got(this.streamUrl, {
-            headers: await this.getRequestHeaders(this.streamUrl),
-            http2: true,
-            timeout: { request: 30000 },
-          });
-          this.absorbResponseCookies(mediaRes.headers);
-          Playlist = mediaRes.body;
+          try {
+            const ref = this.headers?.Referer || this.headers?.referer;
+            if (ref && global.setDynamicReferer && this.streamUrl) {
+              global.setDynamicReferer(new URL(this.streamUrl).hostname, ref);
+            }
+          } catch (_) {}
+          try {
+            Playlist = await this.fetchWithClearanceRetry(this.streamUrl, () =>
+              this.fetchMediaText(this.streamUrl, 30000),
+            );
+          } catch (err) {
+            try {
+              const mediaRes = await got(this.streamUrl, {
+                headers: await this.getMediaRequestHeaders(this.streamUrl),
+                http2: false,
+                timeout: { request: 30000 },
+              });
+              this.absorbResponseCookies(mediaRes.headers);
+              Playlist = mediaRes.body;
+            } catch (_) {
+              throw err;
+            }
+          }
 
           if (!Playlist)
             throw new Error("No Stream Found for selected quality!");
@@ -701,6 +669,69 @@ class downloader {
 
   async DownloadStart() {
     try {
+      if (this.isDirectVideo) {
+        this.logProgress("Downloading video file...");
+        const targetFile = this.mp4;
+        const tempVideoFile = `${this.mp4}.downloading`;
+
+        const client = global.axios || require("axios");
+        const headers = await this.getMediaRequestHeaders(this.streamUrl);
+
+        await this.fetchWithClearanceRetry(this.streamUrl, async () => {
+          const res = await client.get(this.streamUrl, {
+            headers,
+            responseType: "stream",
+            timeout: 120000,
+          });
+
+          const totalLength =
+            parseInt(res.headers?.["content-length"], 10) || 0;
+          let downloaded = 0;
+          const writer = fs.createWriteStream(tempVideoFile);
+
+          await new Promise((resolve, reject) => {
+            if (res.data && typeof res.data.on === "function") {
+              res.data.on("data", (chunk) => {
+                downloaded += chunk.length;
+                this.downloadedTotalBytes = downloaded;
+                if (totalLength > 0) {
+                  const pct = Math.floor((downloaded / totalLength) * 100);
+                  this.logProgress(`Downloading video (${pct}%)`);
+                } else {
+                  const mb = (downloaded / (1024 * 1024)).toFixed(1);
+                  this.logProgress(`Downloading video (${mb} MB)`);
+                }
+              });
+              res.data.pipe(writer);
+              writer.on("finish", resolve);
+              writer.on("error", reject);
+              res.data.on("error", reject);
+            } else if (
+              Buffer.isBuffer(res.data) ||
+              res.data instanceof ArrayBuffer
+            ) {
+              const buf = Buffer.isBuffer(res.data)
+                ? res.data
+                : Buffer.from(res.data);
+              fs.writeFileSync(tempVideoFile, buf);
+              resolve();
+            } else {
+              reject(
+                new Error("Unexpected response data type for direct video"),
+              );
+            }
+          });
+        });
+
+        if (fs.existsSync(targetFile)) {
+          await fs.promises.unlink(targetFile).catch(() => {});
+        }
+        await fs.promises.rename(tempVideoFile, targetFile);
+        this.currentSegments = 1;
+        this.logProgress("Video download complete!");
+        return;
+      }
+
       const tempDir = path.join(
         this.directory,
         `.temp_${path.basename(this.SegmentsFile)}`,
@@ -713,6 +744,13 @@ class downloader {
         typeof this.Segments[0] === "object"
           ? this.Segments[0]?.url
           : this.Segments[0];
+
+      try {
+        const ref = this.headers?.Referer || this.headers?.referer;
+        if (ref && global.setDynamicReferer && firstSegUrl) {
+          global.setDynamicReferer(new URL(firstSegUrl).hostname, ref);
+        }
+      } catch (_) {}
 
       const domainName = extractDomain(
         this.streamUrl || firstSegUrl,
@@ -788,8 +826,10 @@ class downloader {
           if (typeof Segment === "object" && Segment.encrypted) {
             if (!this._keyPromiseCache[Segment.keyUrl]) {
               this._keyPromiseCache[Segment.keyUrl] = (async () => {
-                const keyBytes = await this.fetchWithClearanceRetry(Segment.keyUrl, async () =>
-                  this.fetchMediaBytes(Segment.keyUrl, 15000));
+                const keyBytes = await this.fetchWithClearanceRetry(
+                  Segment.keyUrl,
+                  async () => this.fetchMediaBytes(Segment.keyUrl, 15000),
+                );
                 return keyBytes;
               })().catch((err) => {
                 delete this._keyPromiseCache[Segment.keyUrl];
@@ -803,8 +843,10 @@ class downloader {
             } else {
               iv.writeUInt32BE(parseInt(Segment.iv, 10), 12);
             }
-            const cipherBytes = await this.fetchWithClearanceRetry(segUrl, async () =>
-              this.fetchMediaBytes(segUrl, 60000));
+            const cipherBytes = await this.fetchWithClearanceRetry(
+              segUrl,
+              async () => this.fetchMediaBytes(segUrl, 60000),
+            );
             const cipherText = stripPngHeader(cipherBytes);
             const decipher = crypto.createDecipheriv(
               "aes-128-cbc",
@@ -816,8 +858,10 @@ class downloader {
               decipher.final(),
             ]);
           } else {
-            const segBytes = await this.fetchWithClearanceRetry(segUrl, async () =>
-              this.fetchMediaBytes(segUrl, 60000));
+            const segBytes = await this.fetchWithClearanceRetry(
+              segUrl,
+              async () => this.fetchMediaBytes(segUrl, 60000),
+            );
             body = stripPngHeader(segBytes);
           }
 
@@ -841,7 +885,10 @@ class downloader {
 
           const status = err?.response?.statusCode ?? err?.response?.status;
           const isServerRateOrError =
-            status === 429 || status === 502 || status === 503 || status === 530;
+            status === 429 ||
+            status === 502 ||
+            status === 503 ||
+            status === 530;
           const RETRY_DELAYS = isServerRateOrError
             ? [2000, 5000, 8000]
             : [1000, 3000, 5000];
@@ -1188,16 +1235,12 @@ class downloader {
             return;
           }
 
-          const subHeaders = await this.getRequestHeaders(targetUrl);
-          delete subHeaders["origin"];
-          delete subHeaders["Origin"];
+          const subHeaders = await this.getMediaRequestHeaders(targetUrl);
           let subtitleData;
           try {
-            subtitleData = await got(targetUrl, {
-              headers: subHeaders,
-              http2: targetUrl.startsWith("https://"),
-              timeout: { request: 15000 },
-            }).text();
+            subtitleData = await this.fetchWithClearanceRetry(targetUrl, () =>
+              this.fetchMediaText(targetUrl, 15000),
+            );
           } catch (e) {
             try {
               const cleanHeaders = { ...subHeaders };
@@ -1207,12 +1250,12 @@ class downloader {
               delete cleanHeaders["origin"];
               subtitleData = await got(targetUrl, {
                 headers: cleanHeaders,
-                http2: targetUrl.startsWith("https://"),
+                http2: false,
                 timeout: { request: 15000 },
               }).text();
             } catch (err) {
               subtitleData = await got(targetUrl, {
-                http2: targetUrl.startsWith("https://"),
+                http2: false,
                 timeout: { request: 15000 },
               }).text();
             }
@@ -1347,6 +1390,65 @@ class downloader {
   }
 
   async MergeSegments() {
+    if (this.isDirectVideo) {
+      if (this.MergeSubtitles && this.downloadedPaths.length > 0) {
+        const releaseLock = await acquireMergeLock();
+        try {
+          const currentFfmpegPath = await getFfmpegPath();
+          const tempOutput = `${this.mp4}.remux.mp4`;
+          const ffmpegArgs = ["-y", "-i", this.mp4];
+          for (const sub of this.downloadedPaths) {
+            ffmpegArgs.push("-i", sub.path);
+          }
+          ffmpegArgs.push("-map", "0:v", "-map", "0:a?");
+          for (let i = 0; i < this.downloadedPaths.length; i++) {
+            ffmpegArgs.push("-map", `${i + 1}:s`);
+          }
+          ffmpegArgs.push("-c:v", "copy", "-c:a", "copy", "-c:s", "mov_text");
+          for (let i = 0; i < this.downloadedPaths.length; i++) {
+            const sub = this.downloadedPaths[i];
+            ffmpegArgs.push(`-metadata:s:s:${i}`, `language=${sub.lang}`);
+            if (sub.title) {
+              ffmpegArgs.push(`-metadata:s:s:${i}`, `title=${sub.title}`);
+            }
+          }
+          ffmpegArgs.push(tempOutput);
+
+          const nativeDir = path.dirname(currentFfmpegPath);
+          const spawnEnv = {
+            ...process.env,
+            LD_LIBRARY_PATH:
+              nativeDir +
+              (process.env.LD_LIBRARY_PATH
+                ? ":" + process.env.LD_LIBRARY_PATH
+                : ""),
+          };
+
+          await new Promise((resolve, reject) => {
+            const child = spawn(currentFfmpegPath, ffmpegArgs, {
+              env: spawnEnv,
+            });
+            child.on("close", (code) => {
+              if (code !== 0)
+                return reject(new Error(`FFmpeg exited with code ${code}`));
+              resolve();
+            });
+            child.on("error", reject);
+          });
+
+          await fs.promises.unlink(this.mp4).catch(() => {});
+          await fs.promises.rename(tempOutput, this.mp4);
+        } catch (e) {
+          logger.warn(
+            `[Video Remux] Failed to merge subtitles into direct MP4: ${e.message}`,
+          );
+        } finally {
+          releaseLock();
+        }
+      }
+      return;
+    }
+
     const releaseLock = await acquireMergeLock();
     try {
       let ffmpegSucceeded = false;
@@ -1585,7 +1687,8 @@ class downloader {
       }
     }
 
-    await fetch(`http://localhost:${global.PORT}/api/logger`, {
+    const port = global.PORT || 3000;
+    await fetch(`http://127.0.0.1:${port}/api/logger`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

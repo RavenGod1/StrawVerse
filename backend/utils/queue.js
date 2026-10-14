@@ -490,7 +490,9 @@ async function continuousExecution() {
     }
 
     if (activeProcessingEpids.size >= 1) {
-      logger.warn(`[queueWorker] Worker busy, holding queue. Active: ${describeStuckWorker()}`);
+      logger.warn(
+        `[queueWorker] Worker busy, holding queue. Active: ${describeStuckWorker()}`,
+      );
       return;
     }
 
@@ -509,7 +511,9 @@ async function continuousExecution() {
           .map((t) => t.Title || t.ChapterTitle || "item")
           .slice(0, 3)
           .join(", ");
-        logger.warn(`[queueWorker] Dropped ${poisoned.length} queued item(s) with missing episode ID (${names}). Re-add them from the episode list.`);
+        logger.warn(
+          `[queueWorker] Dropped ${poisoned.length} queued item(s) with missing episode ID (${names}). Re-add them from the episode list.`,
+        );
         try {
           global.sendToRenderer("download-error", {
             title: "Download Failed",
@@ -525,7 +529,9 @@ async function continuousExecution() {
       if (isQueuePausedState) break;
 
       if (activeProcessingEpids.size >= 1) {
-        logger.warn(`[queueWorker] Slot taken, deferring remaining tasks. Active: ${describeStuckWorker()}`);
+        logger.warn(
+          `[queueWorker] Slot taken, deferring remaining tasks. Active: ${describeStuckWorker()}`,
+        );
         break;
       }
 
@@ -535,7 +541,9 @@ async function continuousExecution() {
         activeProcessingEpids.has(currentTask.epid)
       ) {
         if (currentTask && !currentTask.epid) {
-          logger.warn(`[queueWorker] Skipping queue row without episode ID (Title: ${currentTask.Title || currentTask.ChapterTitle || "unknown"}).`);
+          logger.warn(
+            `[queueWorker] Skipping queue row without episode ID (Title: ${currentTask.Title || currentTask.ChapterTitle || "unknown"}).`,
+          );
         }
         continue;
       }
@@ -816,7 +824,9 @@ async function downloadEpisodeByQuality(
       }
     }
 
-    logger.info(`[queueWorker] ${epid} phase: sources-${sourcesArray ? "ok" : "empty"}`);
+    logger.info(
+      `[queueWorker] ${epid} phase: sources-${sourcesArray ? "ok" : "empty"}`,
+    );
     if (!sourcesArray && lastFetchErr) {
       throw new Error(`SCRAPER_TEMPORARY_ERROR: ${lastFetchErr.message}`);
     }
@@ -874,10 +884,19 @@ async function downloadEpisodeByQuality(
     // task queued days ago resolves to nothing). Refresh via mapping: look
     // up the anime's current provider id, walk its episode list for the
     // same EP number, and retry sources once with the fresh episode id.
-    if ((!sourcesList || sourcesList.length === 0) && malid && episodeNumber !== undefined && episodeNumber !== null) {
+    if (
+      (!sourcesList || sourcesList.length === 0) &&
+      malid &&
+      episodeNumber !== undefined &&
+      episodeNumber !== null
+    ) {
       try {
         const provName = provider.provider_name || config.Animeprovider;
-        const best = await getBestProviderForMalId(Number(malid), "Anime", provName);
+        const best = await getBestProviderForMalId(
+          Number(malid),
+          "Anime",
+          provName,
+        );
         if (best && best.id) {
           for (let pg = 1; pg <= 5; pg++) {
             const eps = await fetchEpisode(provider, best.id, pg);
@@ -888,7 +907,11 @@ async function downloadEpisodeByQuality(
               logger.info(
                 `[Download] Refreshing stale episode id via mapping: ${resolvedEpid} -> ${match.id}`,
               );
-              const fresh = await fetchEpisodeSources(provider, String(match.id), subdub);
+              const fresh = await fetchEpisodeSources(
+                provider,
+                String(match.id),
+                subdub,
+              );
               const freshList = extractSources(fresh, subdub);
               if (freshList && freshList.length > 0) {
                 sourcesArray = fresh;
@@ -900,7 +923,9 @@ async function downloadEpisodeByQuality(
           }
         }
       } catch (refreshErr) {
-        logger.warn(`[Download] Stale-id refresh failed: ${refreshErr.message}`);
+        logger.warn(
+          `[Download] Stale-id refresh failed: ${refreshErr.message}`,
+        );
       }
     }
 
@@ -919,6 +944,7 @@ async function downloadEpisodeByQuality(
 
     let selectedSource = null;
     let fallbackExcludedSource = null;
+    let fallbackUnverifiedSource = null;
 
     for (let i = 0; i < sortedSources.length; i++) {
       const src = sortedSources[i];
@@ -986,6 +1012,9 @@ async function downloadEpisodeByQuality(
           }
           continue;
         }
+        if (!fallbackUnverifiedSource) {
+          fallbackUnverifiedSource = src;
+        }
         const isAlive = await verifyStreamReachability(
           src.url,
           src.headers || {},
@@ -1006,6 +1035,13 @@ async function downloadEpisodeByQuality(
         `[Download] All available servers are on previously excluded host(s). Reusing best available server to allow download to proceed.`,
       );
       selectedSource = fallbackExcludedSource;
+    }
+
+    if (!selectedSource && fallbackUnverifiedSource) {
+      logger.warn(
+        `[Download] All stream reachability probes failed or were inconclusive. Proceeding with best candidate server to allow download clearance retry.`,
+      );
+      selectedSource = fallbackUnverifiedSource;
     }
 
     if (!selectedSource || !selectedSource.url) {
