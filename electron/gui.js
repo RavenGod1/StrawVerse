@@ -221,11 +221,13 @@ const { createScrapperWindow, ExitScrapperWindow } = require(
   path.join(backendDir, "utils", "scrapper"),
 );
 const { getHeaders } = require(path.join(backendDir, "utils", "proxyHeaders"));
+const { isBypassableUrl } = require(
+  path.join(backendDir, "utils", "extensionRegistry"),
+);
 const { registerSharedStateHandlers } = require("./sharedState");
 const { checkForMappingUpdates } = require(
   path.join(backendDir, "utils", "mappingUpdater"),
 );
-const { MalRefreshTokenGen } = require(path.join(backendDir, "utils", "mal"));
 
 // Express Server
 const routes = require(path.join(backendDir, "routes", "index"));
@@ -374,15 +376,16 @@ const createWindow = () => {
         }
       } catch (e) {}
 
-      const {
-        Referer: referer,
-        "User-Agent": userAgent,
-        Cookie: Cookie,
-        "Sec-CH-UA": secChUa,
-        "Sec-CH-UA-Mobile": secChMobile,
-        "Sec-CH-UA-Platform": secChPlatform,
-      } = getHeaders(details.url);
-      setRefererHeaders(details.requestHeaders, referer);
+      const resolvedHeaders = getHeaders(details.url);
+      const referer = resolvedHeaders.Referer;
+      const userAgent = resolvedHeaders["User-Agent"];
+      const Cookie = resolvedHeaders.Cookie;
+      const secChUa = resolvedHeaders["Sec-CH-UA"];
+      const secChMobile = resolvedHeaders["Sec-CH-UA-Mobile"];
+      const secChPlatform = resolvedHeaders["Sec-CH-UA-Platform"];
+      const stripHeaders = resolvedHeaders._strip;
+
+      if (referer) setRefererHeaders(details.requestHeaders, referer);
       if (userAgent) details.requestHeaders["User-Agent"] = userAgent;
       if (secChUa) details.requestHeaders["sec-ch-ua"] = secChUa;
       if (secChMobile) details.requestHeaders["sec-ch-ua-mobile"] = secChMobile;
@@ -402,11 +405,11 @@ const createWindow = () => {
           );
       }
 
-      if (details.url && details.url.includes("comix")) {
-        delete details.requestHeaders["Referer"];
-        delete details.requestHeaders["referer"];
-        delete details.requestHeaders["Origin"];
-        delete details.requestHeaders["origin"];
+      if (Array.isArray(stripHeaders)) {
+        for (const h of stripHeaders) {
+          delete details.requestHeaders[h];
+          delete details.requestHeaders[h.toLowerCase()];
+        }
       }
 
       callback({ requestHeaders: details.requestHeaders });
@@ -467,9 +470,7 @@ const createWindow = () => {
         if (
           hostname === "localhost" ||
           hostname === "127.0.0.1" ||
-          hostname.includes("owocdn.top") ||
-          hostname.includes("uwucdn.top") ||
-          hostname.includes("kwik.cx")
+          !isBypassableUrl(targetUrl, sourceReferer)
         ) {
           return { ok: true };
         }
@@ -699,22 +700,6 @@ app.whenReady().then(async () => {
       `[databaseUpdater] Error during startup database updates: ${err.message}`,
     );
   });
-
-  const malToken = await getKeyValue("Settings", "malToken");
-  if (malToken) {
-    logger.info("[Main] Refreshing MAL token in the background...");
-    MalRefreshTokenGen(malToken)
-      .then((toSave) => {
-        if (toSave) {
-          settingupdate(toSave).catch(() => {});
-        }
-      })
-      .catch((err) => {
-        logger.error(
-          `[Main] Background MAL token refresh failed: ${err.message}`,
-        );
-      });
-  }
 
   await loadAllScrapers();
   globalShortcut.register("CommandOrControl+Shift+I", () => {});

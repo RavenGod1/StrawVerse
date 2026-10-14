@@ -759,8 +759,11 @@ async function playInMpv(window, options) {
               const ref =
                 resolved.headers?.Referer ||
                 resolved.headers?.referer ||
-                "https://megaplay.buzz/";
-              if (global.setDynamicReferer) {
+                (Animeprovider?.baseUrl ? Animeprovider.baseUrl + "/" : null);
+              if (global.registerSubrequestHeaders && resolved.headers) {
+                global.registerSubrequestHeaders(streamDomain, resolved.headers);
+              }
+              if (ref && global.setDynamicReferer) {
                 global.setDynamicReferer(streamDomain, ref);
                 global.setFallbackReferer(ref);
               }
@@ -839,7 +842,7 @@ async function playInMpv(window, options) {
   const activeReferer =
     activeSources[0]?.headers?.Referer ||
     activeSources[0]?.headers?.referer ||
-    "https://megaplay.buzz/";
+    "";
 
   if (Array.isArray(activeSubtitles) && activeSubtitles.length > 0) {
     activeSubtitles = Array.from(
@@ -1875,8 +1878,19 @@ async function playInMpv(window, options) {
                             const ref =
                               resolved.headers?.Referer ||
                               resolved.headers?.referer ||
-                              "https://megaplay.buzz/";
-                            if (global.setDynamicReferer) {
+                              (Animeprovider?.baseUrl
+                                ? Animeprovider.baseUrl + "/"
+                                : null);
+                            if (
+                              global.registerSubrequestHeaders &&
+                              resolved.headers
+                            ) {
+                              global.registerSubrequestHeaders(
+                                streamDomain,
+                                resolved.headers,
+                              );
+                            }
+                            if (ref && global.setDynamicReferer) {
                               global.setDynamicReferer(streamDomain, ref);
                               global.setFallbackReferer(ref);
                             }

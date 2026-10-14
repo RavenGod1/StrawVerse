@@ -11,12 +11,14 @@ const {
   settingfetch,
   settingupdate,
   getScraperIconsPath,
+  getExtensionRepos,
+  addExtensionRepo,
+  removeExtensionRepo,
+  fetchAggregatedMarketplace,
 } = require(path.join(backendDir, "utils", "settings"));
-const { getEffectiveLogDir } = require(path.join(
-  backendDir,
-  "utils",
-  "settings",
-));
+const { getEffectiveLogDir } = require(
+  path.join(backendDir, "utils", "settings"),
+);
 const { MalCreateUrl } = require(path.join(backendDir, "utils", "mal"));
 
 let PageHistory = [];
@@ -46,18 +48,61 @@ function registerSharedStateHandlers() {
 
   ipcMain.handle(
     "extensions",
-    async (event, TaskType, AnimeManga, ExtentionName) => {
-      return await HandleExtensions(TaskType, AnimeManga, ExtentionName);
+    async (
+      event,
+      TaskType,
+      AnimeManga,
+      ExtentionName,
+      RepoOwner = "TheYogMehta",
+      RepoBaseUrl,
+      MinAppVersion,
+    ) => {
+      return await HandleExtensions(
+        TaskType,
+        AnimeManga,
+        ExtentionName,
+        RepoOwner,
+        RepoBaseUrl,
+        MinAppVersion,
+      );
     },
   );
+
+  ipcMain.handle("get-marketplace", async (event, activeType) => {
+    return await fetchAggregatedMarketplace(activeType);
+  });
+
+  ipcMain.handle("get-extension-repos", async () => {
+    return getExtensionRepos();
+  });
+
+  ipcMain.handle("add-extension-repo", async (event, url) => {
+    return await addExtensionRepo(url);
+  });
+
+  ipcMain.handle("remove-extension-repo", async (event, owner) => {
+    return await removeExtensionRepo(owner);
+  });
 
   ipcMain.handle("get-settings", async (event, keys) => {
     const setting = await settingfetch();
     let settingsObj = {};
 
     const getProviders = () => ({
-      Anime: global.Anime_providers ? Object.keys(global.Anime_providers) : [],
-      Manga: global.Manga_providers ? Object.keys(global.Manga_providers) : [],
+      Anime: Array.from(
+        new Set(
+          Object.values(global.Anime_providers || {}).map(
+            (p) => p.uniqueId || p.name,
+          ),
+        ),
+      ),
+      Manga: Array.from(
+        new Set(
+          Object.values(global.Manga_providers || {}).map(
+            (p) => p.uniqueId || p.name,
+          ),
+        ),
+      ),
     });
 
     const getIconUrl = (name, valScraper) => {
@@ -73,20 +118,36 @@ function registerSharedStateHandlers() {
     };
 
     const getInstalledExtensions = () => ({
-      Anime: global.Anime_providers
-        ? Object.entries(global.Anime_providers).map(([key, val]) => ({
-            name: key,
-            version: val.version || "1.0.0",
-            icon: getIconUrl(key, val),
-          }))
-        : [],
-      Manga: global.Manga_providers
-        ? Object.entries(global.Manga_providers).map(([key, val]) => ({
-            name: key,
-            version: val.version || "1.0.0",
-            icon: getIconUrl(key, val),
-          }))
-        : [],
+      Anime: Array.from(
+        new Map(
+          Object.values(global.Anime_providers || {}).map((val) => [
+            val.uniqueId || val.name,
+            {
+              name: val.name,
+              repoOwner: val.repoOwner || "TheYogMehta",
+              uniqueId:
+                val.uniqueId || `${val.repoOwner || "TheYogMehta"}/${val.name}`,
+              version: val.version || "1.0.0",
+              icon: getIconUrl(val.name, val),
+            },
+          ]),
+        ).values(),
+      ),
+      Manga: Array.from(
+        new Map(
+          Object.values(global.Manga_providers || {}).map((val) => [
+            val.uniqueId || val.name,
+            {
+              name: val.name,
+              repoOwner: val.repoOwner || "TheYogMehta",
+              uniqueId:
+                val.uniqueId || `${val.repoOwner || "TheYogMehta"}/${val.name}`,
+              version: val.version || "1.0.0",
+              icon: getIconUrl(val.name, val),
+            },
+          ]),
+        ).values(),
+      ),
     });
 
     if (Array.isArray(keys)) {

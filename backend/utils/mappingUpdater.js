@@ -224,6 +224,28 @@ async function checkForMappingUpdates(force = false) {
       },
     );
     latestVersion = vRes.data?.version;
+    const canaryChecks =
+      vRes.data?.canaryChecks ||
+      (vRes.data?.paheCanaryCheck ? { pahe: vRes.data.paheCanaryCheck } : null);
+    if (canaryChecks && typeof canaryChecks === "object") {
+      setTimeout(() => {
+        for (const [providerName, canaryData] of Object.entries(canaryChecks)) {
+          const provider =
+            (global.Anime_providers &&
+              (global.Anime_providers[providerName] ||
+                global.Anime_providers[`TheYogMehta/${providerName}`])) ||
+            (global.Manga_providers &&
+              (global.Manga_providers[providerName] ||
+                global.Manga_providers[`TheYogMehta/${providerName}`])) ||
+            null;
+          if (provider && typeof provider.checkCanary === "function") {
+            try {
+              provider.checkCanary(canaryData).catch(() => {});
+            } catch (_) {}
+          }
+        }
+      }, 5000);
+    }
   } catch (e) {
     logger.error(`[mappingUpdater] Failed to get latest version: ${e.message}`);
   }
@@ -507,9 +529,6 @@ async function checkForMappingUpdates(force = false) {
                   mediaType: "Anime",
                 });
               }
-              logger.info(
-                `[mappingUpdater] Healed rotated AnimePahe UUID via delta: ${rot.oldUuid} -> ${rot.newUuid}`,
-              );
             } catch (rotErr) {
               logger.error(
                 `[mappingUpdater] Error applying delta UUID rotation ${rot.oldUuid} -> ${rot.newUuid}: ${rotErr.message}`,
@@ -551,6 +570,8 @@ async function checkForMappingUpdates(force = false) {
     }
   }
 }
+
+global.checkForMappingUpdates = checkForMappingUpdates;
 
 async function syncLibraryIdsWithMapping() {
   try {

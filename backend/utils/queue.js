@@ -1019,8 +1019,11 @@ async function downloadEpisodeByQuality(
       const ref =
         selectedSource.headers?.Referer ||
         selectedSource.headers?.referer ||
-        "https://megaplay.buzz/";
-      if (global.setDynamicReferer) {
+        (provider?.baseUrl ? provider.baseUrl + "/" : null);
+      if (global.registerSubrequestHeaders && selectedSource.headers) {
+        global.registerSubrequestHeaders(streamDomain, selectedSource.headers);
+      }
+      if (ref && global.setDynamicReferer) {
         global.setDynamicReferer(streamDomain, ref);
         global.setFallbackReferer(ref);
       }

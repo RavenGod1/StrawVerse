@@ -74,6 +74,36 @@ async function enrichResultsWithMappingImages(results, AnimeManga) {
       } catch (_) {}
     }
 
+    if (!malid && item.title) {
+      const cleanTitle = String(item.title).trim().toLowerCase();
+      if (!malid && global.db) {
+        try {
+          const table = isAnime ? "Anime" : "Manga";
+          const row = await global.db
+            .prepare(
+              `SELECT MalID FROM ${table} WHERE LOWER(TRIM(title)) = ? LIMIT 1`,
+            )
+            .get(cleanTitle);
+          if (row && row.MalID) {
+            malid = parseInt(row.MalID);
+          }
+        } catch (_) {}
+      }
+      if (!malid && global.db) {
+        try {
+          const listTable = isAnime ? "MyAnimeList" : "MyMangaList";
+          const row = await global.db
+            .prepare(
+              `SELECT id FROM ${listTable} WHERE LOWER(TRIM(title)) = ? LIMIT 1`,
+            )
+            .get(cleanTitle);
+          if (row && row.id) {
+            malid = parseInt(row.id);
+          }
+        } catch (_) {}
+      }
+    }
+
     if (malid) {
       item.malid = malid;
       let remoteImg = null;
@@ -176,7 +206,9 @@ async function enrichResultsWithWatchProgress(results, AnimeManga) {
 
         if (whereClause) {
           const mediaRows = await global.db
-            .prepare(`SELECT id, title, MalID FROM ${mediaTable} WHERE ${whereClause}`)
+            .prepare(
+              `SELECT id, title, MalID FROM ${mediaTable} WHERE ${whereClause}`,
+            )
             .all(...params);
           mediaRows?.forEach((r) => {
             if (r.MalID) malIdSet.add(String(r.MalID));
@@ -234,7 +266,9 @@ async function enrichResultsWithWatchProgress(results, AnimeManga) {
         const malIdArr = Array.from(malIdSet);
         const placeholders = malIdArr.map(() => "?").join(",");
         const siblingRows = await global.db
-          .prepare(`SELECT id FROM ${mediaTable} WHERE MalID IN (${placeholders})`)
+          .prepare(
+            `SELECT id FROM ${mediaTable} WHERE MalID IN (${placeholders})`,
+          )
           .all(...malIdArr);
         siblingRows?.forEach((r) => {
           if (r.id) itemIds.add(String(r.id));
@@ -275,7 +309,9 @@ async function enrichResultsWithWatchProgress(results, AnimeManga) {
             WHERE ${histWhere}
             GROUP BY ${idCol}, LOWER(${titleCol})
           `;
-          const histRows = await global.db.prepare(histQuery).all(...histParams);
+          const histRows = await global.db
+            .prepare(histQuery)
+            .all(...histParams);
           histRows?.forEach((r) => {
             if (r.id) histMap.set(String(r.id), r);
             if (r.title) {
@@ -386,7 +422,9 @@ async function enrichResultsWithWatchProgress(results, AnimeManga) {
       }
 
       if (histRec) {
-        const histWatched = Number(histRec.max_ep || histRec.watched_count || 0);
+        const histWatched = Number(
+          histRec.max_ep || histRec.watched_count || 0,
+        );
         const completedCount = Number(histRec.completed_count || 0);
         if (histWatched > 0) watched = Math.max(watched, histWatched);
         if (totalEpisodes > 0 && completedCount >= totalEpisodes) {
@@ -616,362 +654,30 @@ router.get("/api/schedule/weekly", async (req, res) => {
   }
 });
 
-async function healAnimePaheUuid({ oldId, malid, title, folderName }) {
-  if (!oldId) return null;
+async function healProviderId(
+  providerObj,
+  { oldId, malid, title, folderName },
+) {
+  if (!providerObj || !oldId) return null;
   const cleanOldId = String(oldId).trim();
-
-  let mappingRow = null;
-  let resolvedMalId = malid ? Number(malid) : null;
-
-  if (global.db) {
-    try {
-      const animeRow = await global.db
-        .prepare(
-          "SELECT MalID, title, folder_name FROM Anime WHERE id = ? OR id LIKE ?",
-        )
-        .get(cleanOldId, `${cleanOldId}-%`);
-      if (animeRow) {
-        if (!resolvedMalId && animeRow.MalID) {
-          resolvedMalId = Number(animeRow.MalID);
-        }
-        if (!title && animeRow.title) title = animeRow.title;
-        if (!folderName && animeRow.folder_name)
-          folderName = animeRow.folder_name;
-      }
-    } catch (_) {}
-
-    if (!title) {
-      try {
-        const histRow = await global.db
-          .prepare(
-            "SELECT anime_title FROM WatchHistory WHERE anime_id = ? OR anime_id LIKE ? LIMIT 1",
-          )
-          .get(cleanOldId, `${cleanOldId}-%`);
-        if (histRow?.anime_title) {
-          title = histRow.anime_title;
-        }
-      } catch (_) {}
-    }
-
-    if (!resolvedMalId) {
-      try {
-        const opSaved = await global.db
-          .prepare(
-            "SELECT value FROM Settings WHERE key = 'pahe_one_piece_uuid'",
-          )
-          .get();
-        if (opSaved?.value) {
-          const cleanSaved = String(opSaved.value)
-            .replace(/['"]/g, "")
-            .trim()
-            .toLowerCase();
-          if (cleanSaved === cleanOldId.toLowerCase()) {
-            resolvedMalId = 21;
-            if (!title) title = "One Piece";
-          }
-        }
-      } catch (_) {}
-    }
-
-    if (!resolvedMalId) {
-      try {
-        const unlinked = await global.db
-          .prepare("SELECT malid FROM unlinked_mal_ids WHERE id = ?")
-          .get(cleanOldId);
-        if (unlinked?.malid) {
-          resolvedMalId = Number(unlinked.malid);
-        }
-      } catch (_) {}
-    }
-
-    if (!resolvedMalId && title) {
-      try {
-        const malRow = await global.db
-          .prepare(
-            "SELECT id FROM MyAnimeList WHERE LOWER(title) = LOWER(?) LIMIT 1",
-          )
-          .get(title);
-        if (malRow?.id) {
-          resolvedMalId = Number(malRow.id);
-        }
-      } catch (_) {}
-    }
-  }
-
-  // Check local mappingDb for the active entry
-  if (global.mappingDb) {
-    try {
-      if (resolvedMalId) {
-        mappingRow = await global.mappingDb
-          .prepare("SELECT id, uuid, malid FROM pahe WHERE malid = ? LIMIT 1")
-          .get(resolvedMalId);
-      } else {
-        mappingRow = await global.mappingDb
-          .prepare(
-            "SELECT id, uuid, malid FROM pahe WHERE id = ? OR uuid = ? LIMIT 1",
-          )
-          .get(cleanOldId, cleanOldId);
-      }
-      if (mappingRow?.malid && !resolvedMalId) {
-        resolvedMalId = Number(mappingRow.malid);
-      }
-    } catch (_) {}
-  }
-
   let newId = null;
-  if (mappingRow?.uuid && mappingRow.uuid !== cleanOldId) {
-    newId = mappingRow.uuid;
-  }
 
-  // Fast path: One Piece canary UUID check against Settings.pahe_one_piece_uuid
-  if (!newId || newId === cleanOldId) {
-    if (
-      resolvedMalId === 21 ||
-      (title && /^one piece$/i.test(String(title).trim()))
-    ) {
-      if (global.db) {
-        try {
-          const opSaved = await global.db
-            .prepare(
-              "SELECT value FROM Settings WHERE key = 'pahe_one_piece_uuid'",
-            )
-            .get();
-          if (opSaved?.value) {
-            const cleanSaved = String(opSaved.value)
-              .replace(/['"]/g, "")
-              .trim();
-            if (
-              cleanSaved &&
-              cleanSaved.toLowerCase() !== cleanOldId.toLowerCase()
-            ) {
-              newId = cleanSaved;
-              if (global.mappingDb) {
-                try {
-                  await global.mappingDb
-                    .prepare(
-                      "UPDATE pahe SET uuid = ? WHERE malid = 21 OR id = '4'",
-                    )
-                    .run(cleanSaved);
-                } catch (_) {}
-              }
-            }
-          }
-        } catch (_) {}
-      }
-    }
-  }
-
-  if (!newId || newId === cleanOldId) {
-    if (typeof global.sendToRenderer === "function") {
-      global.sendToRenderer("info-loading-status", {
-        text: "Auto-healing AnimePahe UUID from directory, please wait...",
-      });
-    }
-
+  if (typeof providerObj.healId === "function") {
     try {
-      const paheMirrors = [
-        "https://animepahe.pw",
-        "https://animepahe.org",
-        "https://animepahe.com",
-      ];
-      const links = [];
-      let tsv = "";
-      const parseLinks = (htmlContent) => {
-        if (!htmlContent || typeof htmlContent !== "string") return false;
-        const linkRegex =
-          /<a\s+[^>]*href="\/anime\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"[^>]*>([\s\S]*?)<\/a>/gi;
-        let m;
-        let count = 0;
-        while ((m = linkRegex.exec(htmlContent)) !== null) {
-          const u = m[1].toLowerCase().trim();
-          const n = (m[2] || "")
-            .replace(/<[^>]+>/g, "")
-            .replace(/[\r\n\t]+/g, " ")
-            .trim();
-          if (u && n) {
-            links.push({ uuid: u, name: n });
-            tsv += `${u}\t${n}\n`;
-            count++;
-          }
-        }
-        return count > 0;
-      };
-
-      for (const mirror of paheMirrors) {
-        if (links.length > 0) break;
-        if (typeof global.scrapperFetch === "function") {
-          try {
-            const html = await global.scrapperFetch(`${mirror}/anime`);
-            if (parseLinks(html)) break;
-          } catch (_) {}
-        }
-        if (global.axios) {
-          try {
-            const reqHeaders =
-              typeof getHeaders === "function"
-                ? getHeaders(`${mirror}/anime`)
-                : { Referer: `${mirror}/` };
-            reqHeaders.Referer = `${mirror}/`;
-            const res = await global.axios.get(`${mirror}/anime`, {
-              headers: reqHeaders,
-              timeout: 20000,
-            });
-            const html = typeof res.data === "string" ? res.data : "";
-            if (parseLinks(html)) break;
-          } catch (axErr) {
-            if (axErr.response?.status === 403 && global.cloudflarebypass) {
-              try {
-                await global.cloudflarebypass(
-                  `${mirror}/anime`,
-                  false,
-                  `${mirror}/`,
-                );
-                const retryHeaders =
-                  typeof getHeaders === "function"
-                    ? getHeaders(`${mirror}/anime`)
-                    : { Referer: `${mirror}/` };
-                retryHeaders.Referer = `${mirror}/`;
-                const res2 = await global.axios.get(`${mirror}/anime`, {
-                  headers: retryHeaders,
-                  timeout: 20000,
-                });
-                const html2 = typeof res2.data === "string" ? res2.data : "";
-                if (parseLinks(html2)) break;
-              } catch (_) {}
-            }
-          }
-        }
-      }
-
-      if (links.length > 0) {
-        const client = global.axios || axios;
-        const syncRes = await client
-          .post(
-            "https://strawverse.theyogmehta.online/api/pahe/index",
-            { brokenUuid: cleanOldId, catalog: tsv, links },
-            { timeout: 30000 },
-          )
-          .catch((err) => {
-            logger.error(
-              `[pahe-heal] Failed to post index to server: ${err?.message}`,
-            );
-            return null;
-          });
-
-        if (syncRes?.data?.resolvedNewUuid) {
-          newId = syncRes.data.resolvedNewUuid;
-          logger.info(
-            `[pahe-heal] Server auto-healed UUID ${cleanOldId} -> ${newId}`,
-          );
-
-          if (typeof global.sendToRenderer === "function") {
-            global.sendToRenderer("info-loading-status", {
-              text: "Updating database with healed mapping, please wait...",
-            });
-          }
-
-          try {
-            await checkForMappingUpdates(true);
-          } catch (_) {}
-        }
-
-        if (!newId && global.mappingDb) {
-          try {
-            const recheckRow = resolvedMalId
-              ? await global.mappingDb
-                  .prepare("SELECT uuid FROM pahe WHERE malid = ?")
-                  .get(resolvedMalId)
-              : await global.mappingDb
-                  .prepare("SELECT uuid FROM pahe WHERE uuid = ? OR id = ?")
-                  .get(cleanOldId, cleanOldId);
-            if (recheckRow?.uuid && recheckRow.uuid !== cleanOldId) {
-              newId = recheckRow.uuid;
-            }
-          } catch (_) {}
-        }
-
-        if (!newId && links.length > 0 && (title || folderName)) {
-          const normalize = (s) =>
-            (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-          const cleanTitle = normalize(title);
-          const cleanFolder = normalize(folderName);
-          let found = links.find((l) => {
-            const cleanLinkName = normalize(l.name);
-            return (
-              (cleanTitle && cleanLinkName === cleanTitle) ||
-              (cleanFolder && cleanLinkName === cleanFolder)
-            );
-          });
-
-          if (!found) {
-            const extractTokens = (str) => {
-              if (!str) return [];
-              return str
-                .toLowerCase()
-                .replace(/[^a-z0-9\s]/g, " ")
-                .split(/\s+/)
-                .filter(
-                  (w) =>
-                    w.length >= 3 &&
-                    !/^(the|and|for|with|movie|season|part|ova|special)$/.test(
-                      w,
-                    ),
-                );
-            };
-
-            const titleTokens = extractTokens(title || folderName);
-            if (titleTokens.length >= 2) {
-              let bestScore = 0;
-              let bestLink = null;
-
-              for (const l of links) {
-                const linkTokens = extractTokens(l.name);
-                if (linkTokens.length === 0) continue;
-                const matchCount = titleTokens.filter((t) =>
-                  linkTokens.includes(t),
-                ).length;
-                const score =
-                  matchCount / Math.min(titleTokens.length, linkTokens.length);
-                if (matchCount >= 2 && score >= 0.5 && score > bestScore) {
-                  bestScore = score;
-                  bestLink = l;
-                }
-              }
-              if (bestLink) {
-                found = bestLink;
-              }
-            }
-          }
-
-          if (found?.uuid && found.uuid !== cleanOldId) {
-            newId = found.uuid;
-            logger.info(
-              `[pahe-heal] Resolved UUID via local name matching (${title || folderName} -> "${found.name}"): ${cleanOldId} -> ${newId}`,
-            );
-          }
-        }
-      }
+      newId = await providerObj.healId({
+        oldId: cleanOldId,
+        malid,
+        title,
+        folderName,
+      });
     } catch (err) {
       logger.error(
-        `[pahe-heal] Failed to recover from /anime index: ${err.message}`,
+        `[healProviderId] Error healing ID for ${providerObj.name || "provider"}: ${err.message}`,
       );
-    } finally {
-      if (typeof global.sendToRenderer === "function") {
-        global.sendToRenderer("info-loading-status", { text: "" });
-      }
     }
   }
 
   if (newId && newId !== cleanOldId) {
-    if (global.mappingDb && resolvedMalId) {
-      try {
-        await global.mappingDb
-          .prepare(
-            "INSERT INTO pahe (id, uuid, malid) VALUES (?, ?, ?) ON CONFLICT(malid) DO UPDATE SET uuid = excluded.uuid, id = excluded.id",
-          )
-          .run(newId, newId, resolvedMalId);
-      } catch (_) {}
-    }
     try {
       if (global.db) {
         await global.db
@@ -999,37 +705,24 @@ async function healAnimePaheUuid({ oldId, malid, title, folderName }) {
             )
             .run(cleanOldId, newId, cleanOldId, `${cleanOldId}-%`);
         } catch (_) {}
-
-        if (
-          resolvedMalId === 21 ||
-          /one piece/i.test(title || folderName || "")
-        ) {
-          try {
-            await global.db
-              .prepare(
-                "INSERT OR REPLACE INTO Settings (key, value) VALUES ('pahe_one_piece_uuid', ?)",
-              )
-              .run(JSON.stringify(newId));
-          } catch (_) {}
-        }
       }
 
       if (typeof global.sendToRenderer === "function") {
         global.sendToRenderer("anime-id-updated", {
           oldId: cleanOldId,
           newId: newId,
-          provider: "pahe",
+          provider: providerObj.name || "Anime",
           mediaType: "Anime",
         });
       }
 
       logger.info(
-        `[pahe-heal] Successfully updated Anime ID from ${cleanOldId} to ${newId}`,
+        `[healProviderId] Successfully updated Anime ID from ${cleanOldId} to ${newId}`,
       );
       return newId;
     } catch (dbErr) {
       logger.error(
-        `[pahe-heal] Failed to update resolved ID in database: ${dbErr.message}`,
+        `[healProviderId] Failed to update resolved ID in database: ${dbErr.message}`,
       );
     }
   }
@@ -1153,14 +846,22 @@ router.post("/api/info/:AnimeManga/:LocalMalProvider", async (req, res) => {
 
         if (!resolvedId && AnimeManga === "Anime" && id) {
           try {
-            const healedId = await healAnimePaheUuid({
+            const preferred = (setting.Animeprovider || "").toLowerCase();
+            const providerToHeal =
+              (global.Anime_providers &&
+                (global.Anime_providers[preferred] ||
+                  global.Anime_providers[setting.Animeprovider])) ||
+              (global.Anime_providers &&
+                Object.values(global.Anime_providers)[0]) ||
+              null;
+            const healedId = await healProviderId(providerToHeal, {
               oldId: id,
               title: fallbackTitle || data?.title,
               malid: resolvedMalId,
             });
             if (healedId) {
               resolvedId = healedId;
-              resolvedProvider = "pahe";
+              resolvedProvider = providerToHeal?.name || preferred;
               if (global.db) {
                 const healedRow = await global.db
                   .prepare(
@@ -1170,7 +871,7 @@ router.post("/api/info/:AnimeManga/:LocalMalProvider", async (req, res) => {
                 if (healedRow) {
                   if (healedRow.MalID)
                     resolvedMalId = parseInt(healedRow.MalID);
-                  resolvedProvider = healedRow.provider || "pahe";
+                  resolvedProvider = healedRow.provider || resolvedProvider;
                 }
               }
             }
@@ -1253,7 +954,7 @@ router.post("/api/info/:AnimeManga/:LocalMalProvider", async (req, res) => {
           }
 
           if (
-            Animeprovider.provider_name === "pahe" &&
+            typeof Animeprovider.healId === "function" &&
             (!AnimeInfo ||
               !AnimeInfo.title ||
               AnimeInfo.results ||
@@ -1264,7 +965,7 @@ router.post("/api/info/:AnimeManga/:LocalMalProvider", async (req, res) => {
                 ? AnimeInfo.newUuid
                 : null;
             if (!newId || newId === lookupId) {
-              newId = await healAnimePaheUuid({
+              newId = await healProviderId(Animeprovider, {
                 oldId: lookupId,
                 title: data.title,
                 malid: data.malid,
@@ -1315,40 +1016,18 @@ router.post("/api/info/:AnimeManga/:LocalMalProvider", async (req, res) => {
           }
           data.provider = Animeprovider.provider_name;
 
-          if (
-            Animeprovider.provider_name === "pahe" &&
-            (AnimeInfo?.malid || AnimeInfo?.MalID) &&
-            id &&
-            global?.mappingDb
-          ) {
+          if (typeof Animeprovider?.provider?.onInfoFetched === "function") {
             try {
-              const parsedMalId = Number(AnimeInfo.malid || AnimeInfo.MalID);
-              const existingPaheRow = await global.mappingDb
-                .prepare(
-                  "SELECT id, uuid, malid FROM pahe WHERE uuid = ? OR malid = ? LIMIT 1",
-                )
-                .get(id, parsedMalId);
-
-              const isMissingOrDiff =
-                !existingPaheRow ||
-                existingPaheRow.malid !== parsedMalId ||
-                existingPaheRow.uuid !== id;
-
-              if (isMissingOrDiff) {
-                axios
-                  .post(
-                    "https://strawverse.theyogmehta.online/api/pahe/report",
-                    {
-                      uuid: id,
-                      id: AnimeInfo.dataId ? String(AnimeInfo.dataId) : null,
-                      malid: parsedMalId,
-                      name: AnimeInfo.title || null,
-                    },
-                    { timeout: 5000 },
-                  )
-                  .catch(() => {});
-              }
-            } catch (_) {}
+              await Animeprovider.provider.onInfoFetched({
+                id,
+                info: AnimeInfo,
+                mappingDb: global?.mappingDb,
+              });
+            } catch (extErr) {
+              logger.error(
+                `[onInfoFetched] Anime provider hook error: ${extErr.message}`,
+              );
+            }
           }
         } else if (AnimeManga === "Manga") {
           const Mangaprovider = await providerFetch(
@@ -1384,6 +1063,20 @@ router.post("/api/info/:AnimeManga/:LocalMalProvider", async (req, res) => {
             }
           }
           data.provider = Mangaprovider.provider_name;
+
+          if (typeof Mangaprovider?.provider?.onInfoFetched === "function") {
+            try {
+              await Mangaprovider.provider.onInfoFetched({
+                id,
+                info: MangaInfoData,
+                mappingDb: global?.mappingDb,
+              });
+            } catch (extErr) {
+              logger.error(
+                `[onInfoFetched] Manga provider hook error: ${extErr.message}`,
+              );
+            }
+          }
         }
       } catch (err) {
         if (data && data.id) {
@@ -1824,12 +1517,12 @@ router.post("/api/info/items", async (req, res) => {
         data = await fetchFunction(providerObj, id, page);
         if (
           isAnime &&
-          (providerObj.provider_name === "pahe" || provider === "pahe") &&
+          typeof providerObj?.healId === "function" &&
           page === 1 &&
           (!data?.episodes || data.episodes.length === 0)
         ) {
           const emptyErr = new Error(
-            "AnimePahe returned 404 or empty episodes",
+            `${providerObj.name || "Provider"} returned 404 or empty episodes`,
           );
           emptyErr.status = 404;
           throw emptyErr;
@@ -1837,7 +1530,7 @@ router.post("/api/info/items", async (req, res) => {
       } catch (fetchErr) {
         if (
           isAnime &&
-          (providerObj.provider_name === "pahe" || provider === "pahe") &&
+          typeof providerObj?.healId === "function" &&
           (fetchErr?.response?.status === 404 ||
             fetchErr?.status === 404 ||
             fetchErr?.message?.includes("404"))
@@ -1871,7 +1564,7 @@ router.post("/api/info/items", async (req, res) => {
               }
             } catch (_) {}
           }
-          const healedId = await healAnimePaheUuid({
+          const healedId = await healProviderId(providerObj, {
             oldId: id,
             title: animeTitle,
             folderName: animeFolderName,
@@ -2280,16 +1973,10 @@ router.get("/api/image", async (req, res) => {
         skipBypass: true,
         timeout: 12000,
         headers: {
+          ...resolvedHeaders,
           Accept:
             resolvedHeaders.Accept ||
             "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
-          ...(resolvedHeaders.Referer
-            ? { Referer: resolvedHeaders.Referer }
-            : {}),
-          ...(resolvedHeaders["User-Agent"]
-            ? { "User-Agent": resolvedHeaders["User-Agent"] }
-            : {}),
-          ...(resolvedHeaders.Cookie ? { Cookie: resolvedHeaders.Cookie } : {}),
         },
       };
 
@@ -2591,7 +2278,14 @@ async function linkMediaItem({ oldId, malId, type, title, image }) {
     }
   }
   if (!selectedProvider) {
-    selectedProvider = itemType === "Anime" ? "pahe" : "weebcentral";
+    selectedProvider =
+      itemType === "Anime"
+        ? setting?.Animeprovider ||
+          Object.keys(global.Anime_providers || {})[0] ||
+          "pahe"
+        : setting?.Mangaprovider ||
+          Object.keys(global.Manga_providers || {})[0] ||
+          "weebcentral";
   }
 
   const finalId = resolvedProviderId || oldId || malIdStr;

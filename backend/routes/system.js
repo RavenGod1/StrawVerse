@@ -146,5 +146,46 @@ router.post("/api/cache/clear", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+// Marketplace and Custom Repositories API
+router.get("/api/marketplace", async (req, res) => {
+  try {
+    const { fetchAggregatedMarketplace } = require("../utils/settings");
+    const activeType = req.query.type === "Manga" ? "Manga" : "Anime";
+    const data = await fetchAggregatedMarketplace(activeType);
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get("/api/marketplace/repos", (req, res) => {
+  try {
+    const { getExtensionRepos } = require("../utils/settings");
+    res.json({ repos: getExtensionRepos() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post("/api/marketplace/repos", async (req, res) => {
+  try {
+    const { addExtensionRepo } = require("../utils/settings");
+    const { url } = req.body;
+    const result = await addExtensionRepo(url);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.delete("/api/marketplace/repos/:owner", async (req, res) => {
+  try {
+    const { removeExtensionRepo } = require("../utils/settings");
+    const result = await removeExtensionRepo(req.params.owner);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
 
 module.exports = router;

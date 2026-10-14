@@ -48,8 +48,29 @@ contextBridge.exposeInMainWorld("sharedStateAPI", {
     };
   },
   marketplace: (AnimeManga) => ipcRenderer.send("marketplace", AnimeManga),
-  extensions: (TaskType, AnimeManga, ExtentionName) =>
-    ipcRenderer.invoke("extensions", TaskType, AnimeManga, ExtentionName),
+  extensions: (
+    TaskType,
+    AnimeManga,
+    ExtentionName,
+    RepoOwner = "TheYogMehta",
+    RepoBaseUrl,
+    MinAppVersion,
+  ) =>
+    ipcRenderer.invoke(
+      "extensions",
+      TaskType,
+      AnimeManga,
+      ExtentionName,
+      RepoOwner,
+      RepoBaseUrl,
+      MinAppVersion,
+    ),
+  getMarketplace: (activeType) =>
+    ipcRenderer.invoke("get-marketplace", activeType),
+  getExtensionRepos: () => ipcRenderer.invoke("get-extension-repos"),
+  addExtensionRepo: (url) => ipcRenderer.invoke("add-extension-repo", url),
+  removeExtensionRepo: (owner) =>
+    ipcRenderer.invoke("remove-extension-repo", owner),
   checkWhatsNew: () => ipcRenderer.invoke("check-whats-new"),
   disableWhatsNew: () => ipcRenderer.invoke("disable-whats-new"),
   ensureCfBypass: (url, referer) =>
@@ -73,4 +94,3 @@ contextBridge.exposeInMainWorld("sharedStateAPI", {
 });
 
 contextBridge.exposeInMainWorld("electron", true);
-

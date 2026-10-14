@@ -1,5 +1,24 @@
 # Changelog
 
+# [11.0.0] - 2026-10-14
+
+### Decentralized Extensions & Multi-Repo Marketplace
+
+- **Decentralized Extension Repositories:** Anyone can now create, host, and maintain their own StrawVerse extensions repository on GitHub. Add third-party repositories via GitHub repo URL or direct `marketplace.json` link using the new **+ Add Repo** button in the Marketplace.
+- **Scoped Extension Namespaces:** Extensions are installed and loaded into scoped directories (`/Anime/<REPO_OWNER>/<EXTENSION>.js` and `/Manga/<REPO_OWNER>/<EXTENSION>.js`), allowing multiple creators to develop extensions for the same site without file collisions.
+- **Creator Badges & Repository Manager:** Extensions display `@repoOwner` badges (with official verification badges for `@TheYogMehta`). A dedicated **Repos** manager lets you inspect and remove added repositories.
+
+### Extension Security Sandbox
+
+- **Static AST & Code Analysis:** Extensions undergo safety verification before download and installation. Any scraper attempting to access restricted Node.js modules or dangerous operations (`child_process`, `fs`, `worker_threads`, `cluster`, `process.exit`, etc.) is blocked.
+- **Runtime Module Interceptor:** Built-in module resolution blocks extensions from requiring unauthorized system libraries at runtime.
+
+### Core Architecture & Extension Decoupling
+
+- **Decoupled Extension Hooks:** Site-specific logic (such as integrity canary checks and mapping database reporting) has been extracted from the StrawVerse core into generic scraper hooks (`onInfoFetched`, `checkCanary`).
+- **Compatibility Verification:** Marketplace and scraper loader now verify `MinAppVersion` compatibility to ensure extensions match the running StrawVerse version.
+- **Legacy Extension Auto-Cleanup:** Automatically removes obsolete flat extension files from the root scraper directory to prevent duplicate provider loading.
+
 # [10.1.2] - 2026-10-07
 
 ### Downloads
