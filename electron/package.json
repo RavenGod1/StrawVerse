@@ -74,6 +74,7 @@
         }
       }
     },
+    "npmRebuild": false,
     "icon": "assets/luffy.png",
     "compression": "normal",
     "asarUnpack": [
