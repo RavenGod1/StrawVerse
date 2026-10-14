@@ -1,12 +1,22 @@
 const axios = require("axios");
 
-async function verifyStreamReachability(streamUrl, headers = {}) {
+async function verifyStreamReachability(
+  streamUrl,
+  headers = {},
+  isM3U8 = true,
+) {
   if (!streamUrl || !streamUrl.startsWith("http")) return { ok: true };
   const client = global.axios || axios;
   const combinedHeaders = {
     ...(global.getHeaders ? global.getHeaders(streamUrl) : {}),
     ...headers,
   };
+  const isDirect =
+    isM3U8 === false ||
+    Boolean(streamUrl.split("?")[0].match(/\.(mp4|mkv|webm|mov|avi)$/i));
+  if (isDirect && !combinedHeaders.Range && !combinedHeaders.range) {
+    combinedHeaders.Range = "bytes=0-10";
+  }
   try {
     const probeRes = await client.get(streamUrl, {
       headers: combinedHeaders,
@@ -18,6 +28,7 @@ async function verifyStreamReachability(streamUrl, headers = {}) {
       return {
         ok: false,
         status: probeRes.status,
+        isProtected: probeRes.status === 403 || probeRes.status === 503,
         message: `HTTP ${probeRes.status}`,
       };
     }

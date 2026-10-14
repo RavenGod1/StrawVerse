@@ -2166,6 +2166,72 @@ router.get("/api/stream/segment", async (req, res) => {
     if (customReferer) {
       reqHeaders.Referer = customReferer;
     }
+
+    const isDirectVideo =
+      Boolean(url.split("?")[0].match(/\.(mp4|mkv|webm|mov|avi)$/i)) ||
+      Boolean(req.headers.range);
+
+    if (isDirectVideo) {
+      if (req.headers.range) {
+        reqHeaders.Range = req.headers.range;
+      }
+      let attempts = 0;
+      let resp;
+      while (attempts < 2) {
+        try {
+          resp = await global.axios.get(url, {
+            headers: reqHeaders,
+            responseType: "stream",
+            timeout: 30000,
+            validateStatus: (s) => s < 400,
+          });
+          break;
+        } catch (err) {
+          attempts++;
+          const status = err.response?.status;
+          if (
+            (status === 403 || status === 503) &&
+            attempts < 2 &&
+            global.cloudflarebypass
+          ) {
+            try {
+              const bypassTarget = customReferer || url;
+              await global.cloudflarebypass(bypassTarget, true);
+              const fresh = getHeaders(url);
+              if (customReferer) fresh.Referer = customReferer;
+              if (req.headers.range) fresh.Range = req.headers.range;
+              Object.assign(reqHeaders, fresh);
+            } catch (_) {}
+          } else if (attempts >= 2) {
+            throw err;
+          }
+        }
+      }
+
+      const status = resp.status || (req.headers.range ? 206 : 200);
+      res.status(status);
+      const copyHeaders = [
+        "content-type",
+        "content-length",
+        "content-range",
+        "accept-ranges",
+        "last-modified",
+        "etag",
+      ];
+      copyHeaders.forEach((h) => {
+        const val = resp.headers?.[h];
+        if (val) res.setHeader(h, val);
+      });
+      if (!res.getHeader("accept-ranges")) {
+        res.setHeader("Accept-Ranges", "bytes");
+      }
+      if (req.method === "HEAD") {
+        return res.end();
+      }
+      resp.data.pipe(res);
+      return;
+    }
+
     let attempts = 0;
     let data, headers;
     while (attempts < 2) {
