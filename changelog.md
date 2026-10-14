@@ -1,5 +1,25 @@
 # Changelog
 
+# [11.0.1] - 2026-10-15
+
+### Downloader & Stream Proxy Fixes
+
+- **Chromium `net::ERR_FAILED` Elimination:** Aligned downloader request headers directly with the stream proxy (`getMediaRequestHeaders`), stripping forbidden browser-internal headers (`sec-*`, `host`, `connection`, `origin` on GET) across `downloader.js` and `electronNetAdapter`.
+- **Domain Agnostic Cloudflare Bypass:** Removed legacy hardcoded domain checks (`owocdn`, `uwucdn`, `kwik`) in favor of generic referer-based Turnstile clearance bypass across `downloader.js` and `media.js`.
+- **Direct Video (.mp4) Downloads:** Added immediate pre-check in `DownloadsChecking` to bypass M3U8 text playlist extraction for direct binary video streams (`.mp4`, `.mkv`, `.webm`), preventing memory exhaustion and socket timeouts.
+- **Resilient Server Reachability Probing:** Improved download server selection in `queue.js` by preserving unverified candidate streams if reachability probes fail or encounter Cloudflare challenges, allowing the downloader's retry and bypass mechanisms to resolve them.
+- **Network Error Clearance Retries:** Enhanced downloader clearance retry logic to detect Chromium network errors (`net::ERR_*`) and automatically trigger clearance refresh.
+- **Dynamic Referer Propagation:** Added automatic referer propagation on variant playlist selection and segment retrieval to prevent 403 Forbidden errors on hosts requiring origin tracking.
+
+### Extension Icons & Namespace Scoping
+
+- **Scoped Extension Icons:** Extension icons are now downloaded and stored within `<RepoOwner>/<ExtensionName>.ico` scoped folders in `ScraperIcons`, eliminating icon collisions across different providers.
+- **Legacy Root Icon Cleanup:** Automatically cleans up obsolete root `.ico` files upon installing or updating scoped extensions.
+
+### Database & Network Stability
+
+- **IPv4 Fallback on Mapping Updater:** Enforced IPv4 socket connections in `mappingUpdater.js` to prevent IPv6 `connect ENETUNREACH` failures when syncing the mapping database from cloud servers.
+
 # [11.0.0] - 2026-10-14
 
 ### Decentralized Extensions & Multi-Repo Marketplace
