@@ -1,5 +1,18 @@
 # Changelog
 
+# [10.1.4] - 2026-10-14
+
+### Downloads
+
+- **Dead-Mirror Fast Abort:** 8 auth rejections (403/401/404) with almost nothing downloaded aborts the loop immediately and rotates to another server instead of grinding every segment through retries.
+- **Persisted Dead-Host Skips:** Dead mirror hosts are saved per episode (7-day TTL) and re-applied after restarts. Skips only deprioritize, so an episode can never get permanently bricked.
+- **Subtitles via Platform Stack:** Subtitle files now download through the same platform HTTP path as segments, fixing 403s on WAF-gated subtitle hosts.
+- **Android FFmpeg Lookup:** Native library search covers all mapped `.so` dirs and arch subdirs, fixing "libffmpeg.so not found" remux failures on Android.
+
+### Streaming
+
+- **Site-Root Clearance Refresh:** CDN clearance now refreshes against the site root (e.g. aniwatchtv.site) instead of per-segment CDN URLs, and reports success/failure so failures fail fast toward server rotation.
+
 # [10.1.2] - 2026-10-07
 
 ### Downloads
