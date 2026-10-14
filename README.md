@@ -141,7 +141,7 @@ Whether you want high-speed **anime download** queues in 1080p, full Sub and Dub
 
 ## Videos
 
-### How to download and use `StrawVerse.exe`?
+### How to use `StrawVerse.exe`?
 
 [![Watch the demo](https://img.youtube.com/vi/ZmcE-LrofgQ/0.jpg)](https://www.youtube.com/watch?v=ZmcE-LrofgQ)
 
@@ -174,7 +174,7 @@ Navigate to `C:\Users\USERNAME\AppData\Local\Programs\StrawVerse` and run `Unins
 
 ## Prerequisites
 
-1. **Node.js** — [Download](https://nodejs.org/)
+1. **Node.js** — [Download](https://nodejs.org/en/download)
 2. **Git** — [Download](https://git-scm.com/)
 3. **Python** — [Download](https://www.python.org/downloads/)
 4. **C++ build tools (Windows only)** — required for native modules via node-gyp. Either tick **"Automatically install the necessary tools"** during Node.js setup, or install [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with the **Desktop development with C++** workload.
