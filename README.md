@@ -143,14 +143,11 @@ Whether you want high-speed **anime download** queues in 1080p, full Sub and Dub
 
 ### How to use `StrawVerse.exe`?
 
-[![Watch the demo]
+[![Watch the YT demo](https://img.youtube.com/vi/ZmcE-LrofgQ/0.jpg)](https://www.youtube.com/watch?v=ZmcE-LrofgQ)
 
 
 https://github.com/user-attachments/assets/470b6e44-bf05-4c80-bfef-47dee01f935e
 
-
-YouTube
-(https://img.youtube.com/vi/ZmcE-LrofgQ/0.jpg)](https://www.youtube.com/watch?v=ZmcE-LrofgQ)
 
 ## Configuration
 
