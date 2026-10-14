@@ -99,17 +99,32 @@ async function getFfmpegPath() {
       candidateNativeDirs.push(process.env.NATIVE_LIB_DIR);
     }
 
+    // nodejs-mobile/capacitor-nodejs often places the node binary next to
+    // the extracted native libs — cheap and frequently correct.
+    try {
+      if (process.execPath) {
+        candidateNativeDirs.push(path.dirname(process.execPath));
+      }
+    } catch (_) {}
+
+    // Collect every mapped .so directory plus any strawverse path: on modern
+    // Android the libs live under split-APK mounts whose shape varies, so
+    // match liberally instead of assuming /data/app/<pkg>/lib/<arch>.
+    let mapsSoDirs = 0;
     try {
       const maps = fs.readFileSync("/proc/self/maps", "utf-8");
-      const soMatch = maps.match(/\s(\/data\/app\/[^\s]+\/lib\/[^\s/]+)\//);
-      if (soMatch && soMatch[1]) {
-        candidateNativeDirs.push(soMatch[1]);
-      }
-      const soMatch2 = maps.match(
-        /\s(\/data\/app\/~~[^/]+\/app\.strawverse\.android-[^/]+\/lib\/[^\s/]+)\//,
-      );
-      if (soMatch2 && soMatch2[1]) {
-        candidateNativeDirs.push(soMatch2[1]);
+      for (const line of maps.split("\n")) {
+        const soMatch = line.match(/(\/[^\s]+\.so(?:\.\d+)*)\s*$/);
+        if (soMatch && soMatch[1]) {
+          candidateNativeDirs.push(path.dirname(soMatch[1]));
+          mapsSoDirs++;
+        }
+        if (line.includes("strawverse")) {
+          const pathMatch = line.match(/(\/data\/[^\s]+)/);
+          if (pathMatch && pathMatch[1]) {
+            candidateNativeDirs.push(path.dirname(pathMatch[1]));
+          }
+        }
       }
     } catch (e) {
       logger.warn(`[FFmpeg] Could not read /proc/self/maps: ${e.message}`);
@@ -121,20 +136,39 @@ async function getFfmpegPath() {
     const userDataDir = process.env.NODEJS_MOBILE_DATA_DIR || process.cwd();
     candidateNativeDirs.push(path.join(userDataDir, "bin"));
 
+    const foundIn = (dir) => {
+      try {
+        const direct = path.join(dir, "libffmpeg.so");
+        if (fs.existsSync(direct)) return direct;
+        // One-level arch-subdir scan (e.g. <lib>/arm64/libffmpeg.so).
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+          if (!entry.isDirectory()) continue;
+          const nested = path.join(dir, entry.name, "libffmpeg.so");
+          if (fs.existsSync(nested)) return nested;
+        }
+      } catch (_) {}
+      return null;
+    };
+
     const seen = new Set();
+    const tried = [];
     for (const dir of candidateNativeDirs) {
       if (!dir || seen.has(dir)) continue;
       seen.add(dir);
-      const ffmpegPath = path.join(dir, "libffmpeg.so");
-      if (fs.existsSync(ffmpegPath)) {
-        logger.info(
-          `FFmpeg binary found in native library directory: ${ffmpegPath}`,
-        );
-        resolvedFfmpegPath = ffmpegPath;
+      tried.push(dir);
+      const hit = foundIn(dir);
+      if (hit) {
+        logger.info(`FFmpeg binary found in native library directory: ${hit}`);
+        resolvedFfmpegPath = hit;
         return resolvedFfmpegPath;
       }
     }
 
+    logger.warn(
+      `[FFmpeg] libffmpeg.so not found. Tried ${tried.length} dir(s)` +
+        ` (maps .so dirs: ${mapsSoDirs}, execPath: ${process.execPath || "n/a"}): ` +
+        tried.slice(0, 12).join(" | "),
+    );
     throw new Error(
       "FFmpeg binary (libffmpeg.so) not found in APK. " +
         "Rebuild the app with 'node capacitor/scripts/fetch-ffmpeg.mjs' " +
@@ -1256,35 +1290,13 @@ class downloader {
             return;
           }
 
-          const subHeaders = await this.getRequestHeaders(targetUrl);
-          delete subHeaders["origin"];
-          delete subHeaders["Origin"];
+          // Subtitle hosts sit behind the same WAFs as segment CDNs and
+          // reject plain-Node fingerprints with 403. Go through the platform
+          // HTTP stack (global.axios) with clearance retry, like segments.
           let subtitleData;
-          try {
-            subtitleData = await got(targetUrl, {
-              headers: subHeaders,
-              http2: targetUrl.startsWith("https://"),
-              timeout: { request: 15000 },
-            }).text();
-          } catch (e) {
-            try {
-              const cleanHeaders = { ...subHeaders };
-              delete cleanHeaders["Referer"];
-              delete cleanHeaders["referer"];
-              delete cleanHeaders["Origin"];
-              delete cleanHeaders["origin"];
-              subtitleData = await got(targetUrl, {
-                headers: cleanHeaders,
-                http2: targetUrl.startsWith("https://"),
-                timeout: { request: 15000 },
-              }).text();
-            } catch (err) {
-              subtitleData = await got(targetUrl, {
-                http2: targetUrl.startsWith("https://"),
-                timeout: { request: 15000 },
-              }).text();
-            }
-          }
+          const subBytes = await this.fetchWithClearanceRetry(targetUrl, async () =>
+            this.fetchMediaBytes(targetUrl, 15000));
+          subtitleData = subBytes.toString("utf8");
 
           const isVtt =
             finalExt === "vtt" || subtitleData.trim().startsWith("WEBVTT");
