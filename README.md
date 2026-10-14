@@ -3,7 +3,7 @@
   <img src="assets/header_banner.svg" alt="StrawVerse Header - Fast Open Source Anime & Manga Downloader" width="100%">
 </h1>
 
-# StrawVerse
+<h1 align="center">StrawVerse</h1>
 
 > **A fast, open-source anime and manga downloader for Windows, Linux, and Android with batch downloads, subtitles, multiple sources, quality selection, and MyAnimeList integration.**
 
@@ -22,15 +22,17 @@
   </a>
 </p>
 
-StrawVerse is a fast, open-source **anime downloader** and **manga downloader** designed for Windows, Linux, and Android. Built for speed, versatility, and offline media management, StrawVerse enables you to search, stream, read, and perform **batch anime downloads** and manga chapter downloads across multiple high-speed sources.
+StrawVerse is a fast, open-source **anime downloader** and **manga downloader** for Windows, Linux, and Android. Search, stream, read, and run **batch anime downloads** and manga chapter downloads across multiple high-speed sources — all from one offline-first media manager.
 
-Whether you want high-speed **anime download** queues in 1080p, full Sub and Dub subtitle extraction, or automatic MyAnimeList synchronization, StrawVerse brings your entire **anime & manga** library together under one powerful open-source platform.
+Whether you want high-speed **anime download** queues in 1080p, full Sub and Dub subtitle extraction, synchronized watching with friends, or automatic MyAnimeList tracking, StrawVerse keeps your entire **anime & manga** library in one place.
 
 <p align="center">
-  <a href="https://github.com/TheYogMehta/StrawVerse/releases"><b>Download StrawVerse</b></a> • 
-  <a href="https://strawverse.theyogmehta.online"><b>Official Website</b></a> • 
-  <a href="https://discord.gg/PzfUBgQ2gt"><b>Join Community Discord</b></a>
+  <a href="https://github.com/TheYogMehta/StrawVerse/releases"><b>⬇ Download StrawVerse</b></a> •
+  <a href="https://strawverse.theyogmehta.online"><b>🌐 Official Website</b></a> •
+  <a href="https://discord.gg/PzfUBgQ2gt"><b>💬 Join Community Discord</b></a>
 </p>
+
+> **New in v10.1.4:** dead-mirror fast abort with automatic server switching, subtitle downloads through the hardened request path, and fixed Android remux. See [changelog.md](changelog.md) for details.
 
 ---
 
@@ -46,16 +48,30 @@ Whether you want high-speed **anime download** queues in 1080p, full Sub and Dub
 
 ## Features
 
-- **Batch Anime Episode Downloads:** Download complete anime series, seasons, or selected episodes in bulk with parallel queue processing.
-- **Manga Chapter Downloads:** Download manga volumes and chapters into CBZ format or structured image directories for offline reading.
-- **Fast Parallel Engine:** Multi-threaded download acceleration optimized for minimum wait times and max bandwidth usage.
-- **Multiple Video Qualities:** Seamless quality selection (360p, 480p, 720p, 1080p FHD) with automatic resolution fallback.
-- **Sub & Dub Support:** Full access to Japanese audio streams with subtitles (Sub) and English Dubbed anime releases.
-- **Flexible Subtitle Handling:** Extract soft subtitles as raw `.vtt` / `.ass` files or merge them directly into `.mp4` containers.
-- **In-App Player & Reader:** Stream anime directly with a built-in HTML5 video player or read manga with customizable layouts.
-- **MyAnimeList Integration:** Authenticate via MAL OAuth to automatically track watched episodes, read chapters, and sync lists.
-- **Cross-Platform Support:** Unified desktop and mobile client experience across Windows, Linux, and Android.
-- **Free & Open Source:** 100% community-driven under GPL-3.0 without advertisements or locked features.
+### Downloading
+
+- **Batch anime episode downloads** — full series, seasons, or hand-picked episodes with parallel queue processing.
+- **Manga chapter downloads** — volumes and chapters as CBZ or structured image folders for offline reading.
+- **Fast parallel engine** — multi-threaded downloads with per-host speed tuning and automatic server switching on dead or slow mirrors.
+- **Custom download location** — pick your own folder from Settings with one-click reset to default.
+
+### Playback & Reading
+
+- **In-app player & reader** — HTML5 video player with auto-skip intros/outros, timeline skip markers, and Picture-in-Picture; manga reader with Long Strip, Single Page, and Double Page layouts.
+- **Watch Together** — host or join rooms to watch synchronously with friends, with shared queue and live chat.
+- **Quality selection** — 360p through 1080p FHD with automatic resolution fallback.
+- **Sub & Dub support** — Japanese subtitled and English dubbed releases, with subtitles saved as raw `.vtt` / `.ass` / `.srt` or merged into `.mp4`.
+
+### Library & Tracking
+
+- **MyAnimeList integration** — OAuth login with automatic episode/chapter tracking and list sync.
+- **Library tracker** — watch/read history, airing calendar, stats dashboard, and Discord Rich Presence.
+- **Unified Discover** — one search across anime and manga with genre, status, type, and sort filters.
+
+### Platform
+
+- **Cross-platform** — one shared interface and feature set on Windows, Linux, and Android.
+- **Free & open source** — GPL-3.0, no ads, no locked features.
 
 ---
 
@@ -65,40 +81,31 @@ Whether you want high-speed **anime download** queues in 1080p, full Sub and Dub
 ## Table of Contents
 
 - [Overview](#overview)
-- [Key Features](#key-features)
 - [System Requirements](#system-requirements)
 - [Installation](#installation)
+  - [Android](#for-android)
+  - [Windows](#for-windows)
+  - [Linux](#for-linux)
+  - [Other OS](#for-other-os-macos-etc)
 - [Usage](#usage)
 - [Videos](#videos)
 - [Configuration](#configuration)
-- [Uninstalling the Application](#uninstalling-the-application)
+- [Uninstalling](#uninstalling-the-application)
 - [Build the Application](#build-the-application)
   - [Prerequisites](#prerequisites)
-  - [Steps to Build](#steps-to-build)
+  - [Desktop build](#steps-to-build)
+  - [Android build](#build-and-run-the-android-application)
 
 ---
 
 ## Overview
 
-**StrawVerse** is a cross-platform application built with Electron, Capacitor, React, and Vite that allows you to stream, read, download, and track your anime and manga collections. It uses a local SQLite database to manage your library and watch history.
-
-Beyond standard downloading, StrawVerse includes real-time playback synchronization with friends (Watch Together), automatic MyAnimeList synchronization, a built-in media player, and a manga reader.
-
----
-
-## Key Features
-
-- **Watch Together:** Host or join rooms to watch anime synchronously with friends (includes shared queue and text chat).
-- **In-App Player & Reader:** Stream anime directly or read manga chapters in the app. Remembers your playback position and layout preferences.
-- **Bulk Downloading:** Download entire seasons of anime or manga volumes at once, with support for merging subtitles directly into video files.
-- **Library Tracker:** Tracks your progress (time watched, chapters read) and automatically updates your MyAnimeList account.
-- **Discord Status:** Shows your current show or manga on your Discord profile.
-
----
+**StrawVerse** is a cross-platform app built with Electron, Capacitor, React, and Vite. It streams, downloads, reads, and tracks your anime and manga collections, using a local SQLite database for your library and history.
 
 ## System Requirements
 
-- **Operating System:** Android, Windows & Linux
+- **Operating System:** Windows 10/11 (64-bit), a modern Linux distribution, or Android 7.0+
+- **Disk:** enough free space for your downloads (poster cache defaults to 5 GB, configurable)
 
 ## Installation
 
@@ -106,92 +113,72 @@ Beyond standard downloading, StrawVerse includes real-time playback synchronizat
 
 1. Go to [StrawVerse Releases](https://github.com/TheYogMehta/StrawVerse/releases).
 2. Download the APK file `StrawVerse-<version>.apk`.
-3. Open and install the APK on your Android device!
+3. Open and install the APK on your Android device.
 
 ### For Windows
 
 1. Go to [StrawVerse Releases](https://github.com/TheYogMehta/StrawVerse/releases).
 2. Download the setup file `StrawVerse.Setup.<version>.exe`.
-3. Run the installer to install the application, and enjoy!
+3. Run the installer and enjoy!
 
 ### For Linux
 
 1. Go to [StrawVerse Releases](https://github.com/TheYogMehta/StrawVerse/releases).
-2. Download the AppImage `StrawVerse-<version>.AppImage` or the snap / deb / zip package.
-3. For AppImage: Make it executable using `chmod +x StrawVerse-<version>.AppImage` and run it.
+2. Download the AppImage `StrawVerse-<version>.AppImage` (or the snap / deb package).
+3. For AppImage: make it executable with `chmod +x StrawVerse-<version>.AppImage` and run it.
 
 ### For Other OS (macOS, etc.)
 
-- Pre-built binaries are not currently provided. You can run the application by cloning the repository, installing the dependencies, and running it locally. See the **[Build the Application](#build-the-application)** section below for step-by-step instructions.
+- Pre-built binaries are not provided. Clone the repository and run it locally — see [Build the Application](#build-the-application).
 
 ## Usage
 
-1. Run the application (`StrawVerse.exe` on Windows, or `StrawVerse.AppImage` / Snap on Linux).
-2. **Search and Discover:** Use the unified Discover page to search across anime or manga, switching search modes with the header toggle slider.
-3. **Stream or Read:** Select a title to watch instantly in the custom HTML5 video player, or read chapters in the built-in manga reader.
-4. **Synchronized Playback:** Jump to the **Watch Together** tab to host or join a synced watch room with friends.
-5. **Bulk Download:** Select episodes/chapters from the detail view, choose your format (Sub/Dub/HSUB), and track queues in the Downloads tab.
+1. Launch the app (`StrawVerse.exe` on Windows, the `.AppImage` / Snap on Linux, or the app icon on Android).
+2. **Search and Discover:** use the unified Discover page to search anime or manga; switch modes with the header toggle.
+3. **Stream or Read:** open a title to watch in the built-in player or read chapters in the manga reader.
+4. **Watch Together:** host or join a synced watch room with friends.
+5. **Bulk Download:** pick episodes/chapters from the detail view, choose Sub/Dub/HSUB, and follow progress in the Downloads tab.
 
 ## Videos
 
 ### How to download and use `StrawVerse.exe`?
 
-[Download Guide Video]
+[![Watch the demo](https://img.youtube.com/vi/ZmcE-LrofgQ/0.jpg)](https://www.youtube.com/watch?v=ZmcE-LrofgQ)
 
-[![Watch the YT demo](https://img.youtube.com/vi/ZmcE-LrofgQ/0.jpg)](https://www.youtube.com/watch?v=ZmcE-LrofgQ)
-
-https://github.com/user-attachments/assets/9042f0f9-be25-4705-a6a5-dace3a3539e0
+<video src="https://github.com/user-attachments/assets/9042f0f9-be25-4705-a6a5-dace3a3539e0" controls="controls" muted="muted">How.mp4</video>
 
 ## Configuration
 
-Navigate to the settings tab to configure your StrawVerse application:
+Open the Settings tab to configure StrawVerse:
 
-1. **MyAnimeList Integration:** Authenticate your MAL account via OAuth to enable plan-to-watch/plan-to-read automatic list tracking.
-2. **Player Settings:** Configure subtitle styling and downloading preferences. Hianime provider streams support subtitle track extraction—choose to save subtitle tracks as raw external files or merge them directly into the output MP4 container.
-3. **Quality Preferences:** Customize preferred resolution fallbacks for scrapers.
-4. **Server & Mapping URL:** Reset or configure the address of the central mapping server. Verify connection endpoints with the integrated health test control.
-5. **Storage & Cache:** Set size limits for poster image disk caching (default 5GB). The app implements LRU cache eviction and automatically purges cached assets older than 6 days.
+1. **MyAnimeList Integration:** authenticate via OAuth to enable automatic list tracking.
+2. **Player Settings:** subtitle styling and download preferences — save subtitle tracks as external files or merge them into the output MP4.
+3. **Quality Preferences:** preferred resolution fallbacks for scrapers.
+4. **Server & Mapping URL:** reset or configure the central mapping server address, with a built-in connection health test.
+5. **Storage & Cache:** poster cache size limits (default 5 GB) with LRU eviction; per-session external log files with configurable retention.
 
 ## Uninstalling the Application
 
 ### For Windows
 
-To delete the application, navigate to the following directory:
-
-```
-C:\Users\USERNAME\AppData\Local\Programs\StrawVerse
-```
-
-Then, run `Uninstall StrawVerse.exe`.
+Navigate to `C:\Users\USERNAME\AppData\Local\Programs\StrawVerse` and run `Uninstall StrawVerse.exe`.
 
 ### For Linux
 
-- **AppImage:** Simply delete the downloaded `.AppImage` file. If you want to clean up application configurations, delete the `~/.config/strawverse` directory.
-- **Snap:** Run the following command in your terminal:
-  ```bash
-  sudo snap remove strawverse
-  ```
+- **AppImage:** delete the `.AppImage` file. To clear settings too, delete `~/.config/strawverse`.
+- **Snap:** run `sudo snap remove strawverse`.
 
 ---
 
 # Build the Application
 
-Follow these steps to build application:
-
 ## Prerequisites
 
-1. **Download and install Node.js**:
-   - [Node.js Download](https://nodejs.org/)
-
-2. **Download and install Git**:
-   - [Git Download](https://git-scm.com/)
-
-3. **Download and install Python**
-   - [Python Download](https://www.python.org/downloads/)
-
-4. **C++ Build Tools (Windows only, required for compiling native SQLite node modules via node-gyp)**
-   - During the Node.js installation on Windows, make sure you check the box that says **"Automatically install the necessary tools"** (this installs Python and the necessary VS Build Tools via Chocolatey automatically).
-   - Alternatively, you can manually download and install **[Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)** (be sure to select the **Desktop development with C++** workload during setup).
+1. **Node.js** — [Download](https://nodejs.org/)
+2. **Git** — [Download](https://git-scm.com/)
+3. **Python** — [Download](https://www.python.org/downloads/)
+4. **C++ build tools (Windows only)** — required for native modules via node-gyp. Either tick **"Automatically install the necessary tools"** during Node.js setup, or install [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with the **Desktop development with C++** workload.
+5. **Android SDK / Android Studio** — only needed for the [Android build](#build-and-run-the-android-application).
 
 ## Steps to Build
 
@@ -199,89 +186,47 @@ Follow these steps to build application:
 
    ```bash
    git clone https://github.com/TheYogMehta/StrawVerse.git
+   cd StrawVerse
    ```
 
-2. Navigate to the project directory:
+2. Build the desktop app (builds the GUI, then packages Windows + Linux installers into `electron/dist`):
 
    ```bash
-   cd StrawVerse/electron
+   npm run build:desktop
    ```
 
-3. Install dependencies:
+3. Or run it in development mode:
 
    ```bash
-   npm install
+   npm run start:desktop
    ```
 
-4. For Building the application:
+> **Note:** building Linux targets (AppImage/snap) from Windows is not supported — build those on Linux. On Windows, package with `npx electron-builder --win` inside `electron/` instead.
 
-   ```bash
-   npm run package
-   ```
+## Build and Run the Android Application
 
-5. Run the application for testing:
-   ```bash
-   npm run start
-   ```
-
-## Notes
-
-- Build (package): Creates installer/executable files for Windows (`.exe`) and Linux (`.AppImage`, `.snap`) in the `dist` directory.
-- Start: Runs the app locally in the Electron environment without building an executable.
-- Ensure that your system has the latest versions of Node.js and Git installed for compatibility.
-- If you encounter any issues, feel free to open an issue or join our [Discord Server](https://discord.gg/PzfUBgQ2gt) for support and chat!
-
----
-
-# Build and Run the Android Application
-
-Follow these steps to build and run the application on Android:
-
-## Prerequisites
-
-1. **Android SDK / Android Studio** installed.
-2. A connected **Android device** (with USB Debugging enabled) or an **emulator** running.
-3. Node.js & npm installed.
-
-## Steps to Build and Run
-
-1. **Install Dependencies**:
-
-   In the repository root:
+1. Install dependencies:
 
    ```bash
    npm install
+   cd capacitor && npm install
    ```
 
-   Go into the `capacitor` folder and install its dependencies:
-
-   ```bash
-   cd capacitor
-   npm install
-   ```
-
-2. **Sync Android Project**:
-
-   Build GUI, bundle backend, fetch dependencies, and sync with Capacitor:
+2. Sync the Android project (builds GUI, bundles backend, syncs with Capacitor):
 
    ```bash
    npm run sync:android
    ```
 
-3. **Build Android APK**:
+3. Build the release APK (outputs to `capacitor/android/app/build/outputs/apk/release/app-release.apk`):
 
    ```bash
    npm run package:android
    ```
 
-   _(Outputs signed release APK to `capacitor/android/app/build/outputs/apk/release/app-release.apk`)_
+4. Run it — either `npx cap run android` from a terminal, or `npx cap open android` to launch Android Studio.
 
-4. **Run the Application**:
-   - **Option A**: Directly from the terminal:
-     ```bash
-     npx cap run android
-     ```
-   - **Option B**: Using Android Studio:
-     ```bash
-     npx cap open android
-     ```
+---
+
+- Ensure Node.js and Git are up to date for best compatibility.
+- Issues or questions? Open an issue or join the [Discord Server](https://discord.gg/PzfUBgQ2gt).
