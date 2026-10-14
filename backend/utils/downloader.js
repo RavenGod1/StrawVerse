@@ -198,30 +198,61 @@ async function getFfmpegPath() {
   throw new Error("FFmpeg binary not found.");
 }
 
-// Tracks the last vault-clearance refresh so parallel segment workers
-// share one solver run instead of stampeding it.
-const clearanceRefresh = { at: 0, pending: null };
+// Tracks CDN-clearance refreshes so parallel segment workers share one
+// solver run instead of stampeding it. Successes are reused for 60s;
+// failures are negatively cached for 15s so segments fail fast and the
+// queue can rotate to another server instead of grinding stale headers.
+const clearanceRefresh = { successAt: 0, failAt: 0, pending: null };
+
+// Segment CDN hosts (e.g. cdnx.aniwatchtv.site) only serve media bytes and
+// answer the bypass probe with a non-challenge error page. Refresh against
+// the site root that actually issues clearance instead.
+function resolveClearanceTarget(targetUrl) {
+  const raw = String(targetUrl || "");
+  if (/owocdn|uwucdn|kwik/i.test(raw)) return "https://kwik.cx/";
+  try {
+    const u = new URL(raw);
+    const host = u.hostname.toLowerCase();
+    if (
+      host === "aniwatchtv.site" ||
+      host.endsWith(".aniwatchtv.site") ||
+      /megaplay|megacloud|vidplay|vidstream/.test(host)
+    ) {
+      return "https://aniwatchtv.site/";
+    }
+    return `${u.origin}/`;
+  } catch (_) {
+    return targetUrl;
+  }
+}
 
 async function refreshCdnClearance(targetUrl) {
   try {
     if (typeof global.cloudflarebypass !== "function") return false;
-    if (Date.now() - clearanceRefresh.at < 60000) return true;
+    const now = Date.now();
+    if (now - clearanceRefresh.successAt < 60000) return true;
+    if (now - clearanceRefresh.failAt < 15000) return false;
     if (!clearanceRefresh.pending) {
-      const target = /owocdn|uwucdn|kwik/i.test(targetUrl || "")
-        ? "https://kwik.cx/"
-        : targetUrl;
+      const target = resolveClearanceTarget(targetUrl);
       clearanceRefresh.pending = global
         .cloudflarebypass(target, true)
-        .then(() => {
-          clearanceRefresh.at = Date.now();
+        .then((ok) => {
+          if (ok === false) {
+            clearanceRefresh.failAt = Date.now();
+            return false;
+          }
+          clearanceRefresh.successAt = Date.now();
+          return true;
         })
-        .catch(() => {})
+        .catch(() => {
+          clearanceRefresh.failAt = Date.now();
+          return false;
+        })
         .finally(() => {
           clearanceRefresh.pending = null;
         });
     }
-    await clearanceRefresh.pending;
-    return true;
+    return await clearanceRefresh.pending;
   } catch (_) {
     return false;
   }

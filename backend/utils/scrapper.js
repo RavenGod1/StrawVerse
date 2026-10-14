@@ -765,10 +765,10 @@ global.cloudflarebypass = async (targetUrl, force = false, referer = null) => {
         console.log(
           `[Bypass] Clearance for ${domain} was obtained recently (${Math.round(Math.abs(now - savedAt) / 1000)}s ago), skipping redundant bypass.`,
         );
-        return;
+        return true;
       }
       if (isValid && !force) {
-        return;
+        return true;
       }
     }
   } catch (e) {
@@ -785,7 +785,7 @@ global.cloudflarebypass = async (targetUrl, force = false, referer = null) => {
     console.log(
       `[Bypass] Skipping bypass for ${domain} — cooldown active (${Math.round((bypassCooldowns[domain] - Date.now()) / 1000)}s remaining)`,
     );
-    return;
+    return false;
   }
 
   activeBypasses[domain] = queueBypass(async () => {
@@ -859,7 +859,7 @@ global.cloudflarebypass = async (targetUrl, force = false, referer = null) => {
         console.warn(
           `[Bypass] Could not navigate to ${navUrl} (host unreachable). Aborting bypass.`,
         );
-        return;
+        return false;
       }
 
       let initialClearanceValue = null;
@@ -874,6 +874,7 @@ global.cloudflarebypass = async (targetUrl, force = false, referer = null) => {
           )?.value || null;
       } catch (_) {}
 
+      let abortedNonChallenge = false;
       for (let i = 0; i < 60; i++) {
         const sessionCookies =
           await global.ScrapperWindow.webContents.session.cookies.get({});
@@ -949,6 +950,7 @@ global.cloudflarebypass = async (targetUrl, force = false, referer = null) => {
           console.warn(
             `[Bypass] Non-challenge error encountered on ${navUrl} ("${title}"). Aborting bypass.`,
           );
+          abortedNonChallenge = true;
           break;
         }
 
@@ -974,13 +976,15 @@ global.cloudflarebypass = async (targetUrl, force = false, referer = null) => {
       hideScrapperWindow();
 
       if (
-        gotClearance ||
-        (!isStillChallenge && !pageLooksLikeError(title, ""))
+        (gotClearance ||
+          (!isStillChallenge && !pageLooksLikeError(title, ""))) &&
+        !abortedNonChallenge
       ) {
         delete bypassCooldowns[domain];
         console.log(
           `[Bypass] Successfully bypassed / loaded destination page for ${domain} (title: "${title}")`,
         );
+        return true;
       } else {
         bypassCooldowns[domain] = Date.now() + 90 * 1000;
         console.warn(
@@ -989,13 +993,14 @@ global.cloudflarebypass = async (targetUrl, force = false, referer = null) => {
         if (global.ScrapperWindow && !global.ScrapperWindow.isDestroyed()) {
           global.ScrapperWindow.loadURL("about:blank").catch(() => {});
         }
+        return false;
       }
     } finally {
       global.IsBypassingCloudflare = false;
     }
   });
   try {
-    await activeBypasses[domain];
+    return (await activeBypasses[domain]) !== false;
   } finally {
     delete activeBypasses[domain];
   }
