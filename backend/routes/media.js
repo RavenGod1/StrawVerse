@@ -37,6 +37,15 @@ const { sanitizeFolderName } = require("../utils/constants");
 
 const router = express.Router();
 
+// v11 registers providers under scoped ids ("TheYogMehta/anikoto") first.
+// Filter defs are keyed by short lowercase names, so normalize here.
+function siteKeyOf(v) {
+  return String(v ?? "")
+    .split("/")
+    .pop()
+    .toLowerCase();
+}
+
 async function enrichResultsWithMappingImages(results, AnimeManga) {
   if (!results || !Array.isArray(results) || results.length === 0) {
     return results;
@@ -509,7 +518,7 @@ router.post("/api/list/:AnimeManga/:provider/", async (req, res) => {
       } else if (provider === "provider") {
         const pObj = await getProviderOrThrow("Anime");
         data = await latestAnime(pObj, filters);
-        data = { ...data, site: config.Animeprovider };
+        data = { ...data, site: siteKeyOf(config.Animeprovider) };
       } else if (provider === "search") {
         const pObj = await getProviderOrThrow("Anime");
         data = await animesearch(
@@ -517,7 +526,7 @@ router.post("/api/list/:AnimeManga/:provider/", async (req, res) => {
           req?.query?.query || req?.body?.keyword,
           filters,
         );
-        data = { ...data, site: config.Animeprovider };
+        data = { ...data, site: siteKeyOf(config.Animeprovider) };
       } else {
         const pObj = await getProviderOrThrow("Anime", provider);
         const searchKeyword = req?.body?.keyword || req?.query?.query || "";
@@ -526,7 +535,7 @@ router.post("/api/list/:AnimeManga/:provider/", async (req, res) => {
         } else {
           data = await latestAnime(pObj, filters);
         }
-        data = { ...data, site: provider };
+        data = { ...data, site: siteKeyOf(provider) };
       }
     } else if (AnimeManga === "Manga") {
       if (provider === "local") {
@@ -539,7 +548,7 @@ router.post("/api/list/:AnimeManga/:provider/", async (req, res) => {
       } else if (provider === "provider") {
         const pObj = await getProviderOrThrow("Manga");
         data = await latestMangas(pObj, filters?.page, filters);
-        data = { ...data, site: config.Mangaprovider };
+        data = { ...data, site: siteKeyOf(config.Mangaprovider) };
       } else if (provider === "search") {
         const pObj = await getProviderOrThrow("Manga");
         data = await MangaSearch(
@@ -548,7 +557,7 @@ router.post("/api/list/:AnimeManga/:provider/", async (req, res) => {
           filters?.page,
           filters,
         );
-        data = { ...data, site: config.Mangaprovider };
+        data = { ...data, site: siteKeyOf(config.Mangaprovider) };
       } else {
         const pObj = await getProviderOrThrow("Manga", provider);
         const searchKeyword = req?.body?.keyword || req?.query?.query || "";
@@ -557,7 +566,7 @@ router.post("/api/list/:AnimeManga/:provider/", async (req, res) => {
         } else {
           data = await latestMangas(pObj, filters?.page, filters);
         }
-        data = { ...data, site: provider };
+        data = { ...data, site: siteKeyOf(provider) };
       }
     }
 

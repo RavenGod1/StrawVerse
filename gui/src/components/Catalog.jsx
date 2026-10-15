@@ -1021,8 +1021,14 @@ export default function Catalog({
             preloadPagesAround(page, currentFilters);
           }
         }
-        if (resData?.site && siteFilterDefs[resData.site]) {
-          setAvailableFilters(siteFilterDefs[resData.site]);
+        // v11 may report scoped provider ids ("TheYogMehta/anikoto");
+        // filter defs are keyed by short lowercase names.
+        const siteKey = String(resData?.site ?? "")
+          .split("/")
+          .pop()
+          .toLowerCase();
+        if (siteKey && siteFilterDefs[siteKey]) {
+          setAvailableFilters(siteFilterDefs[siteKey]);
         } else {
           setAvailableFilters(null);
         }
