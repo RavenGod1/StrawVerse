@@ -766,6 +766,14 @@ export default function Catalog({
           Special: "Special",
         },
       },
+      language: {
+        label: "Language",
+        options: {
+          All: "",
+          Sub: "sub",
+          Dub: "dub",
+        },
+      },
       sort: {
         label: "Sort",
         options: {
