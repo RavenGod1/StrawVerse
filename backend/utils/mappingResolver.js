@@ -154,30 +154,18 @@ async function resolveMalIdFromMapping({
       }
     }
 
-    const unionParts = [];
-    const params = [];
     for (const p of providers) {
-      if (p.primary_key_field === "uuid") {
-        unionParts.push(
-          `SELECT malid FROM ${p.table_name} WHERE uuid = ? OR id = ?`,
-        );
-        params.push(cleanId, cleanId);
-      } else {
-        unionParts.push(`SELECT malid FROM ${p.table_name} WHERE id = ?`);
-        params.push(cleanId);
-      }
+      try {
+        const sql =
+          p.primary_key_field === "uuid"
+            ? `SELECT malid FROM ${p.table_name} WHERE uuid = ? OR id = ? LIMIT 1`
+            : `SELECT malid FROM ${p.table_name} WHERE id = ? LIMIT 1`;
+        const params =
+          p.primary_key_field === "uuid" ? [cleanId, cleanId] : [cleanId];
+        const row = await mappingQueryOne(sql, params);
+        if (row?.malid) return Number(row.malid);
+      } catch (_) {}
     }
-
-    if (unionParts.length === 0) return null;
-
-    const sql = `
-      WITH resolved AS (
-        ${unionParts.join("\n UNION ALL \n")}
-      )
-      SELECT malid FROM resolved WHERE malid IS NOT NULL LIMIT 1
-    `;
-    const row = await mappingQueryOne(sql, params);
-    return row?.malid ? Number(row.malid) : null;
   } catch (err) {
     logger.error(`[mappingResolver] Error resolving MAL ID: ${err.message}`);
   }

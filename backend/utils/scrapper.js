@@ -17,6 +17,11 @@ const path = require("path");
 const { Readable } = require("stream");
 const { getHeaders } = require("./proxyHeaders");
 const { run, queryAll, queryOne } = require("./db");
+const {
+  isBypassableUrl,
+  isExtensionPageLoaded,
+  getCookieDomains,
+} = require("./extensionRegistry");
 
 let isQuitting = false;
 let activeBypasses = {};
@@ -204,11 +209,18 @@ async function saveClearanceCookiesForDomain(domain) {
   const session = global.ScrapperWindow.webContents?.session;
   if (!session) return;
   const cookies = await session.cookies.get({});
+  const allTargetDoms = [domain, ...getCookieDomains(domain)];
+  if (global.clearCookieCache) {
+    for (const d of allTargetDoms) {
+      global.clearCookieCache(d);
+    }
+  }
   for (const cookie of cookies) {
-    if (
-      cookieMatchesDomain(cookie.domain, domain) &&
-      isCloudflareCookie(cookie.name)
-    ) {
+    const extraDoms = getCookieDomains(domain);
+    const matchesExtra = extraDoms.some((ed) =>
+      cookieMatchesDomain(cookie.domain, ed),
+    );
+    if (cookieMatchesDomain(cookie.domain, domain) || matchesExtra) {
       try {
         const cookieDomain = normalizeHostname(cookie.domain);
         const key = `${cookieDomain}-${cookie.name}`;
@@ -227,8 +239,14 @@ async function saveClearanceCookiesForDomain(domain) {
           expiry,
           Date.now(),
         ]);
-        if (global.clearCookieCache) {
-          global.clearCookieCache(domain);
+        if (global.updateCookieCache) {
+          global.updateCookieCache(
+            cookieDomain,
+            cookie.name,
+            cookie.value,
+            cookie.expirationDate,
+            Date.now(),
+          );
         }
       } catch (dbErr) {
         console.error("Failed to save cookie to database:", dbErr);
@@ -250,14 +268,20 @@ async function saveClearanceCookiesForDomain(domain) {
         Date.now() + 1000 * 60 * 60 * 24 * 365,
         Date.now(),
       ]);
+      if (global.updateCookieCache) {
+        global.updateCookieCache(domain, "user_agent", ua);
+        for (const ed of getCookieDomains(domain)) {
+          global.updateCookieCache(ed, "user_agent", ua);
+        }
+      }
     }
   } catch (e) {}
 }
 
 async function clearCookiesForDomain(domain) {
   await run(
-    "DELETE FROM cookie WHERE id = ? OR (? = domain OR ? LIKE '%.' || domain OR domain LIKE '%.' || ?)",
-    [`${domain}-cf_clearance`, domain, domain, domain],
+    "DELETE FROM cookie WHERE id = ? OR (name = 'cf_clearance' AND (? = domain OR ? = LTRIM(domain, '.') OR ? LIKE '%.' || LTRIM(domain, '.') OR domain LIKE '%.' || ?))",
+    [`${domain}-cf_clearance`, domain, domain, domain, domain],
   );
   if (global.clearCookieCache) {
     global.clearCookieCache(domain);
@@ -274,19 +298,14 @@ async function clearCookiesForDomain(domain) {
         cookieMatchesDomain(cookie.domain, domain) ||
         (cookie.name === "cf_clearance" && isCloudflareCookie(cookie.name))
       ) {
-        const norm = normalizeHostname(cookie.domain);
-        const paths = [cookie.path || "/", "/"];
-        for (const p of paths) {
-          await session.cookies
-            .remove(`https://${norm}${p}`, cookie.name)
-            .catch(() => {});
-          await session.cookies
-            .remove(`http://${norm}${p}`, cookie.name)
-            .catch(() => {});
-          await session.cookies
-            .remove(`https://${domain}${p}`, cookie.name)
-            .catch(() => {});
-        }
+        const norm = cookie.domain ? cookie.domain.replace(/^\./, "") : domain;
+        const p = cookie.path || "/";
+        await session.cookies
+          .remove(`https://${norm}${p}`, cookie.name)
+          .catch(() => {});
+        await session.cookies
+          .remove(`http://${norm}${p}`, cookie.name)
+          .catch(() => {});
         cleared++;
       }
     }
@@ -305,10 +324,7 @@ function isVideoStreamUrl(urlStr, cfg) {
     u.includes(".mp4") ||
     u.includes(".mkv") ||
     u.includes("/api/stream/") ||
-    u.includes("/stream/") ||
-    u.includes("ibyteimg") ||
-    u.includes("byteimg") ||
-    u.includes("/obj/")
+    u.includes("/stream/")
   );
 }
 
@@ -334,28 +350,9 @@ function isMediaUrl(urlStr, cfg) {
   );
 }
 
-const BYPASSABLE_DOMAINS = [
-  "animepahe",
-  "kwik.cx",
-  "anikoto",
-  "anineko",
-  "allmanga",
-  "weebcentral",
-  "asurascans",
-  "comix",
-  "mangafire",
-  "megaplay",
-  "vidplay",
-  "vidstream",
-  "vidtub",
-  "megap.",
-];
-
 function shouldBypassUrl(urlStr, refererStr) {
   if (!urlStr && !refererStr) return false;
-  const url = String(urlStr || "").toLowerCase();
-  const ref = String(refererStr || "").toLowerCase();
-  return BYPASSABLE_DOMAINS.some((d) => url.includes(d) || ref.includes(d));
+  return isBypassableUrl(urlStr, refererStr);
 }
 
 function isCloudflareResponse(response) {
@@ -392,12 +389,32 @@ function isCloudflareChallengeText(text) {
     lower.includes("turnstile-wrapper") ||
     lower.includes("cf-chl-widget") ||
     lower.includes("cf-challenge-running") ||
-    lower.includes('class="challenge-form"')
+    lower.includes('class="challenge-form"') ||
+    lower.includes("cf-turnstile") ||
+    lower.includes("challenges.cloudflare.com") ||
+    lower.includes("verifying you are human") ||
+    lower.includes("checking your browser")
   );
 }
 
-function pageLooksLikeChallenge(title, html) {
-  if (html && !isCloudflareChallengeText(html)) {
+function isPageLoadedForDomain(domain, title, html) {
+  if (!html || typeof html !== "string") return false;
+  if (isCloudflareChallengeText(title) || isCloudflareChallengeText(html)) {
+    return false;
+  }
+  return isExtensionPageLoaded(domain, title, html);
+}
+
+function pageLooksLikeChallenge(title, html, domain = "") {
+  const checkTitle =
+    title && title.startsWith("StrawVerse -") ? "" : title || "";
+  // Always check Cloudflare challenge signatures first!
+  if (isCloudflareChallengeText(checkTitle)) return true;
+  if (isCloudflareChallengeText(html)) return true;
+
+  if (domain && isPageLoadedForDomain(domain, checkTitle, html)) return false;
+
+  if (html) {
     const trimmed = html.trim().toLowerCase();
     if (
       trimmed.includes("<pre") ||
@@ -407,17 +424,36 @@ function pageLooksLikeChallenge(title, html) {
       return false;
     }
   }
-  if (isCloudflareChallengeText(title)) return true;
-  if (isCloudflareChallengeText(html)) return true;
+
   const isChallengeStatus =
     global.LastScrapperResponseCode === 403 ||
     global.LastScrapperResponseCode === 503;
-  return isChallengeStatus && !title;
+  return (
+    isChallengeStatus &&
+    (!checkTitle ||
+      checkTitle.toLowerCase().includes("just a moment") ||
+      checkTitle.toLowerCase().includes("cloudflare") ||
+      checkTitle.toLowerCase().includes("attention required"))
+  );
 }
 
-function pageLooksLikeError(title, html) {
+function pageLooksLikeError(title, html, domain = "") {
+  if (domain && isPageLoadedForDomain(domain, title, html)) return false;
+  if (isCloudflareChallengeText(title) || isCloudflareChallengeText(html)) {
+    return false;
+  }
   const lowerTitle = (title || "").toLowerCase();
   const lowerHtml = (html || "").toLowerCase();
+  if (html && html.length > 300) {
+    return (
+      lowerTitle.includes("403") ||
+      lowerTitle.includes("forbidden") ||
+      lowerTitle.includes("404") ||
+      lowerTitle.includes("not found") ||
+      lowerHtml.includes("access denied") ||
+      lowerHtml.includes("error code 1020")
+    );
+  }
   return (
     global.LastScrapperResponseCode >= 400 ||
     lowerTitle.includes("403") ||
@@ -488,11 +524,11 @@ function createScrapperWindow() {
     return;
   }
   global.LastScrapperResponseCode = 200;
-  global.ScrapperWindow = new BrowserWindow({
+  const winOpts = {
     width: 850,
     height: 650,
     center: true,
-    title: "StrawVerse - Cloudflare Verification",
+    title: "StrawVerse - Verification",
     show: false,
     autoHideMenuBar: true,
     webPreferences: {
@@ -503,7 +539,11 @@ function createScrapperWindow() {
       partition: "persist:scrapper",
       autoplayPolicy: "user-gesture-required",
     },
-  });
+  };
+  if (global.win && !global.win.isDestroyed()) {
+    winOpts.parent = global.win;
+  }
+  global.ScrapperWindow = new BrowserWindow(winOpts);
 
   loadSavedCookiesIntoSession();
 
@@ -534,91 +574,100 @@ function createScrapperWindow() {
   global.ScrapperWindow.webContents.session.webRequest.onBeforeSendHeaders(
     { urls: ["*://*/*"] },
     (details, callback) => {
-      const proxyReferer = takeHeaderCaseInsensitive(
-        details.requestHeaders,
-        "x-proxy-referer",
-      );
-
-      if (details.requestHeaders["sec-ch-ua"]) {
-        details.requestHeaders["sec-ch-ua"] = stripElectronBrands(
-          details.requestHeaders["sec-ch-ua"],
+      try {
+        const proxyReferer = takeHeaderCaseInsensitive(
+          details.requestHeaders,
+          "x-proxy-referer",
         );
-      }
-      if (details.requestHeaders["sec-ch-ua-full-version-list"]) {
-        details.requestHeaders["sec-ch-ua-full-version-list"] =
-          stripElectronBrands(
-            details.requestHeaders["sec-ch-ua-full-version-list"],
+
+        if (details.requestHeaders["sec-ch-ua"]) {
+          details.requestHeaders["sec-ch-ua"] = stripElectronBrands(
+            details.requestHeaders["sec-ch-ua"],
           );
-      }
+        }
+        if (details.requestHeaders["sec-ch-ua-full-version-list"]) {
+          details.requestHeaders["sec-ch-ua-full-version-list"] =
+            stripElectronBrands(
+              details.requestHeaders["sec-ch-ua-full-version-list"],
+            );
+        }
 
-      const rawReferer =
-        getHeaderCaseInsensitive(details.requestHeaders, "referer") ||
-        proxyReferer;
-      const isSameOrigin = isSameOriginReferer(details.url, rawReferer);
+        const rawReferer =
+          getHeaderCaseInsensitive(details.requestHeaders, "referer") ||
+          proxyReferer;
+        const isSameOrigin = isSameOriginReferer(details.url, rawReferer);
 
-      const {
-        Referer: referer,
-        "User-Agent": userAgent,
-        Cookie: Cookie,
-        "Sec-CH-UA": secChUa,
-        "Sec-CH-UA-Mobile": secChMobile,
-        "Sec-CH-UA-Platform": secChPlatform,
-      } = getHeaders(details.url);
-      if (proxyReferer) {
-        setRefererHeaders(details.requestHeaders, proxyReferer, true);
-      } else if (!rawReferer && referer) {
-        setRefererHeaders(details.requestHeaders, referer);
-      }
-      if (userAgent) {
-        takeHeaderCaseInsensitive(details.requestHeaders, "user-agent");
-        details.requestHeaders["User-Agent"] = userAgent;
-      }
-      if (secChUa) details.requestHeaders["sec-ch-ua"] = secChUa;
-      if (secChMobile) details.requestHeaders["sec-ch-ua-mobile"] = secChMobile;
-      if (secChPlatform)
-        details.requestHeaders["sec-ch-ua-platform"] = secChPlatform;
-      mergeCookie(details.requestHeaders, Cookie);
+        const {
+          Referer: referer,
+          "User-Agent": userAgent,
+          Cookie: Cookie,
+          "Sec-CH-UA": secChUa,
+          "Sec-CH-UA-Mobile": secChMobile,
+          "Sec-CH-UA-Platform": secChPlatform,
+        } = getHeaders(details.url);
+        if (proxyReferer) {
+          setRefererHeaders(details.requestHeaders, proxyReferer, true);
+        } else if (!rawReferer && referer) {
+          setRefererHeaders(details.requestHeaders, referer);
+        }
+        if (userAgent) {
+          takeHeaderCaseInsensitive(details.requestHeaders, "user-agent");
+          details.requestHeaders["User-Agent"] = userAgent;
+        }
+        if (secChUa) details.requestHeaders["sec-ch-ua"] = secChUa;
+        if (secChMobile)
+          details.requestHeaders["sec-ch-ua-mobile"] = secChMobile;
+        if (secChPlatform)
+          details.requestHeaders["sec-ch-ua-platform"] = secChPlatform;
+        mergeCookie(details.requestHeaders, Cookie);
 
-      callback({ requestHeaders: details.requestHeaders });
+        callback({ requestHeaders: details.requestHeaders });
+      } catch (_) {
+        callback({ requestHeaders: details.requestHeaders });
+      }
     },
   );
 
   global.ScrapperWindow.webContents.session.webRequest.onHeadersReceived(
     { urls: ["*://*/*"] },
     (details, callback) => {
-      if (details.resourceType === "mainFrame") {
-        global.LastScrapperResponseCode = details.statusCode;
-      }
-      const responseHeaders = { ...details.responseHeaders };
-      const urlLower = details.url.toLowerCase();
+      try {
+        if (details.resourceType === "mainFrame") {
+          global.LastScrapperResponseCode = details.statusCode;
+        }
+        const responseHeaders = { ...details.responseHeaders };
+        const urlLower = details.url.toLowerCase();
 
-      const isMedia =
-        urlLower.includes(".m3u8") ||
-        urlLower.includes(".ts") ||
-        urlLower.includes(".mp4") ||
-        urlLower.includes(".mkv") ||
-        urlLower.includes(".avi") ||
-        urlLower.includes(".css") ||
-        urlLower.includes(".vtt");
+        const isMedia =
+          urlLower.includes(".m3u8") ||
+          urlLower.includes(".ts") ||
+          urlLower.includes(".mp4") ||
+          urlLower.includes(".mkv") ||
+          urlLower.includes(".avi") ||
+          urlLower.includes(".css") ||
+          urlLower.includes(".vtt");
 
-      const contentType = String(
-        getHeaderCaseInsensitive(responseHeaders, "content-type") || "",
-      );
-      const isHtml = contentType.toLowerCase().includes("text/html");
+        const contentType = String(
+          getHeaderCaseInsensitive(responseHeaders, "content-type") || "",
+        );
+        const isHtml = contentType.toLowerCase().includes("text/html");
 
-      const isErrorOrChallenge = details.statusCode >= 400 || isHtml;
+        const isErrorOrChallenge = details.statusCode >= 400 || isHtml;
 
-      if (isMedia && !isErrorOrChallenge) {
-        for (const key of Object.keys(responseHeaders)) {
-          if (key.toLowerCase() === "content-disposition") {
-            responseHeaders[key] = ["inline"];
-          }
-          if (key.toLowerCase() === "content-type") {
-            responseHeaders[key] = ["text/plain"];
+        if (isMedia && !isErrorOrChallenge) {
+          for (const key of Object.keys(responseHeaders)) {
+            if (key.toLowerCase() === "content-disposition") {
+              responseHeaders[key] = ["inline"];
+            }
+            if (key.toLowerCase() === "content-type") {
+              responseHeaders[key] = ["text/plain"];
+            }
           }
         }
+        callback({ responseHeaders });
+      } catch (_) {
+        callback({ responseHeaders: details.responseHeaders });
       }
-      callback({ responseHeaders });
     },
   );
 
@@ -649,13 +698,13 @@ function createScrapperWindow() {
 function showScrapperWindow() {
   if (!global.ScrapperWindow || global.ScrapperWindow.isDestroyed()) return;
   try {
-    global.ScrapperWindow.setTitle("StrawVerse - Cloudflare Verification");
-    global.ScrapperWindow.setAlwaysOnTop(true, "floating");
-    if (typeof global.ScrapperWindow.setVisibleOnAllWorkspaces === "function") {
-      global.ScrapperWindow.setVisibleOnAllWorkspaces(true, {
-        visibleOnFullScreen: true,
-      });
+    if (global.win && !global.win.isDestroyed()) {
+      try {
+        global.ScrapperWindow.setParentWindow(global.win);
+      } catch (_) {}
     }
+    global.ScrapperWindow.setTitle("StrawVerse - Verification");
+    global.ScrapperWindow.setAlwaysOnTop(true);
     if (global.ScrapperWindow.isMinimized()) {
       global.ScrapperWindow.restore();
     }
@@ -671,11 +720,33 @@ function hideScrapperWindow() {
   if (!global.ScrapperWindow || global.ScrapperWindow.isDestroyed()) return;
   try {
     global.ScrapperWindow.setAlwaysOnTop(false);
-    if (typeof global.ScrapperWindow.setVisibleOnAllWorkspaces === "function") {
-      global.ScrapperWindow.setVisibleOnAllWorkspaces(false);
-    }
+    try {
+      global.ScrapperWindow.setParentWindow(null);
+    } catch (_) {}
     global.ScrapperWindow.hide();
   } catch (_) {}
+}
+
+async function safeNavigateWindow(
+  win,
+  url,
+  referrer = null,
+  timeoutMs = 10000,
+) {
+  if (!win || win.isDestroyed()) return false;
+  const navOpts = {};
+  if (referrer) navOpts.httpReferrer = referrer;
+  let timer = null;
+  const timeoutPromise = new Promise((resolve) => {
+    timer = setTimeout(() => resolve("timeout"), timeoutMs);
+  });
+  const loadPromise = win.loadURL(url, navOpts).catch(() => null);
+  try {
+    const res = await Promise.race([loadPromise, timeoutPromise]);
+    return res !== "timeout";
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 const BYPASS_TASK_TIMEOUT_MS = 90000;
@@ -778,7 +849,7 @@ global.cloudflarebypass = async (targetUrl, force = false, referer = null) => {
   if (activeBypasses[domain]) return activeBypasses[domain];
 
   if (
-    force &&
+    !force &&
     bypassCooldowns[domain] &&
     Date.now() < bypassCooldowns[domain]
   ) {
@@ -806,56 +877,38 @@ global.cloudflarebypass = async (targetUrl, force = false, referer = null) => {
       global.LastScrapperResponseCode = 200;
 
       let navUrl = targetUrl;
-      try {
-        const parsed = new URL(targetUrl);
-        if (
-          domain.includes("animepahe") ||
-          parsed.pathname.includes("/api") ||
-          parsed.pathname.includes("/stream") ||
-          parsed.search
-        ) {
-          navUrl = parsed.origin + "/";
-        }
-      } catch (_) {}
       let navFailed = false;
 
       if (force) {
         showScrapperWindow();
       }
 
-      const navReferer = referer || navUrl;
+      // Reset window state so title and DOM do not retain stale state
       try {
-        await global.ScrapperWindow.loadURL(navUrl, {
-          httpReferrer: navReferer,
-          timeout: 15000,
-        });
-      } catch (err) {
-        const isHttpFailure =
-          err?.code === "ERR_HTTP_RESPONSE_CODE_FAILURE" ||
-          (err?.message &&
-            err.message.includes("ERR_HTTP_RESPONSE_CODE_FAILURE")) ||
-          global.LastScrapperResponseCode === 403 ||
-          global.LastScrapperResponseCode === 503;
+        await safeNavigateWindow(
+          global.ScrapperWindow,
+          "about:blank",
+          null,
+          2000,
+        );
+        global.ScrapperWindow.setTitle("StrawVerse - Verification");
+      } catch (_) {}
 
-        if (!isHttpFailure) {
-          try {
-            const orig = new URL(targetUrl).origin + "/";
-            if (orig !== navUrl) {
-              navUrl = orig;
-              await global.ScrapperWindow.loadURL(navUrl, {
-                httpReferrer: navReferer,
-                timeout: 15000,
-              });
-            } else {
-              navFailed = true;
-            }
-          } catch (_) {
-            navFailed = true;
-          }
-        }
-      }
+      const navReferer = referer || navUrl;
+      const navOk = await safeNavigateWindow(
+        global.ScrapperWindow,
+        navUrl,
+        navReferer,
+        15000,
+      );
 
-      if (navFailed) {
+      const curUrl = global.ScrapperWindow.webContents.getURL() || "";
+      if (
+        !navOk &&
+        (!curUrl ||
+          curUrl === "about:blank" ||
+          curUrl.startsWith("chrome-error://"))
+      ) {
         console.warn(
           `[Bypass] Could not navigate to ${navUrl} (host unreachable). Aborting bypass.`,
         );
@@ -874,7 +927,6 @@ global.cloudflarebypass = async (targetUrl, force = false, referer = null) => {
           )?.value || null;
       } catch (_) {}
 
-      let abortedNonChallenge = false;
       for (let i = 0; i < 60; i++) {
         const sessionCookies =
           await global.ScrapperWindow.webContents.session.cookies.get({});
@@ -897,9 +949,12 @@ global.cloudflarebypass = async (targetUrl, force = false, referer = null) => {
           );
         } catch (e) {}
 
-        const isChallenge = pageLooksLikeChallenge(title, html);
+        const isChallenge = pageLooksLikeChallenge(title, html, domain);
+        const isHttpBlocked =
+          global.LastScrapperResponseCode === 403 ||
+          global.LastScrapperResponseCode === 503;
 
-        if (isChallenge) {
+        if (isChallenge || isHttpBlocked) {
           showScrapperWindow();
         }
 
@@ -915,43 +970,40 @@ global.cloudflarebypass = async (targetUrl, force = false, referer = null) => {
           global.ScrapperWindow.webContents.isLoading() ||
           readyState === "loading";
 
+        const currentWebUrl = global.ScrapperWindow.webContents.getURL() || "";
         const isNotInitialShell =
-          title &&
-          title !== "StrawVerse - Cloudflare Verification" &&
-          (html.length > 50 || !isWindowLoading);
+          Boolean(currentWebUrl) &&
+          currentWebUrl !== "about:blank" &&
+          !currentWebUrl.startsWith("chrome-error://");
 
-        if (
-          hasFreshClearance &&
-          !isChallenge &&
-          !isWindowLoading &&
-          isNotInitialShell
-        ) {
-          console.log(
-            `[Bypass] Solved challenge and obtained cf_clearance for ${domain}: "${title}"`,
-          );
-          break;
-        }
+        const isExtLoaded = isPageLoadedForDomain(domain, title, html);
 
-        if (
-          !isChallenge &&
-          isNotInitialShell &&
-          html &&
-          !pageLooksLikeError(title, html)
-        ) {
-          if (!force || hasFreshClearance || !isWindowLoading) {
+        if (!isChallenge && !isHttpBlocked) {
+          if (hasFreshClearance || clearanceCookie) {
             console.log(
-              `[Bypass] Destination page ready without challenge: "${title}"`,
+              `[Bypass] Solved challenge and obtained cf_clearance for ${domain}: "${title}"`,
             );
             break;
           }
-        }
 
-        if (!isChallenge && pageLooksLikeError(title, html) && i >= 5) {
-          console.warn(
-            `[Bypass] Non-challenge error encountered on ${navUrl} ("${title}"). Aborting bypass.`,
-          );
-          abortedNonChallenge = true;
-          break;
+          if (
+            isExtLoaded ||
+            (isNotInitialShell &&
+              !isWindowLoading &&
+              html &&
+              html.length > 500 &&
+              !pageLooksLikeError(title, html, domain))
+          ) {
+            console.log(`[Bypass] Destination page ready: "${title}"`);
+            break;
+          }
+
+          if (pageLooksLikeError(title, html, domain) && i >= 5) {
+            console.warn(
+              `[Bypass] Non-challenge error encountered on ${navUrl} ("${title}"). Aborting bypass.`,
+            );
+            break;
+          }
         }
 
         await sleep(1000);
@@ -963,22 +1015,33 @@ global.cloudflarebypass = async (targetUrl, force = false, referer = null) => {
         await global.ScrapperWindow.webContents.session.cookies.get({});
       const gotClearance = finalCookies.some(
         (c) =>
-          c.name === "cf_clearance" &&
-          cookieMatchesDomain(c.domain, domain) &&
-          (!initialClearanceValue || c.value !== initialClearanceValue),
+          c.name === "cf_clearance" && cookieMatchesDomain(c.domain, domain),
       );
       const title = global.ScrapperWindow.getTitle() || "";
+      let finalHtml = "";
+      try {
+        finalHtml = await global.ScrapperWindow.webContents.executeJavaScript(
+          "document.documentElement.outerHTML",
+        );
+      } catch (_) {}
+      const isExtLoaded = isPageLoadedForDomain(domain, title, finalHtml);
       const isStillChallenge =
-        pageLooksLikeChallenge(title, "") ||
-        global.LastScrapperResponseCode === 403 ||
-        global.LastScrapperResponseCode === 503;
+        pageLooksLikeChallenge(title, finalHtml, domain) ||
+        (!gotClearance &&
+          (global.LastScrapperResponseCode === 403 ||
+            global.LastScrapperResponseCode === 503));
 
       hideScrapperWindow();
 
       if (
         (gotClearance ||
-          (!isStillChallenge && !pageLooksLikeError(title, ""))) &&
-        !abortedNonChallenge
+          (!isStillChallenge &&
+            isExtLoaded &&
+            global.LastScrapperResponseCode === 200) ||
+          (!pageLooksLikeError(title, finalHtml, domain) &&
+            finalHtml.length > 500 &&
+            global.LastScrapperResponseCode === 200)) &&
+        !isStillChallenge
       ) {
         delete bypassCooldowns[domain];
         console.log(
@@ -986,9 +1049,9 @@ global.cloudflarebypass = async (targetUrl, force = false, referer = null) => {
         );
         return true;
       } else {
-        bypassCooldowns[domain] = Date.now() + 90 * 1000;
+        bypassCooldowns[domain] = Date.now() + 15 * 1000;
         console.warn(
-          `[Bypass] Failed to solve challenge for ${domain}. Cooldown set for 90s.`,
+          `[Bypass] Failed to solve challenge for ${domain}. Cooldown set for 15s.`,
         );
         if (global.ScrapperWindow && !global.ScrapperWindow.isDestroyed()) {
           global.ScrapperWindow.loadURL("about:blank").catch(() => {});
@@ -1018,9 +1081,12 @@ global.scrapperFetch = (url, options = {}) => {
         : new URL(url).origin;
       const currentUrl = global.ScrapperWindow.webContents.getURL() || "";
       if (!currentUrl.startsWith(targetOrigin)) {
-        await global.ScrapperWindow.loadURL(targetOrigin + "/", {
-          timeout: 20000,
-        }).catch(() => {});
+        await safeNavigateWindow(
+          global.ScrapperWindow,
+          targetOrigin + "/",
+          null,
+          10000,
+        );
         for (let w = 0; w < 20; w++) {
           const t = global.ScrapperWindow.getTitle() || "";
           let readyState = "loading";
@@ -1107,6 +1173,23 @@ global.scrapperFetch = (url, options = {}) => {
 
 global.scrapperFetchDataUrl = (url) => {
   return queueBypass(async () => {
+    try {
+      const resolvedHeaders = getHeaders(url);
+      const res = await net.fetch(url, {
+        headers: {
+          ...resolvedHeaders,
+          Accept:
+            "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+        },
+      });
+      if (res.ok) {
+        const buffer = await res.arrayBuffer();
+        const ct = res.headers.get("content-type") || "image/jpeg";
+        const base64 = Buffer.from(buffer).toString("base64");
+        return `data:${ct};base64,${base64}`;
+      }
+    } catch (_) {}
+
     if (!global.ScrapperWindow || global.ScrapperWindow.isDestroyed()) {
       return null;
     }
@@ -1117,39 +1200,39 @@ global.scrapperFetchDataUrl = (url) => {
         : new URL(url).origin;
       const currentUrl = global.ScrapperWindow.webContents.getURL() || "";
       if (!currentUrl.startsWith(targetOrigin)) {
-        await global.ScrapperWindow.loadURL(targetOrigin + "/").catch(() => {});
-        await sleep(300);
+        await safeNavigateWindow(
+          global.ScrapperWindow,
+          targetOrigin + "/",
+          null,
+          10000,
+        );
       }
-    } catch (e) {}
-
-    const js = `
-      (async () => {
-        try {
-          const ctrl = new AbortController();
-          const t = setTimeout(() => ctrl.abort(), 25000);
-          const res = await fetch(${JSON.stringify(url)}, { credentials: "include", signal: ctrl.signal });
-          clearTimeout(t);
-          if (!res.ok) return null;
-          const blob = await res.blob();
-          return new Promise((resolve) => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve(reader.result);
-            reader.onerror = () => resolve(null);
-            reader.readAsDataURL(blob);
-          });
-        } catch (err) {
+      const js = `
+        (async () => {
+          try {
+            const ctrl = new AbortController();
+            const t = setTimeout(() => ctrl.abort(), 6000);
+            const res = await fetch(${JSON.stringify(url)}, { credentials: "include", signal: ctrl.signal });
+            clearTimeout(t);
+            if (res.ok) {
+              const blob = await res.blob();
+              return new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result);
+                reader.onerror = () => resolve(null);
+                reader.readAsDataURL(blob);
+              });
+            }
+          } catch (_) {}
           return null;
-        }
-      })()
-    `;
-
-    try {
+        })()
+      `;
       const dataUrl = await Promise.race([
         global.ScrapperWindow.webContents.executeJavaScript(js),
-        sleep(30000).then(() => null),
+        sleep(8000).then(() => null),
       ]);
       return dataUrl;
-    } catch (e) {
+    } catch (_) {
       return null;
     }
   });
@@ -1573,12 +1656,23 @@ async function electronNetAdapter(config) {
 
       Object.keys(requestHeaders).forEach((key) => {
         const lower = key.toLowerCase();
-        if (lower.startsWith("sec-fetch-") || lower === "host") {
+        if (
+          lower.startsWith("sec-") ||
+          lower === "host" ||
+          lower === "origin" ||
+          lower === "connection" ||
+          lower === "keep-alive" ||
+          lower === "accept-encoding" ||
+          (method &&
+            method.toUpperCase() === "GET" &&
+            lower === "content-length")
+        ) {
           delete requestHeaders[key];
         }
       });
 
       if (reqReferer) {
+        delete requestHeaders.referer;
         requestHeaders["x-proxy-referer"] = reqReferer;
         requestHeaders["Referer"] = reqReferer;
       }
@@ -1680,6 +1774,7 @@ async function electronNetAdapter(config) {
           timeoutError.config = config;
           reject(timeoutError);
         } else {
+          err.config = config;
           reject(err);
         }
       }
@@ -1707,7 +1802,11 @@ global.axios.interceptors.request.use(
       const callerRef = getHeaderCaseInsensitive(config.headers, "referer");
       takeHeaderCaseInsensitive(config.headers, "referer");
       if (callerRef) headers["Referer"] = callerRef;
-      if (headers["Cookie"]) {
+      const callerCookie = getHeaderCaseInsensitive(config.headers, "cookie");
+      if (config.skipCookie || callerCookie === "") {
+        delete headers["Cookie"];
+        takeHeaderCaseInsensitive(config.headers, "cookie");
+      } else if (headers["Cookie"]) {
         const existingCookie = takeHeaderCaseInsensitive(
           config.headers,
           "cookie",

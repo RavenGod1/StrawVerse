@@ -294,8 +294,21 @@ async function MalAddToList(type = "anime", malid, status, numVal = 0) {
   }
 }
 
+const malSyncInFlight = new Map();
+
 // Sync A Specific Type (Anime or Manga)
 async function MalSyncType(type, force = false) {
+  if (malSyncInFlight.has(type)) {
+    return malSyncInFlight.get(type);
+  }
+  const syncPromise = _doMalSyncType(type, force).finally(() => {
+    malSyncInFlight.delete(type);
+  });
+  malSyncInFlight.set(type, syncPromise);
+  return syncPromise;
+}
+
+async function _doMalSyncType(type, force = false) {
   if (!global.MalLoggedIn || !MalAcount?.access_token) {
     logger.info(
       `[MAL-${type.toUpperCase()}-LIST] SKIPPED FETCH (Not logged in)`,

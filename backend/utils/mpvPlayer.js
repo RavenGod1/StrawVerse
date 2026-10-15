@@ -743,6 +743,7 @@ async function playInMpv(window, options) {
 
   if (activeSources.length > 0) {
     let resolvedSuccess = false;
+    let fallbackUnverifiedSource = null;
     for (let i = 0; i < activeSources.length; i++) {
       const src = activeSources[i];
       if (!src) continue;
@@ -759,8 +760,14 @@ async function playInMpv(window, options) {
               const ref =
                 resolved.headers?.Referer ||
                 resolved.headers?.referer ||
-                "https://megaplay.buzz/";
-              if (global.setDynamicReferer) {
+                (Animeprovider?.baseUrl ? Animeprovider.baseUrl + "/" : null);
+              if (global.registerSubrequestHeaders && resolved.headers) {
+                global.registerSubrequestHeaders(
+                  streamDomain,
+                  resolved.headers,
+                );
+              }
+              if (ref && global.setDynamicReferer) {
                 global.setDynamicReferer(streamDomain, ref);
                 global.setFallbackReferer(ref);
               }
@@ -793,12 +800,16 @@ async function playInMpv(window, options) {
           );
         }
       } else {
+        if (!fallbackUnverifiedSource) {
+          fallbackUnverifiedSource = src;
+        }
         // For already-resolved URLs, verify reachability
         let isStreamAlive = true;
         if (src.url.startsWith("http")) {
           const checkResult = await verifyStreamReachability(
             src.url,
             src.headers || {},
+            src.isM3U8 !== false,
           );
           if (!checkResult.ok) {
             isStreamAlive = false;
@@ -816,6 +827,18 @@ async function playInMpv(window, options) {
         }
         break;
       }
+    }
+
+    if (!resolvedSuccess && fallbackUnverifiedSource) {
+      logger.warn(
+        `[MPV Startup] All server reachability probes failed or were protected. Proceeding with candidate server "${fallbackUnverifiedSource.name || fallbackUnverifiedSource.quality}".`,
+      );
+      const idx = activeSources.indexOf(fallbackUnverifiedSource);
+      if (idx > 0) {
+        const [fallbackSrc] = activeSources.splice(idx, 1);
+        activeSources.unshift(fallbackSrc);
+      }
+      resolvedSuccess = true;
     }
 
     if (!resolvedSuccess || !activeSources[0]?.url) {
@@ -839,7 +862,7 @@ async function playInMpv(window, options) {
   const activeReferer =
     activeSources[0]?.headers?.Referer ||
     activeSources[0]?.headers?.referer ||
-    "https://megaplay.buzz/";
+    "";
 
   if (Array.isArray(activeSubtitles) && activeSubtitles.length > 0) {
     activeSubtitles = Array.from(
@@ -1875,8 +1898,19 @@ async function playInMpv(window, options) {
                             const ref =
                               resolved.headers?.Referer ||
                               resolved.headers?.referer ||
-                              "https://megaplay.buzz/";
-                            if (global.setDynamicReferer) {
+                              (Animeprovider?.baseUrl
+                                ? Animeprovider.baseUrl + "/"
+                                : null);
+                            if (
+                              global.registerSubrequestHeaders &&
+                              resolved.headers
+                            ) {
+                              global.registerSubrequestHeaders(
+                                streamDomain,
+                                resolved.headers,
+                              );
+                            }
+                            if (ref && global.setDynamicReferer) {
                               global.setDynamicReferer(streamDomain, ref);
                               global.setFallbackReferer(ref);
                             }

@@ -1,17 +1,55 @@
 # Changelog
 
-# [10.1.4] - 2026-10-14
+# [11.0.1] - 2026-10-15
+
+### Downloader & Stream Proxy Fixes
+
+- **Chromium `net::ERR_FAILED` Elimination:** Aligned downloader request headers directly with the stream proxy (`getMediaRequestHeaders`), stripping forbidden browser-internal headers (`sec-*`, `host`, `connection`, `origin` on GET) across `downloader.js` and `electronNetAdapter`.
+- **Domain Agnostic Cloudflare Bypass:** Removed legacy hardcoded domain checks (`owocdn`, `uwucdn`, `kwik`) in favor of generic referer-based Turnstile clearance bypass across `downloader.js` and `media.js`.
+- **Direct Video (.mp4) Downloads:** Added immediate pre-check in `DownloadsChecking` to bypass M3U8 text playlist extraction for direct binary video streams (`.mp4`, `.mkv`, `.webm`), preventing memory exhaustion and socket timeouts.
+- **Resilient Server Reachability Probing:** Improved download server selection in `queue.js` by preserving unverified candidate streams if reachability probes fail or encounter Cloudflare challenges, allowing the downloader's retry and bypass mechanisms to resolve them.
+- **Network Error Clearance Retries:** Enhanced downloader clearance retry logic to detect Chromium network errors (`net::ERR_*`) and automatically trigger clearance refresh.
+- **Dynamic Referer Propagation:** Added automatic referer propagation on variant playlist selection and segment retrieval to prevent 403 Forbidden errors on hosts requiring origin tracking.
+
+### Extension Icons & Namespace Scoping
+
+- **Scoped Extension Icons:** Extension icons are now downloaded and stored within `<RepoOwner>/<ExtensionName>.ico` scoped folders in `ScraperIcons`, eliminating icon collisions across different providers.
+- **Legacy Root Icon Cleanup:** Automatically cleans up obsolete root `.ico` files upon installing or updating scoped extensions.
+
+### Database & Network Stability
+
+- **IPv4 Fallback on Mapping Updater:** Enforced IPv4 socket connections in `mappingUpdater.js` to prevent IPv6 `connect ENETUNREACH` failures when syncing the mapping database from cloud servers.
+
+# [11.0.0] - 2026-10-14
+
+### Decentralized Extensions & Multi-Repo Marketplace
+
+- **Decentralized Extension Repositories:** Anyone can now create, host, and maintain their own StrawVerse extensions repository on GitHub. Add third-party repositories via GitHub repo URL or direct `marketplace.json` link using the new **+ Add Repo** button in the Marketplace.
+- **Scoped Extension Namespaces:** Extensions are installed and loaded into scoped directories (`/Anime/<REPO_OWNER>/<EXTENSION>.js` and `/Manga/<REPO_OWNER>/<EXTENSION>.js`), allowing multiple creators to develop extensions for the same site without file collisions.
+- **Creator Badges & Repository Manager:** Extensions display `@repoOwner` badges (with official verification badges for `@TheYogMehta`). A dedicated **Repos** manager lets you inspect and remove added repositories.
+
+### Extension Security Sandbox
+
+- **Static AST & Code Analysis:** Extensions undergo safety verification before download and installation. Any scraper attempting to access restricted Node.js modules or dangerous operations (`child_process`, `fs`, `worker_threads`, `cluster`, `process.exit`, etc.) is blocked.
+- **Runtime Module Interceptor:** Built-in module resolution blocks extensions from requiring unauthorized system libraries at runtime.
+
+### Core Architecture & Extension Decoupling
+
+- **Decoupled Extension Hooks:** Site-specific logic (such as integrity canary checks and mapping database reporting) has been extracted from the StrawVerse core into generic scraper hooks (`onInfoFetched`, `checkCanary`).
+- **Compatibility Verification:** Marketplace and scraper loader now verify `MinAppVersion` compatibility to ensure extensions match the running StrawVerse version.
+- **Legacy Extension Auto-Cleanup:** Automatically removes obsolete flat extension files from the root scraper directory to prevent duplicate provider loading.
+
+# [10.1.4] - 2026-10-14 (fork)
 
 ### Downloads
 
 - **Dead-Mirror Fast Abort:** 8 auth rejections (403/401/404) with almost nothing downloaded aborts the loop immediately and rotates to another server instead of grinding every segment through retries.
 - **Persisted Dead-Host Skips:** Dead mirror hosts are saved per episode (7-day TTL) and re-applied after restarts. Skips only deprioritize, so an episode can never get permanently bricked.
-- **Subtitles via Platform Stack:** Subtitle files now download through the same platform HTTP path as segments, fixing 403s on WAF-gated subtitle hosts.
 - **Android FFmpeg Lookup:** Native library search covers all mapped `.so` dirs and arch subdirs, fixing "libffmpeg.so not found" remux failures on Android.
 
 ### Streaming
 
-- **Site-Root Clearance Refresh:** CDN clearance now refreshes against the site root (e.g. aniwatchtv.site) instead of per-segment CDN URLs, and reports success/failure so failures fail fast toward server rotation.
+- **Site-Root Clearance Refresh:** CDN clearance refreshes against the site root with success/failure reporting so failures fail fast toward server rotation.
 
 # [10.1.2] - 2026-10-07
 

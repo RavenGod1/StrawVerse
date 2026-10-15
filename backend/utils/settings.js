@@ -392,8 +392,16 @@ async function SettingsLoad() {
       try {
         const { MalRefreshTokenGen } = require("./mal");
         if (typeof MalRefreshTokenGen === "function") {
-          let Tosave = await MalRefreshTokenGen(config.malToken);
-          if (Tosave) await settingupdate(Tosave);
+          MalRefreshTokenGen(config.malToken)
+            .then(async (toSave) => {
+              if (toSave) await settingupdate(toSave);
+            })
+            .catch((malErr) => {
+              logger.error(
+                "Failed to refresh MAL token on settings load: " +
+                  malErr.message,
+              );
+            });
         }
       } catch (malErr) {
         logger.error(
@@ -414,13 +422,13 @@ async function SettingsLoad() {
         logger.error(err);
       }
     }
-  try {
-    configureExternalLogs({
-      enabled: config.externalLogEnabled !== false,
-      maxFiles: config.maxLogFiles,
-      dir: getEffectiveLogDir(),
-    });
-  } catch (_) {}
+    try {
+      configureExternalLogs({
+        enabled: config.externalLogEnabled !== false,
+        maxFiles: config.maxLogFiles,
+        dir: getEffectiveLogDir(),
+      });
+    } catch (_) {}
 
     await settingSave();
   } catch (err) {
@@ -497,7 +505,306 @@ async function CheckScrapperFolderExists() {
   ensureNomediaFile(ScraperIcons);
 }
 
-// Patch Module Path
+// --- Extension Security & Multi-Repo Marketplace Utilities ---
+
+const BLOCKED_MODULES = new Set([
+  "child_process",
+  "worker_threads",
+  "cluster",
+  "v8",
+  "vm",
+  "inspector",
+  "repl",
+  "fs",
+  "fs/promises",
+  "fs-extra",
+  "electron",
+]);
+
+/**
+ * Static security analyzer for extensions.
+ * Verifies that the scraper script does not use dangerous Node.js built-ins,
+ * spawn shell commands, touch the filesystem directly, or attempt process kill/exit.
+ *
+ * @param {string} code - The extension JavaScript code
+ * @returns {{ safe: boolean, reason?: string }}
+ */
+function validateExtensionSafety(code) {
+  if (!code || typeof code !== "string") {
+    return { safe: false, reason: "Empty or invalid extension code." };
+  }
+
+  // 1. Prohibited module requires (child_process, fs, cluster, worker_threads, electron, vm, v8)
+  const forbiddenModules = [
+    "child_process",
+    "cluster",
+    "worker_threads",
+    "inspector",
+    "repl",
+    "fs",
+    "fs/promises",
+    "fs-extra",
+    "electron",
+    "vm",
+    "v8",
+  ];
+
+  for (const mod of forbiddenModules) {
+    const requireRegex = new RegExp(
+      `(?:require|import)\\s*\\(?\\s*['"\`]${mod}(?:\\/[^'"\`]*)?['"\`]\\s*\\)?`,
+      "i",
+    );
+    if (requireRegex.test(code)) {
+      return {
+        safe: false,
+        reason: `Extension attempts to load forbidden module '${mod}'.`,
+      };
+    }
+  }
+
+  // 2. Dangerous process manipulation
+  const processDangerRegex =
+    /\bprocess\s*\.\s*(exit|kill|abort|mainModule|binding|_linkedBinding)\b/i;
+  if (processDangerRegex.test(code)) {
+    return {
+      safe: false,
+      reason:
+        "Extension attempts dangerous process control (process.exit/kill/binding).",
+    };
+  }
+
+  return { safe: true };
+}
+
+const DEFAULT_EXTENSION_REPO = {
+  owner: "TheYogMehta",
+  name: "Official Extensions",
+  url: "https://github.com/TheYogMehta/extensions",
+  marketplaceUrl:
+    "https://raw.githubusercontent.com/TheYogMehta/extensions/refs/heads/main/marketplace.json",
+  rawBaseUrl:
+    "https://raw.githubusercontent.com/TheYogMehta/extensions/refs/heads/main",
+  isDefault: true,
+};
+
+function parseExtensionRepoUrl(inputUrl) {
+  if (!inputUrl || typeof inputUrl !== "string") {
+    throw new Error("Repository URL cannot be empty.");
+  }
+  const cleanUrl = inputUrl.trim();
+
+  // Pattern 1: GitHub repository URL (e.g., https://github.com/owner/repo)
+  const ghRepoMatch = cleanUrl.match(
+    /^https?:\/\/github\.com\/([a-zA-Z0-9_\-]+)\/([a-zA-Z0-9_\-]+)(?:\.git|\/tree\/([a-zA-Z0-9_\-]+)|\/)?$/,
+  );
+  if (ghRepoMatch) {
+    const owner = ghRepoMatch[1];
+    const repoName = ghRepoMatch[2];
+    const branch = ghRepoMatch[3] || "main";
+    const rawBaseUrl = `https://raw.githubusercontent.com/${owner}/${repoName}/${branch}`;
+    return {
+      owner,
+      name: repoName,
+      url: cleanUrl,
+      rawBaseUrl,
+      marketplaceUrl: `${rawBaseUrl}/marketplace.json`,
+      isDefault: owner.toLowerCase() === "theyogmehta",
+    };
+  }
+
+  // Pattern 2: GitHub raw URL ending in marketplace.json
+  const ghRawMatch = cleanUrl.match(
+    /^https?:\/\/raw\.githubusercontent\.com\/([a-zA-Z0-9_\-]+)\/([a-zA-Z0-9_\-]+)\/(?:refs\/heads\/)?([a-zA-Z0-9_\-]+)\/marketplace\.json$/i,
+  );
+  if (ghRawMatch) {
+    const owner = ghRawMatch[1];
+    const repoName = ghRawMatch[2];
+    const rawBaseUrl = cleanUrl.replace(/\/marketplace\.json$/i, "");
+    return {
+      owner,
+      name: repoName,
+      url: cleanUrl,
+      rawBaseUrl,
+      marketplaceUrl: cleanUrl,
+      isDefault: owner.toLowerCase() === "theyogmehta",
+    };
+  }
+
+  // Pattern 3: Generic raw marketplace.json URL
+  if (cleanUrl.endsWith("/marketplace.json") || cleanUrl.endsWith(".json")) {
+    let owner = "custom";
+    try {
+      const parsed = new URL(cleanUrl);
+      const segs = parsed.pathname.split("/").filter(Boolean);
+      if (segs.length >= 2) {
+        owner = segs[0];
+      } else {
+        owner = parsed.hostname.split(".")[0];
+      }
+    } catch (_) {}
+    const rawBaseUrl = cleanUrl.substring(0, cleanUrl.lastIndexOf("/"));
+    return {
+      owner,
+      name: "community-repo",
+      url: cleanUrl,
+      rawBaseUrl,
+      marketplaceUrl: cleanUrl,
+      isDefault: false,
+    };
+  }
+
+  throw new Error(
+    "Invalid repository URL. Please provide a GitHub repository link (e.g. https://github.com/user/repo) or direct URL to marketplace.json.",
+  );
+}
+
+function getExtensionRepos() {
+  const customRepos = config?.custom_extension_repos;
+  const list = [DEFAULT_EXTENSION_REPO];
+  if (Array.isArray(customRepos)) {
+    for (const repo of customRepos) {
+      if (
+        repo &&
+        repo.owner &&
+        repo.owner.toLowerCase() !== DEFAULT_EXTENSION_REPO.owner.toLowerCase()
+      ) {
+        list.push(repo);
+      }
+    }
+  }
+  return list;
+}
+
+async function addExtensionRepo(inputUrl) {
+  const parsed = parseExtensionRepoUrl(inputUrl);
+
+  const currentRepos = getExtensionRepos();
+  const exists = currentRepos.some(
+    (r) =>
+      r.owner.toLowerCase() === parsed.owner.toLowerCase() ||
+      r.marketplaceUrl.toLowerCase() === parsed.marketplaceUrl.toLowerCase(),
+  );
+  if (exists) {
+    throw new Error(
+      `Repository '@${parsed.owner}' (or this marketplace URL) is already added.`,
+    );
+  }
+
+  // Validate that marketplace.json exists and is valid
+  const res = await got(parsed.marketplaceUrl, {
+    timeout: { request: 10000 },
+  }).text();
+  let json = null;
+  try {
+    json = JSON.parse(res);
+  } catch (parseErr) {
+    throw new Error(
+      `Failed to parse marketplace.json from repository: ${parseErr.message}`,
+    );
+  }
+
+  if (!json || (!Array.isArray(json.Anime) && !Array.isArray(json.Manga))) {
+    throw new Error(
+      "Repository marketplace.json must contain 'Anime' or 'Manga' extension arrays.",
+    );
+  }
+
+  const customList = Array.isArray(config?.custom_extension_repos)
+    ? [...config.custom_extension_repos]
+    : [];
+  customList.push(parsed);
+  config.custom_extension_repos = customList;
+  await settingSave();
+
+  const animeCount = json.Anime?.length || 0;
+  const mangaCount = json.Manga?.length || 0;
+  logger.info(
+    `[Marketplace] Added custom extension repo: @${parsed.owner} (${animeCount} anime, ${mangaCount} manga)`,
+  );
+
+  return {
+    success: true,
+    repo: parsed,
+    stats: { anime: animeCount, manga: mangaCount },
+  };
+}
+
+async function removeExtensionRepo(ownerOrUrl) {
+  if (!ownerOrUrl) throw new Error("Repository identifier is required.");
+  if (
+    ownerOrUrl.toLowerCase() === DEFAULT_EXTENSION_REPO.owner.toLowerCase() ||
+    ownerOrUrl.toLowerCase() === DEFAULT_EXTENSION_REPO.url.toLowerCase()
+  ) {
+    throw new Error(
+      "Cannot remove the default StrawVerse official repository.",
+    );
+  }
+
+  const customList = Array.isArray(config?.custom_extension_repos)
+    ? config.custom_extension_repos
+    : [];
+  const initialLen = customList.length;
+  const filtered = customList.filter(
+    (r) =>
+      r.owner.toLowerCase() !== ownerOrUrl.toLowerCase() &&
+      r.url.toLowerCase() !== ownerOrUrl.toLowerCase() &&
+      r.marketplaceUrl.toLowerCase() !== ownerOrUrl.toLowerCase(),
+  );
+
+  if (filtered.length === initialLen) {
+    throw new Error(
+      `Repository '${ownerOrUrl}' not found in custom repositories.`,
+    );
+  }
+
+  config.custom_extension_repos = filtered;
+  await settingSave();
+  logger.info(`[Marketplace] Removed custom extension repo: ${ownerOrUrl}`);
+  return { success: true };
+}
+
+async function fetchAggregatedMarketplace(activeType = "Anime") {
+  const repos = getExtensionRepos();
+  const aggregated = [];
+
+  const results = await Promise.allSettled(
+    repos.map(async (repo) => {
+      try {
+        const text = await got(repo.marketplaceUrl, {
+          timeout: { request: 8000 },
+        }).text();
+        const data = JSON.parse(text);
+        const list = Array.isArray(data[activeType]) ? data[activeType] : [];
+        return list.map((item) => ({
+          ...item,
+          repoOwner: repo.owner,
+          repoName: repo.name,
+          repoBaseUrl: repo.rawBaseUrl,
+          uniqueId: `${repo.owner}/${item.name}`,
+          isDefaultRepo: !!repo.isDefault,
+        }));
+      } catch (err) {
+        logger.warn(
+          `[Marketplace] Failed to fetch marketplace for @${repo.owner}: ${err.message}`,
+        );
+        return [];
+      }
+    }),
+  );
+
+  for (const res of results) {
+    if (res.status === "fulfilled" && Array.isArray(res.value)) {
+      aggregated.push(...res.value);
+    }
+  }
+
+  return {
+    items: aggregated,
+    repos,
+  };
+}
+
+// Patch Module Path with Security Enforcement
 async function patchModulePaths() {
   await CheckScrapperFolderExists();
   try {
@@ -505,17 +812,29 @@ async function patchModulePaths() {
     require("cheerio");
   } catch (_) {}
   const originalResolve = Module._resolveFilename;
+
   Module._resolveFilename = function (request, parent, isMain) {
+    const isScraper =
+      parent &&
+      parent.filename &&
+      (parent.filename.startsWith(ScraperAnime) ||
+        parent.filename.startsWith(ScraperManga));
+
+    if (isScraper && BLOCKED_MODULES.has(request)) {
+      throw new Error(
+        `Extension Security Violation: Module '${request}' is blocked in StrawVerse extensions.`,
+      );
+    }
+
     try {
       return originalResolve.call(this, request, parent, isMain);
     } catch (err) {
-      const isScraper =
-        parent &&
-        parent.filename &&
-        (parent.filename.startsWith(ScraperAnime) ||
-          parent.filename.startsWith(ScraperManga));
-
       if (isScraper) {
+        if (BLOCKED_MODULES.has(request)) {
+          throw new Error(
+            `Extension Security Violation: Module '${request}' is blocked in StrawVerse extensions.`,
+          );
+        }
         try {
           const customPath = path.join(appNodeModules, request);
           return originalResolve.call(this, customPath, parent, isMain);
@@ -526,10 +845,64 @@ async function patchModulePaths() {
   };
 }
 
-// load scrapers
+function isVersionBelow(curr, req) {
+  if (!curr || !req) return false;
+  const cParts = String(curr)
+    .replace(/^v/, "")
+    .split(".")
+    .map((n) => parseInt(n, 10) || 0);
+  const rParts = String(req)
+    .replace(/^v/, "")
+    .split(".")
+    .map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(cParts.length, rParts.length); i++) {
+    const c = cParts[i] || 0;
+    const r = rParts[i] || 0;
+    if (c < r) return true;
+    if (c > r) return false;
+  }
+  return false;
+}
+
+// Auto-cleanup legacy scrapers stored directly under ScraperAnime and ScraperManga root
+function cleanupLegacyRootScrapers() {
+  const folders = [
+    { dir: ScraperAnime, type: "Anime" },
+    { dir: ScraperManga, type: "Manga" },
+  ];
+  for (const { dir, type } of folders) {
+    try {
+      if (!fs.existsSync(dir)) continue;
+      const entries = fs.readdirSync(dir);
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry);
+        try {
+          const stat = fs.statSync(fullPath);
+          if (!stat.isDirectory() && entry.endsWith(".js")) {
+            fs.unlinkSync(fullPath);
+            logger.info(
+              `[Cleanup] Auto-deleted legacy ${type.toLowerCase()} extension from root: ${entry}`,
+            );
+          }
+        } catch (err) {
+          logger.warn(
+            `[Cleanup] Failed to delete legacy ${type.toLowerCase()} file ${entry}: ${err.message}`,
+          );
+        }
+      }
+    } catch (err) {
+      logger.warn(
+        `[Cleanup] Error scanning ${type} directory for legacy files: ${err.message}`,
+      );
+    }
+  }
+}
+
+// load scrapers from scoped directories
 async function loadAllScrapers() {
   try {
     await CheckScrapperFolderExists();
+    cleanupLegacyRootScrapers();
 
     // Development only extension sync for Electron
     if (process.versions?.electron) {
@@ -545,25 +918,33 @@ async function loadAllScrapers() {
           if (fs.existsSync(localExtDir)) {
             const repoAnime = path.join(localExtDir, "Anime");
             if (fs.existsSync(repoAnime)) {
+              const defaultAnimeDir = path.join(ScraperAnime, "TheYogMehta");
+              if (!fs.existsSync(defaultAnimeDir)) {
+                fs.mkdirSync(defaultAnimeDir, { recursive: true });
+              }
               const files = fs
                 .readdirSync(repoAnime)
                 .filter((f) => f.endsWith(".js"));
               for (const f of files) {
                 fs.copyFileSync(
                   path.join(repoAnime, f),
-                  path.join(ScraperAnime, f),
+                  path.join(defaultAnimeDir, f),
                 );
               }
             }
             const repoManga = path.join(localExtDir, "Manga");
             if (fs.existsSync(repoManga)) {
+              const defaultMangaDir = path.join(ScraperManga, "TheYogMehta");
+              if (!fs.existsSync(defaultMangaDir)) {
+                fs.mkdirSync(defaultMangaDir, { recursive: true });
+              }
               const files = fs
                 .readdirSync(repoManga)
                 .filter((f) => f.endsWith(".js"));
               for (const f of files) {
                 fs.copyFileSync(
                   path.join(repoManga, f),
-                  path.join(ScraperManga, f),
+                  path.join(defaultMangaDir, f),
                 );
               }
             }
@@ -574,48 +955,106 @@ async function loadAllScrapers() {
 
     logger.info("Loading all scrapers...");
 
+    const {
+      registerExtension,
+      clearRegisteredExtensions,
+    } = require("./extensionRegistry");
+    clearRegisteredExtensions();
+
     global.Anime_providers = {};
     global.Manga_providers = {};
 
     let animeCount = 0;
     let mangaCount = 0;
 
-    const animeFiles = fs.readdirSync(ScraperAnime);
-    for (const file of animeFiles) {
-      if (file.endsWith(".js")) {
-        const fullPath = path.join(ScraperAnime, file);
+    const loadScraperFile = (fullPath, repoOwner, type) => {
+      try {
+        const code = fs.readFileSync(fullPath, "utf8");
+        const safety = validateExtensionSafety(code);
+        if (!safety.safe) {
+          logger.warn(
+            `[Security] Blocked unsafe scraper ${type}/${repoOwner}/${path.basename(fullPath)}: ${safety.reason}`,
+          );
+          return null;
+        }
+
         try {
           delete require.cache[require.resolve(fullPath)];
-          const scraper = require(fullPath);
-          if (scraper?.name) {
-            global.Anime_providers[scraper.name] = scraper;
-            animeCount++;
-            logger.info(`Loaded anime scraper: ${scraper.name}`);
-          } else {
-            logger.warn(`Scraper missing 'name' export: ${file}`);
+        } catch (_) {}
+
+        const scraper = require(fullPath);
+        if (scraper?.name) {
+          const { getCurrentAppVersion } = require("./constants");
+          const currentAppVer = getCurrentAppVersion();
+          const requiredAppVer = scraper.minAppVersion || scraper.MinAppVersion;
+          if (requiredAppVer && isVersionBelow(currentAppVer, requiredAppVer)) {
+            logger.warn(
+              `[Compatibility] Skipping scraper ${type}/${repoOwner}/${scraper.name}: requires StrawVerse v${requiredAppVer}+ (current: v${currentAppVer})`,
+            );
+            return null;
           }
-        } catch (err) {
-          logger.error(`Failed to load anime scraper ${file}: ${err.message}`);
+
+          scraper.repoOwner = repoOwner;
+          scraper.uniqueId = `${repoOwner}/${scraper.name}`;
+          scraper.filePath = fullPath;
+
+          const targetProviders =
+            type === "Anime" ? global.Anime_providers : global.Manga_providers;
+          targetProviders[scraper.uniqueId] = scraper;
+
+          if (!targetProviders[scraper.name] || repoOwner === "TheYogMehta") {
+            targetProviders[scraper.name] = scraper;
+          }
+
+          registerExtension(scraper);
+          return scraper;
+        } else {
+          logger.warn(`Scraper missing 'name' export: ${fullPath}`);
+        }
+      } catch (err) {
+        logger.error(
+          `Failed to load ${type.toLowerCase()} scraper ${path.basename(fullPath)} from @${repoOwner}: ${err.message}`,
+        );
+      }
+      return null;
+    };
+
+    // 1. Scan ScraperAnime (scoped subdirectories only: ScraperAnime/<repoOwner>/*.js)
+    const animeEntries = fs.readdirSync(ScraperAnime);
+    for (const entry of animeEntries) {
+      const fullPath = path.join(ScraperAnime, entry);
+      const stat = fs.statSync(fullPath);
+      if (stat.isDirectory()) {
+        if (entry === "icons" || entry.startsWith(".")) continue;
+        const subFiles = fs.readdirSync(fullPath);
+        for (const sf of subFiles) {
+          if (sf.endsWith(".js")) {
+            const sc = loadScraperFile(path.join(fullPath, sf), entry, "Anime");
+            if (sc) {
+              animeCount++;
+              logger.info(`Loaded anime scraper: ${sc.name} (@${entry})`);
+            }
+          }
         }
       }
     }
 
-    const mangaFiles = fs.readdirSync(ScraperManga);
-    for (const file of mangaFiles) {
-      if (file.endsWith(".js")) {
-        const fullPath = path.join(ScraperManga, file);
-        try {
-          delete require.cache[require.resolve(fullPath)];
-          const scraper = require(fullPath);
-          if (scraper?.name) {
-            global.Manga_providers[scraper.name] = scraper;
-            mangaCount++;
-            logger.info(`Loaded manga scraper: ${scraper.name}`);
-          } else {
-            logger.warn(`Scraper missing 'name' export: ${file}`);
+    // 2. Scan ScraperManga (scoped subdirectories only: ScraperManga/<repoOwner>/*.js)
+    const mangaEntries = fs.readdirSync(ScraperManga);
+    for (const entry of mangaEntries) {
+      const fullPath = path.join(ScraperManga, entry);
+      const stat = fs.statSync(fullPath);
+      if (stat.isDirectory()) {
+        if (entry === "icons" || entry.startsWith(".")) continue;
+        const subFiles = fs.readdirSync(fullPath);
+        for (const sf of subFiles) {
+          if (sf.endsWith(".js")) {
+            const sc = loadScraperFile(path.join(fullPath, sf), entry, "Manga");
+            if (sc) {
+              mangaCount++;
+              logger.info(`Loaded manga scraper: ${sc.name} (@${entry})`);
+            }
           }
-        } catch (err) {
-          logger.error(`Failed to load manga scraper ${file}: ${err.message}`);
         }
       }
     }
@@ -636,8 +1075,20 @@ async function loadAllScrapers() {
 function notifyScrapersUpdated() {
   try {
     if (global.sendToRenderer) {
-      const cleanAnime = Object.keys(global.Anime_providers || {});
-      const cleanManga = Object.keys(global.Manga_providers || {});
+      const cleanAnime = Array.from(
+        new Set(
+          Object.values(global.Anime_providers || {}).map(
+            (p) => p.uniqueId || p.name,
+          ),
+        ),
+      );
+      const cleanManga = Array.from(
+        new Set(
+          Object.values(global.Manga_providers || {}).map(
+            (p) => p.uniqueId || p.name,
+          ),
+        ),
+      );
       global.sendToRenderer("scrapers-updated", {
         anime: cleanAnime,
         manga: cleanManga,
@@ -648,14 +1099,36 @@ function notifyScrapersUpdated() {
   }
 }
 
-async function loadSingleScraper(AnimeManga, ExtensionName) {
+async function loadSingleScraper(
+  AnimeManga,
+  ExtensionName,
+  RepoOwner = "TheYogMehta",
+) {
   try {
     await CheckScrapperFolderExists();
     const folder = AnimeManga === "Anime" ? ScraperAnime : ScraperManga;
-    const fullPath = path.join(folder, `${ExtensionName}.js`);
+    const scopedPath = path.join(folder, RepoOwner, `${ExtensionName}.js`);
+    const flatPath = path.join(folder, `${ExtensionName}.js`);
 
-    if (!fs.existsSync(fullPath)) {
-      logger.error(`Scraper file not found: ${fullPath}`);
+    if (fs.existsSync(flatPath)) {
+      try {
+        fs.unlinkSync(flatPath);
+        logger.info(`[Cleanup] Auto-deleted legacy root file: ${flatPath}`);
+      } catch (_) {}
+    }
+
+    if (!fs.existsSync(scopedPath)) {
+      logger.error(`Scraper file not found: ${scopedPath}`);
+      return;
+    }
+    const fullPath = scopedPath;
+
+    const code = fs.readFileSync(fullPath, "utf8");
+    const safety = validateExtensionSafety(code);
+    if (!safety.safe) {
+      logger.warn(
+        `[Security] Blocked unsafe scraper ${fullPath}: ${safety.reason}`,
+      );
       return;
     }
 
@@ -665,13 +1138,34 @@ async function loadSingleScraper(AnimeManga, ExtensionName) {
 
     const scraper = require(fullPath);
     if (scraper?.name) {
-      if (AnimeManga === "Anime") {
-        global.Anime_providers[scraper.name] = scraper;
-      } else {
-        global.Manga_providers[scraper.name] = scraper;
+      const { getCurrentAppVersion } = require("./constants");
+      const currentAppVer = getCurrentAppVersion();
+      const requiredAppVer = scraper.minAppVersion || scraper.MinAppVersion;
+      if (requiredAppVer && isVersionBelow(currentAppVer, requiredAppVer)) {
+        logger.warn(
+          `[Compatibility] Skipping scraper ${AnimeManga}/${RepoOwner}/${scraper.name}: requires StrawVerse v${requiredAppVer}+ (current: v${currentAppVer})`,
+        );
+        return;
       }
+
+      scraper.repoOwner = RepoOwner;
+      scraper.uniqueId = `${RepoOwner}/${scraper.name}`;
+      scraper.filePath = fullPath;
+
+      const targetProviders =
+        AnimeManga === "Anime"
+          ? global.Anime_providers
+          : global.Manga_providers;
+      targetProviders[scraper.uniqueId] = scraper;
+      if (!targetProviders[scraper.name] || RepoOwner === "TheYogMehta") {
+        targetProviders[scraper.name] = scraper;
+      }
+
+      const { registerExtension } = require("./extensionRegistry");
+      registerExtension(scraper);
+
       logger.info(
-        `Loaded/Reloaded ${AnimeManga.toLowerCase()} scraper: ${scraper.name}`,
+        `Loaded/Reloaded ${AnimeManga.toLowerCase()} scraper: ${scraper.name} (@${RepoOwner})`,
       );
       notifyScrapersUpdated();
       await reconcileActiveProvider(AnimeManga);
@@ -685,15 +1179,32 @@ async function loadSingleScraper(AnimeManga, ExtensionName) {
   }
 }
 
-async function unloadSingleScraper(AnimeManga, ExtensionName) {
+async function unloadSingleScraper(
+  AnimeManga,
+  ExtensionName,
+  RepoOwner = "TheYogMehta",
+) {
   try {
-    if (AnimeManga === "Anime") {
-      delete global.Anime_providers[ExtensionName];
-    } else {
-      delete global.Manga_providers[ExtensionName];
+    const targetProviders =
+      AnimeManga === "Anime" ? global.Anime_providers : global.Manga_providers;
+    const uniqueId = `${RepoOwner}/${ExtensionName}`;
+    delete targetProviders[uniqueId];
+
+    if (targetProviders[ExtensionName]?.repoOwner === RepoOwner) {
+      delete targetProviders[ExtensionName];
+      const remaining = Object.values(targetProviders).find(
+        (p) => p.name === ExtensionName,
+      );
+      if (remaining) {
+        targetProviders[ExtensionName] = remaining;
+      }
     }
+
+    const { unregisterExtension } = require("./extensionRegistry");
+    unregisterExtension(ExtensionName);
+
     logger.info(
-      `Unloaded ${AnimeManga.toLowerCase()} scraper: ${ExtensionName}`,
+      `Unloaded ${AnimeManga.toLowerCase()} scraper: ${ExtensionName} (@${RepoOwner})`,
     );
     await reconcileActiveProvider(AnimeManga);
     notifyScrapersUpdated();
@@ -702,64 +1213,177 @@ async function unloadSingleScraper(AnimeManga, ExtensionName) {
   }
 }
 
-// Download / Delete Scrapper
-async function HandleExtensions(TaskType, AnimeManga, ExtensionName) {
+// Download / Delete Scraper with scoped directory support, MinAppVersion & security check
+async function HandleExtensions(
+  TaskType,
+  AnimeManga,
+  ExtensionName,
+  RepoOwner = "TheYogMehta",
+  RepoBaseUrl,
+  MinAppVersion,
+) {
   await CheckScrapperFolderExists();
-  const extensionPath = path.join(
-    AnimeManga === "Anime" ? ScraperAnime : ScraperManga,
-    `${ExtensionName}.js`,
-  );
+  const folder = AnimeManga === "Anime" ? ScraperAnime : ScraperManga;
+  const ownerDir = path.join(folder, RepoOwner);
+  if (!fs.existsSync(ownerDir)) {
+    fs.mkdirSync(ownerDir, { recursive: true });
+  }
+
+  const extensionPath = path.join(ownerDir, `${ExtensionName}.js`);
+  const legacyPath = path.join(folder, `${ExtensionName}.js`);
+
+  const rawBase =
+    RepoBaseUrl ||
+    "https://raw.githubusercontent.com/TheYogMehta/extensions/refs/heads/main";
+
   if (TaskType === "add") {
     try {
-      const response = await got(
-        `https://raw.githubusercontent.com/TheYogMehta/extensions/refs/heads/main/extensions/${AnimeManga}/${ExtensionName}.js`,
-      ).text();
+      // 1. MinAppVersion compatibility check
+      if (MinAppVersion) {
+        const { getCurrentAppVersion } = require("./constants");
+        const currentAppVer = getCurrentAppVersion();
+        if (isVersionBelow(currentAppVer, MinAppVersion)) {
+          return {
+            type: "error",
+            title: "App Update Required",
+            message: `This extension requires StrawVerse v${MinAppVersion} or higher (current: v${currentAppVer}). Please update your app to install.`,
+          };
+        }
+      }
+
+      const extScriptUrl = `${rawBase.replace(/\/$/, "")}/extensions/${AnimeManga}/${ExtensionName}.js`;
+      const directScriptUrl = `${rawBase.replace(/\/$/, "")}/${AnimeManga}/${ExtensionName}.js`;
+      let scriptUrl = extScriptUrl;
+      let response;
+
+      try {
+        response = await got(extScriptUrl, {
+          timeout: { request: 15000 },
+        }).text();
+      } catch (err) {
+        try {
+          response = await got(directScriptUrl, {
+            timeout: { request: 15000 },
+          }).text();
+          scriptUrl = directScriptUrl;
+        } catch (_) {
+          throw err;
+        }
+      }
 
       if (response.includes("404: Not Found")) {
         return {
           type: "error",
-          title: "Scrapper Not Found",
-          message: "Check Your Connection & Try Again",
+          title: "Scraper Not Found",
+          message: `Scraper script not found at ${scriptUrl}`,
+        };
+      }
+
+      // Security Safety Check
+      const safety = validateExtensionSafety(response);
+      if (!safety.safe) {
+        logger.warn(
+          `[Security] Rejected unsafe scraper ${AnimeManga}/${RepoOwner}/${ExtensionName}: ${safety.reason}`,
+        );
+        return {
+          type: "error",
+          title: "Security Verification Failed",
+          message: safety.reason,
         };
       }
 
       await fs.promises.writeFile(extensionPath, response);
 
+      // Auto-clean any legacy root scraper file if present
+      if (fs.existsSync(legacyPath)) {
+        try {
+          fs.unlinkSync(legacyPath);
+          logger.info(`[Cleanup] Auto-deleted legacy root file: ${legacyPath}`);
+        } catch (_) {}
+      }
+
       try {
-        const iconUrl = `https://raw.githubusercontent.com/TheYogMehta/extensions/refs/heads/main/ico/${ExtensionName}.ico`;
-        const iconDest = path.join(ScraperIcons, `${ExtensionName}.ico`);
-        const iconBuffer = await got(iconUrl, {
-          responseType: "buffer",
-        }).buffer();
+        const repoIconDir = path.join(ScraperIcons, RepoOwner);
+        if (!fs.existsSync(repoIconDir)) {
+          fs.mkdirSync(repoIconDir, { recursive: true });
+        }
+        const iconDest = path.join(repoIconDir, `${ExtensionName}.ico`);
+        const legacyIconDest = path.join(ScraperIcons, `${ExtensionName}.ico`);
+        if (fs.existsSync(legacyIconDest)) {
+          try {
+            fs.unlinkSync(legacyIconDest);
+            logger.info(
+              `[Cleanup] Auto-deleted legacy root icon: ${legacyIconDest}`,
+            );
+          } catch (_) {}
+        }
+        const iconUrl = `${rawBase.replace(/\/$/, "")}/ico/${ExtensionName}.ico`;
+        let iconBuffer;
+        try {
+          iconBuffer = await got(iconUrl, {
+            responseType: "buffer",
+            timeout: { request: 8000 },
+          }).buffer();
+        } catch (_) {
+          const fallbackIconUrl = `${rawBase.replace(/\/$/, "")}/extensions/ico/${ExtensionName}.ico`;
+          iconBuffer = await got(fallbackIconUrl, {
+            responseType: "buffer",
+            timeout: { request: 8000 },
+          }).buffer();
+        }
         if (iconBuffer && iconBuffer.length > 0) {
           await fs.promises.writeFile(iconDest, iconBuffer);
         }
       } catch (iconErr) {}
 
-      await loadSingleScraper(AnimeManga, ExtensionName);
+      await loadSingleScraper(AnimeManga, ExtensionName, RepoOwner);
       return {
         type: "success",
-        title: `Added ${AnimeManga} Extention!`,
-        message: `${ExtensionName} is Added SuccessFully`,
+        title: `Added ${AnimeManga} Extension!`,
+        message: `${ExtensionName} (by @${RepoOwner}) is added successfully`,
       };
     } catch (err) {
-      logger.error(`Failed to add scraper ${ExtensionName}: ${err.message}`);
+      logger.error(
+        `Failed to add scraper ${ExtensionName} (@${RepoOwner}): ${err.message}`,
+      );
       return {
         type: "error",
-        title: `Failed to Add ${AnimeManga} Extention!`,
+        title: `Failed to Add ${AnimeManga} Extension!`,
         message: err.message,
       };
     }
   } else if (TaskType === "remove" || TaskType === "delete") {
     try {
-      if (!fs.existsSync(extensionPath)) {
+      let removed = false;
+      if (fs.existsSync(extensionPath)) {
+        fs.unlinkSync(extensionPath);
+        removed = true;
+      }
+      if (fs.existsSync(legacyPath)) {
+        try {
+          fs.unlinkSync(legacyPath);
+          removed = true;
+        } catch (_) {}
+      }
+
+      if (!removed) {
         return {
           type: "error",
           title: "Scraper Not Found",
-          message: `${ExtensionName} is not installed`,
+          message: `${ExtensionName} (@${RepoOwner}) is not installed`,
         };
       }
-      fs.unlinkSync(extensionPath);
+
+      const scopedIconPath = path.join(
+        ScraperIcons,
+        RepoOwner,
+        `${ExtensionName}.ico`,
+      );
+      if (fs.existsSync(scopedIconPath)) {
+        try {
+          fs.unlinkSync(scopedIconPath);
+        } catch (_) {}
+      }
       const iconPath = path.join(ScraperIcons, `${ExtensionName}.ico`);
       if (fs.existsSync(iconPath)) {
         try {
@@ -767,17 +1391,19 @@ async function HandleExtensions(TaskType, AnimeManga, ExtensionName) {
         } catch (_) {}
       }
 
-      await unloadSingleScraper(AnimeManga, ExtensionName);
+      await unloadSingleScraper(AnimeManga, ExtensionName, RepoOwner);
       return {
         type: "success",
-        title: `Removed ${AnimeManga} Extention!`,
-        message: `${ExtensionName} is Removed SuccessFully`,
+        title: `Removed ${AnimeManga} Extension!`,
+        message: `${ExtensionName} (by @${RepoOwner}) is removed successfully`,
       };
     } catch (err) {
-      logger.error(`Failed to remove scraper ${ExtensionName}: ${err.message}`);
+      logger.error(
+        `Failed to remove scraper ${ExtensionName} (@${RepoOwner}): ${err.message}`,
+      );
       return {
         type: "error",
-        title: `Failed to Remove ${AnimeManga} Extention!`,
+        title: `Failed to Remove ${AnimeManga} Extension!`,
         message: err.message,
       };
     }
@@ -897,4 +1523,12 @@ module.exports = {
   isLanguagePreferred,
   getEffectiveLogDir,
   getScraperIconsPath: () => ScraperIcons,
+  validateExtensionSafety,
+  getExtensionRepos,
+  addExtensionRepo,
+  removeExtensionRepo,
+  fetchAggregatedMarketplace,
+  parseExtensionRepoUrl,
+  getDefaultExtensionRepo: () => DEFAULT_EXTENSION_REPO,
+  isVersionBelow,
 };

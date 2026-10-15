@@ -1,5 +1,6 @@
 const { queryOne, run } = require("./db");
 const { logger } = require("./AppLogger");
+const { getCanonicalDomain } = require("./extensionRegistry");
 
 const cache = {};
 const circuitBreaker = {};
@@ -109,12 +110,7 @@ function extractDomain(urlStr, refererStr) {
   }
 
   if (!hostname) return "default";
-
-  if (hostname.includes("owocdn") || hostname.includes("uwucdn")) {
-    return "kwik.cx";
-  } else if (hostname.includes("animepahe")) {
-    return "animepahe";
-  }
+  hostname = getCanonicalDomain(hostname);
 
   const parts = hostname.split(".");
   if (parts.length > 2) {
