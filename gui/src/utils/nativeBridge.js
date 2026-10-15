@@ -273,8 +273,23 @@ function createPolyfill() {
     marketplace: (AnimeManga) => {
       invoke("marketplace", AnimeManga).catch(() => {});
     },
-    extensions: (TaskType, AnimeManga, ExtentionName) =>
-      invoke("extensions", TaskType, AnimeManga, ExtentionName),
+    extensions: (
+      TaskType,
+      AnimeManga,
+      ExtentionName,
+      RepoOwner,
+      RepoBaseUrl,
+      MinAppVersion,
+    ) =>
+      invoke(
+        "extensions",
+        TaskType,
+        AnimeManga,
+        ExtentionName,
+        RepoOwner,
+        RepoBaseUrl,
+        MinAppVersion,
+      ),
     checkWhatsNew: () => invoke("check-whats-new"),
     disableWhatsNew: () => invoke("disable-whats-new"),
     ensureCfBypass: (url, referer) => invoke("ensure-cf-bypass", url, referer),

@@ -587,6 +587,28 @@ async function boot() {
   global.cloudflarebypass = async (targetUrl, silent, referer, userAgent) => {
     if (!targetUrl) return;
     const domain = normalizeHostname(new URL(targetUrl).hostname).toLowerCase();
+    // Embed-only player pages refuse direct loads, so a bypass WebView can
+    // never yield clearance there. Fail fast so callers rotate servers
+    // instead of waiting out the 120s cookie poll.
+    try {
+      const navParsed = new URL(targetUrl);
+      const navHost = navParsed.hostname.toLowerCase();
+      const isPlayerHost = [
+        "megavid.",
+        "megaplay.",
+        "vidplay",
+        "vidstream",
+        "megacloud.",
+        "vidcloud.",
+        "voe.",
+        "doodstream",
+        "dood.",
+      ].some((h) => navHost.includes(h));
+      if (isPlayerHost && navParsed.pathname !== "/") {
+        console.warn(`[Bypass] Embed-only player URL (${targetUrl}). Skipping bypass.`);
+        return false;
+      }
+    } catch (_) {}
     if (activeBypasses.has(domain)) return activeBypasses.get(domain);
 
     const bypassPromise = (async () => {
@@ -721,12 +743,22 @@ async function boot() {
 
   router.post("/api/extensions", async (req, res) => {
     try {
-      const [TaskType, AnimeManga, ExtentionName] = req.body.args || [];
+      const [
+        TaskType,
+        AnimeManga,
+        ExtentionName,
+        RepoOwner,
+        RepoBaseUrl,
+        MinAppVersion,
+      ] = req.body.args || [];
       const { HandleExtensions } = require("../../../backend/utils/settings");
       const result = await HandleExtensions(
         TaskType,
         AnimeManga,
         ExtentionName,
+        RepoOwner,
+        RepoBaseUrl,
+        MinAppVersion,
       );
       res.json({ ok: true, result });
     } catch (e) {
