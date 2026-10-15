@@ -34,3 +34,4 @@ app.log
 *.db-journal
 *.db-wal
 *.db-shm
+**/libffmpeg.so
