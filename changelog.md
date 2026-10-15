@@ -1,8 +1,36 @@
 # Changelog
 
+# [11.0.2] - 2026-10-16
+
+### Video Player & Streaming
+
+- **Faster Video Playback:** Direct video streams (`.mp4`, `.mkv`) and local files now open and seek instantly in MPV without buffering delays.
+- **Fixed Crash on Titles with Commas:** Fixed an issue where anime titles or folder paths containing commas caused the video player to fail on launch.
+- **Instant Local File Playback:** Fixed an issue where locally downloaded files would show a loading spinner on startup instead of playing immediately.
+- **Subtitle Fixes:** Subtitle tracks now load reliably and display correctly for preferred languages.
+- **Protected Stream Support:** Improved playback reliability for protected media hosts, preventing 403 playback errors.
+
+### Downloads & Library
+
+- **Fast Multi-Part Downloads:** Direct video files (`.mp4`, `.mkv`) now download in parallel chunks with automatic resume support and accurate speed and progress tracking.
+- **Protected Server Downloads:** Fixed download failures and 403 errors on protected video servers.
+- **Open in File Manager:** Clicking the folder button on downloaded episodes and chapters now opens your system file manager (Explorer, Thunar/Dolphin, or Android Files) instead of opening a media player like VLC.
+
+### User Interface
+
+- **Clean Source Switcher:** The source provider selector now only displays providers that have verified mappings for the current title, hiding unmapped extensions.
+
+### Android Mobile
+
+- **Engine Boot Fix:** Resolved an engine crash on Android during app startup.
+
+### Background Checks
+
+- **Fewer Verification Windows:** Background site integrity checks now run only for your active providers, preventing inactive scrapers from opening Cloudflare verification windows while watching videos.
+
 # [11.0.1] - 2026-10-15
 
-### Downloader & Stream Proxy Fixes
+### Downloader & Network Improvements
 
 - **Chromium `net::ERR_FAILED` Elimination:** Aligned downloader request headers directly with the stream proxy (`getMediaRequestHeaders`), stripping forbidden browser-internal headers (`sec-*`, `host`, `connection`, `origin` on GET) across `downloader.js` and `electronNetAdapter`.
 - **Domain Agnostic Cloudflare Bypass:** Removed legacy hardcoded domain checks (`owocdn`, `uwucdn`, `kwik`) in favor of generic referer-based Turnstile clearance bypass across `downloader.js` and `media.js`.

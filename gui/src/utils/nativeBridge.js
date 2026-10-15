@@ -285,7 +285,7 @@ function createPolyfill() {
     downloadUpdate: () => invoke("download-update"),
     installUpdate: () => invoke("install-update"),
     getAppVersion: () => invoke("get-app-version"),
-    openLocalPath: (targetPath, openFolder) =>
+    openLocalPath: (targetPath, openFolder = true) =>
       invoke("open-local-path", {
         customPath: targetPath,
         action: openFolder ? "open_folder" : "open_file",

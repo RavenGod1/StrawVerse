@@ -89,6 +89,7 @@ async function prepareSubtitles(validSubs, activeReferer) {
 
   const results = await Promise.allSettled(
     validSubs.map(async (sub, idx) => {
+      const cleanLang = formatSubtitleLabel(sub, idx);
       let rawUrl = resolvePathOrUrl(sub.url);
       if (rawUrl && rawUrl.startsWith("/subtitles?file=")) {
         const decodedPath = decodeURIComponent(
@@ -187,8 +188,17 @@ const getMpvPath = () => {
       platformDir,
       exeName,
     );
-    if (fs.existsSync(devPathOuter)) {
-      return devPathOuter;
+    const devPathRel = path.join(
+      __dirname,
+      "..",
+      "..",
+      "electron",
+      "mpv",
+      platformDir,
+      exeName,
+    );
+    if (fs.existsSync(devPathRel)) {
+      return devPathRel;
     }
   } catch (e) {}
 
@@ -217,6 +227,17 @@ const getMpvConfigDir = () => {
     const devPathOuter = path.join(app.getAppPath(), "..", "mpv", "config");
     if (fs.existsSync(devPathOuter)) {
       return devPathOuter;
+    }
+    const devConfigRel = path.join(
+      __dirname,
+      "..",
+      "..",
+      "electron",
+      "mpv",
+      "config",
+    );
+    if (fs.existsSync(devConfigRel)) {
+      return devConfigRel;
     }
   } catch (e) {}
 
@@ -803,6 +824,11 @@ async function playInMpv(window, options) {
         if (!fallbackUnverifiedSource) {
           fallbackUnverifiedSource = src;
         }
+        // If there's only 1 source, skip reachability probe to eliminate latency
+        if (activeSources.length === 1) {
+          resolvedSuccess = true;
+          break;
+        }
         // For already-resolved URLs, verify reachability
         let isStreamAlive = true;
         if (src.url.startsWith("http")) {
@@ -811,10 +837,14 @@ async function playInMpv(window, options) {
             src.headers || {},
             src.isM3U8 !== false,
           );
-          if (!checkResult.ok) {
+          if (!checkResult.ok && !checkResult.isProtected) {
             isStreamAlive = false;
             logger.warn(
               `[MPV Startup] Server #${i + 1} "${src.name || src.quality}" check failed (${checkResult.message}). Trying next server...`,
+            );
+          } else if (checkResult.isProtected) {
+            logger.info(
+              `[MPV Startup] Server #${i + 1} "${src.name || src.quality}" is protected (${checkResult.message}). Proceeding as viable candidate.`,
             );
           }
         }
@@ -913,9 +943,13 @@ async function playInMpv(window, options) {
 
   const resolvedUrl = resolvePathOrUrl(playTargetUrl);
   const isExternal = resolvedUrl.startsWith("http");
-  const playUrl = isExternal
-    ? toProxyUrl(resolvedUrl, activeSources[0]?.headers)
-    : resolvedUrl;
+  const isDirectVideo = Boolean(
+    resolvedUrl.split("?")[0].match(/\.(mp4|mkv|webm|mov|avi)$/i),
+  );
+  const playUrl =
+    isExternal && !isDirectVideo
+      ? toProxyUrl(resolvedUrl, activeSources[0]?.headers)
+      : resolvedUrl;
   const ipcPath = getIpcPath();
   const configDir = getMpvConfigDir();
   let shortTitle = title || "Anime";
@@ -965,6 +999,27 @@ async function playInMpv(window, options) {
     `--sub-visibility=${options.subsEnabled === false ? "no" : "yes"}`,
     `--brightness=${options.brightness || 0}`,
   ];
+
+  const activeUserAgent =
+    activeSources[0]?.headers?.["User-Agent"] ||
+    activeSources[0]?.headers?.["user-agent"] ||
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+  if (activeReferer) {
+    args.push(`--referrer=${activeReferer}`);
+    args.push(`--http-header-fields=Referer: ${activeReferer}`);
+  }
+  args.push(`--http-header-fields=User-Agent: ${activeUserAgent}`);
+  args.push(`--user-agent=${activeUserAgent}`);
+
+  if (activeSources[0]?.headers) {
+    for (const [hk, hv] of Object.entries(activeSources[0].headers)) {
+      const hkl = hk.toLowerCase();
+      if (hkl !== "referer" && hkl !== "user-agent" && typeof hv === "string") {
+        args.push(`--http-header-fields=${hk}: ${hv}`);
+      }
+    }
+  }
 
   if (options.hasNext === undefined || options.hasPrev === undefined) {
     let computedHasNext = true;
@@ -1027,14 +1082,22 @@ async function playInMpv(window, options) {
     );
   }
 
+  let sourcesStr = "";
   if (activeSources && activeSources.length > 0) {
-    const sourcesStr = activeSources
+    sourcesStr = activeSources
       .filter((s) => s && (s.url || s.name || s.quality))
       .map((s) => {
         const name = s.quality || s.name || "Server";
         if (s.url) {
           const sUrl = resolvePathOrUrl(s.url);
-          return `${name}|${sUrl.startsWith("http") ? toProxyUrl(sUrl) : sUrl}`;
+          const isDirect = Boolean(
+            sUrl.split("?")[0].match(/\.(mp4|mkv|webm|mov|avi)$/i),
+          );
+          const finalUrl =
+            isDirect || !sUrl.startsWith("http")
+              ? sUrl
+              : toProxyUrl(sUrl, s.headers);
+          return `${name}|${finalUrl}`;
         }
         return `${name}|unresolved:${name}`;
       })
@@ -1131,7 +1194,15 @@ async function playInMpv(window, options) {
   scriptOpts.push(`modernx-subdub=${subdub || "sub"}`);
 
   scriptOpts.forEach((opt) => {
-    args.push(`--script-opts-add=${opt}`);
+    const eqIdx = opt.indexOf("=");
+    if (eqIdx !== -1) {
+      const key = opt.slice(0, eqIdx);
+      const val = opt.slice(eqIdx + 1);
+      const safeVal = val.replace(/,/g, "%2C");
+      args.push(`--script-opts-add=${key}=${safeVal}`);
+    } else {
+      args.push(`--script-opts-add=${opt}`);
+    }
   });
 
   if (startSeek > 0) {
@@ -1356,12 +1427,40 @@ async function playInMpv(window, options) {
         .catch(() => {});
 
       scriptOpts.forEach((opt) => {
+        const eqIdx = opt.indexOf("=");
+        if (eqIdx !== -1) {
+          const key = opt.slice(0, eqIdx);
+          const val = opt.slice(eqIdx + 1);
+          const safeVal = val.replace(/,/g, "%2C");
+          client.write(
+            JSON.stringify({
+              command: [
+                "change-list",
+                "script-opts",
+                "append",
+                `${key}=${safeVal}`,
+              ],
+            }) + "\n",
+          );
+        } else {
+          client.write(
+            JSON.stringify({
+              command: ["change-list", "script-opts", "append", opt],
+            }) + "\n",
+          );
+        }
+      });
+      if (sourcesStr) {
         client.write(
           JSON.stringify({
-            command: ["change-list", "script-opts", "append", opt],
+            command: [
+              "set_property",
+              "user-data/strawverse-sources",
+              sourcesStr,
+            ],
           }) + "\n",
         );
-      });
+      }
 
       client.write(JSON.stringify({ command: ["sub-remove"] }) + "\n");
       if (Array.isArray(activeSubtitles)) {
@@ -1396,6 +1495,34 @@ async function playInMpv(window, options) {
         window.webContents.send("mpv-loading", { episode, title });
       }
 
+      const headerFields = [];
+      if (activeReferer) {
+        client.write(
+          JSON.stringify({
+            command: ["set_property", "referrer", activeReferer],
+          }) + "\n",
+        );
+        headerFields.push(`Referer: ${activeReferer}`);
+      }
+      headerFields.push(`User-Agent: ${activeUserAgent}`);
+      if (activeSources[0]?.headers) {
+        for (const [hk, hv] of Object.entries(activeSources[0].headers)) {
+          const hkl = hk.toLowerCase();
+          if (
+            hkl !== "referer" &&
+            hkl !== "user-agent" &&
+            typeof hv === "string"
+          ) {
+            headerFields.push(`${hk}: ${hv}`);
+          }
+        }
+      }
+      client.write(
+        JSON.stringify({
+          command: ["set_property", "http-header-fields", headerFields],
+        }) + "\n",
+      );
+
       client.write(
         JSON.stringify({ command: ["loadfile", playUrl, "replace"] }) + "\n",
       );
@@ -1407,6 +1534,14 @@ async function playInMpv(window, options) {
           }) + "\n",
         );
       }
+      client.write(
+        JSON.stringify({
+          command: ["set_property", "user-data/strawverse-loading", ""],
+        }) + "\n",
+      );
+      client.write(
+        JSON.stringify({ command: ["set_property", "pause", false] }) + "\n",
+      );
 
       return { success: true, reused: true };
     } catch (e) {
@@ -1574,10 +1709,14 @@ async function playInMpv(window, options) {
   try {
     client = await connectIpc(ipcPath);
     global.activeMpvClient = client;
+    logger.info(`[MPV IPC] Successfully connected to IPC socket: ${ipcPath}`);
     client.write(
       JSON.stringify({
         command: ["set_property", "user-data/strawverse-loading", ""],
       }) + "\n",
+    );
+    client.write(
+      JSON.stringify({ command: ["set_property", "pause", false] }) + "\n",
     );
     const activeServerName =
       activeSources[0]?.name || activeSources[0]?.quality || "Server 1";
@@ -1590,6 +1729,13 @@ async function playInMpv(window, options) {
         ],
       }) + "\n",
     );
+    if (sourcesStr) {
+      client.write(
+        JSON.stringify({
+          command: ["set_property", "user-data/strawverse-sources", sourcesStr],
+        }) + "\n",
+      );
+    }
 
     skipTimesPromise
       .then((st) => {
@@ -1939,10 +2085,14 @@ async function playInMpv(window, options) {
                     if (finalServer && finalServer.url) {
                       const serverName =
                         finalServer.name || finalServer.quality;
-                      const newProxyUrl = toProxyUrl(
-                        resolvePathOrUrl(finalServer.url),
-                        finalServer.headers,
+                      const sUrl = resolvePathOrUrl(finalServer.url);
+                      const isDirect = Boolean(
+                        sUrl.split("?")[0].match(/\.(mp4|mkv|webm|mov|avi)$/i),
                       );
+                      const newProxyUrl =
+                        isDirect || !sUrl.startsWith("http")
+                          ? sUrl
+                          : toProxyUrl(sUrl, finalServer.headers);
                       const resumePosition = currentTime;
                       logger.info(
                         `[MPV IPC] Sending loadfile command to MPV for ${serverName}: ${newProxyUrl} (resuming at ${Math.floor(resumePosition)}s)`,
@@ -1956,6 +2106,48 @@ async function playInMpv(window, options) {
 
                       if (client && !client.destroyed) {
                         pendingSeekOnLoad = resumePosition;
+                        const sReferer =
+                          finalServer.headers?.Referer ||
+                          finalServer.headers?.referer ||
+                          activeReferer ||
+                          "";
+                        const sHeaderFields = [];
+                        if (sReferer) {
+                          client.write(
+                            JSON.stringify({
+                              command: ["set_property", "referrer", sReferer],
+                            }) + "\n",
+                          );
+                          sHeaderFields.push(`Referer: ${sReferer}`);
+                        }
+                        const sUserAgent =
+                          finalServer.headers?.["User-Agent"] ||
+                          finalServer.headers?.["user-agent"] ||
+                          activeUserAgent;
+                        sHeaderFields.push(`User-Agent: ${sUserAgent}`);
+                        if (finalServer.headers) {
+                          for (const [hk, hv] of Object.entries(
+                            finalServer.headers,
+                          )) {
+                            const hkl = hk.toLowerCase();
+                            if (
+                              hkl !== "referer" &&
+                              hkl !== "user-agent" &&
+                              typeof hv === "string"
+                            ) {
+                              sHeaderFields.push(`${hk}: ${hv}`);
+                            }
+                          }
+                        }
+                        client.write(
+                          JSON.stringify({
+                            command: [
+                              "set_property",
+                              "http-header-fields",
+                              sHeaderFields,
+                            ],
+                          }) + "\n",
+                        );
                         client.write(
                           JSON.stringify({
                             command: [

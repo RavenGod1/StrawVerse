@@ -1015,11 +1015,16 @@ async function downloadEpisodeByQuality(
         if (!fallbackUnverifiedSource) {
           fallbackUnverifiedSource = src;
         }
+        if (sortedSources.length === 1) {
+          selectedSource = src;
+          break;
+        }
         const isAlive = await verifyStreamReachability(
           src.url,
           src.headers || {},
+          src.isM3U8 !== false,
         );
-        if (isAlive.ok) {
+        if (isAlive.ok || isAlive.isProtected) {
           selectedSource = src;
           break;
         } else {
@@ -1113,6 +1118,7 @@ async function downloadEpisodeByQuality(
           : false,
       (config?.subtitleFormat ?? "vtt") === "srt",
       selectedSource.headers ?? {},
+      selectedSource.isM3U8,
     );
     hostSkipByEpid.delete(epid);
 
@@ -1186,6 +1192,7 @@ async function downloadVideo(
   MergeSubtitles,
   subtitleFormat = false,
   headers = {},
+  isM3U8 = true,
 ) {
   try {
     const qualStr = quality ? ` ( ${quality} )` : "";
@@ -1206,6 +1213,7 @@ async function downloadVideo(
       MergeSubtitles: MergeSubtitles,
       ChangeTosrt: subtitleFormat,
       headers: headers,
+      isM3U8: isM3U8,
     });
   } catch (err) {
     if (err.message === "Queue Paused" || err.message === "Episode Cancelled") {

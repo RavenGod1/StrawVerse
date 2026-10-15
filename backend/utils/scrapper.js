@@ -800,9 +800,10 @@ function queueBypass(runBypass) {
 
 async function hasValidClearance(domain) {
   try {
+    const cleanDom = normalizeHostname(domain);
     const row = await queryOne(
-      "SELECT expirationDate, local_saved_at FROM cookie WHERE id = ? OR (name = 'cf_clearance' AND (? = domain OR ? LIKE '%.' || domain)) ORDER BY CAST(expirationDate AS REAL) DESC LIMIT 1",
-      [`${domain}-cf_clearance`, domain, domain],
+      "SELECT expirationDate, local_saved_at FROM cookie WHERE (id = ? OR name = 'cf_clearance' OR domain = ? OR domain = '.' || ? OR ? LIKE '%.' || domain OR domain LIKE '%.' || ?) AND name != 'user_agent' ORDER BY CAST(local_saved_at AS REAL) DESC LIMIT 1",
+      [`${cleanDom}-cf_clearance`, cleanDom, cleanDom, cleanDom, cleanDom],
     );
     if (row) {
       const savedAt = Number(row.local_saved_at);
@@ -1072,12 +1073,32 @@ global.scrapperFetch = (url, options = {}) => {
     if (!global.ScrapperWindow || global.ScrapperWindow.isDestroyed()) {
       throw new Error("ScrapperWindow is not initialized");
     }
+    const fetchOptions = { ...options, credentials: "include" };
     try {
       const parentDom = getDomain(url);
       const targetOrigin = parentDom
         ? `https://${parentDom}`
         : new URL(url).origin;
       const currentUrl = global.ScrapperWindow.webContents.getURL() || "";
+
+      const isGet =
+        !fetchOptions.method || fetchOptions.method.toUpperCase() === "GET";
+      const cleanCurrent = currentUrl.replace(/#.*$/, "").replace(/\/$/, "");
+      const cleanTarget = url.replace(/#.*$/, "").replace(/\/$/, "");
+      if (isGet && cleanCurrent === cleanTarget) {
+        const domHtml =
+          await global.ScrapperWindow.webContents.executeJavaScript(
+            "document.documentElement ? document.documentElement.outerHTML : ''",
+          );
+        if (
+          domHtml &&
+          domHtml.length > 500 &&
+          !pageLooksLikeChallenge("", domHtml, parentDom)
+        ) {
+          return domHtml;
+        }
+      }
+
       if (!currentUrl.startsWith(targetOrigin)) {
         await safeNavigateWindow(
           global.ScrapperWindow,
@@ -1112,7 +1133,6 @@ global.scrapperFetch = (url, options = {}) => {
       }
     } catch (e) {}
 
-    const fetchOptions = { ...options, credentials: "include" };
     if (fetchOptions.headers) {
       const sanitized = {};
       for (const [k, v] of Object.entries(fetchOptions.headers)) {
@@ -1584,13 +1604,15 @@ async function electronNetAdapter(config) {
 
       try {
         const domain = new URL(url).hostname.replace("www.", "");
+        const hasClearance =
+          (await hasValidClearance(domain)) || Boolean(config._retry);
 
         if (
           shouldBypassUrl(url, reqReferer) &&
           !isMediaUrl(url, config) &&
           !isVideoStreamUrl(url, config) &&
           global.scrapperFetch &&
-          (await hasValidClearance(domain))
+          hasClearance
         ) {
           const fetchHeaders = {
             Accept: "application/json, text/plain, */*",
@@ -1675,9 +1697,18 @@ async function electronNetAdapter(config) {
         requestHeaders["Referer"] = reqReferer;
       }
 
+      const targetSession = session.fromPartition("persist:scrapper");
+      const userAgentToUse =
+        requestHeaders["User-Agent"] ||
+        requestHeaders["user-agent"] ||
+        global.deviceUserAgent;
+      if (userAgentToUse && typeof targetSession.setUserAgent === "function") {
+        targetSession.setUserAgent(userAgentToUse);
+      }
+
       const options = {
         method: method.toUpperCase(),
-        session: session.fromPartition("persist:scrapper"),
+        session: targetSession,
         credentials: "include",
         headers: requestHeaders,
       };

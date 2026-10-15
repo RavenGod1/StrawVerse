@@ -17,6 +17,7 @@ try {
     "--platform=node",
     "--target=node18",
     "--external:bridge",
+    `--alias:got="${path.join(capacitorRoot, "node_modules", "got")}"`,
     "--outfile=main.bundle.js",
   ].join(" ");
 
@@ -46,7 +47,8 @@ try {
       .replaceAll(
         "/^[$_\\p{ID_Start}][$\\u200c\\u200d\\p{ID_Continue}]*$/u",
         "/^[a-zA-Z_$][a-zA-Z0-9_$\\u200c\\u200d]*$/",
-      );
+      )
+      .replace(/new RegExp\(([^,\n]+),\s*["']v["']\)/g, 'new RegExp($1, "u")');
 
     const intlPolyfillHeader = `if (typeof globalThis.Intl === "undefined" || typeof Intl === "undefined") {
   const _LF = class { constructor() {} format(l = []) { return Array.isArray(l) ? l.join(", ") : String(l); } formatToParts(l = []) { return (Array.isArray(l) ? l : [l]).map((v) => ({ type: "element", value: String(v) })); } };

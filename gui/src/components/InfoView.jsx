@@ -2179,43 +2179,8 @@ export default function InfoView({
     }
   };
 
-  // Switch to an installed provider that has no mapping entry for this
-  // title: search that provider by title and jump to the top result.
-  const handleUnlinkedSwitch = async (newProvider) => {
-    try {
-      const response = await fetch(`/api/list/${type}/${newProvider}/`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ keyword: details?.title || "" }),
-      });
-      const data = await response.json();
-      const first = data?.results?.[0];
-      if (first?.id) {
-        await handleProviderSwitch(String(first.id), newProvider);
-      } else {
-        Swal.fire({
-          title: "Not found",
-          text: `"${details?.title}" was not found on ${newProvider}.`,
-          icon: "info",
-          background: "var(--bg-secondary)",
-          color: "var(--text-main)",
-          confirmButtonColor: "var(--accent)",
-        });
-      }
-    } catch (err) {
-      console.error(err);
-      Swal.fire({
-        title: "Error",
-        text: `Could not search ${newProvider}.`,
-        icon: "error",
-        background: "var(--bg-secondary)",
-        color: "var(--text-main)",
-        confirmButtonColor: "var(--accent)",
-      });
-    }
-  };
-
-  const handleProviderSwitch = async (newId, newProvider) => {    const oldId = id;
+  const handleProviderSwitch = async (newId, newProvider) => {
+    const oldId = id;
     try {
       await fetch("/api/metadata/switch-provider", {
         method: "POST",
@@ -2411,11 +2376,11 @@ export default function InfoView({
     });
   };
 
-  // Open file or folder in File Explorer / system default player
+  // Open file or folder in File Explorer / file manager
   const handleOpenFile = async (
     number = null,
     subdub = null,
-    action = "open_file",
+    action = "open_folder",
   ) => {
     try {
       const res = await apiPost("/api/local/open", {
@@ -2427,13 +2392,13 @@ export default function InfoView({
       });
       if (res.error) {
         swalError(
-          "Error Opening File",
-          res.message || "Failed to open file or directory.",
+          "Error Opening File Location",
+          res.message || "Failed to open directory.",
         );
       }
     } catch (err) {
       console.error(err);
-      swalError("Error", "Failed to open file or directory.");
+      swalError("Error", "Failed to open directory.");
     }
   };
 
@@ -3006,26 +2971,8 @@ export default function InfoView({
                       self.findIndex((t) => t.provider === p.provider) ===
                         index,
                   );
-                  // Also offer installed providers with no mapping entry for
-                  // this title (switching searches that provider by title).
-                  const linkedNames = new Set(
-                    validLinked.map((p) => p.provider),
-                  );
-                  const unlinkedInstalled = (
-                    installedExtensions?.[type] || []
-                  )
-                    .map((x) => x?.name)
-                    .filter(
-                      (n) =>
-                        n &&
-                        n !== "provider" &&
-                        n !== "local source" &&
-                        !linkedNames.has(n),
-                    )
-                    .map((n) => ({ provider: n, id: null }));
-                  const allOptions = [...validLinked, ...unlinkedInstalled];
 
-                  if (allOptions.length > 1) {
+                  if (validLinked.length > 1) {
                     return (
                       <>
                         <div
@@ -3066,16 +3013,12 @@ export default function InfoView({
 
                         {isProviderDropdownOpen && (
                           <div className="custom-dropdown-menu">
-                            {allOptions.map((p) => (
+                            {validLinked.map((p) => (
                               <div
                                 key={p.provider}
                                 className={`custom-dropdown-item ${activeProv === p.provider ? "selected" : ""}`}
                                 onClick={() => {
-                                  if (p.id) {
-                                    handleProviderSwitch(p.id, p.provider);
-                                  } else {
-                                    handleUnlinkedSwitch(p.provider);
-                                  }
+                                  handleProviderSwitch(p.id, p.provider);
                                   setIsProviderDropdownOpen(false);
                                 }}
                                 style={{
@@ -3117,7 +3060,27 @@ export default function InfoView({
                             <Folder size={12} /> Local Source
                           </span>
                         ) : (
-                          activeProv
+                          <span
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "6px",
+                            }}
+                          >
+                            {getProviderIcon(activeProv) && (
+                              <img
+                                src={getProviderIcon(activeProv)}
+                                alt=""
+                                style={{
+                                  width: "14px",
+                                  height: "14px",
+                                  borderRadius: "3px",
+                                  objectFit: "contain",
+                                }}
+                              />
+                            )}
+                            {activeProv}
+                          </span>
                         )}
                       </div>
                     );
@@ -3634,10 +3597,20 @@ export default function InfoView({
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              handleOpenFile(item.number, "sub", "open_file");
+                              const downloadedLang =
+                                itemLangs.find((langKey) =>
+                                  isDownloaded(item.number, langKey),
+                                ) ||
+                                dubSelect ||
+                                "sub";
+                              handleOpenFile(
+                                item.number,
+                                downloadedLang,
+                                "open_folder",
+                              );
                             }}
                             className="btn-action-open"
-                            title="Open File / File Explorer"
+                            title="Open in File Manager"
                           >
                             <FolderOpen size={16} />
                           </button>
@@ -3793,10 +3766,10 @@ export default function InfoView({
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              handleOpenFile(item.number, null, "open_file");
+                              handleOpenFile(item.number, null, "open_folder");
                             }}
                             className="btn-action-open"
-                            title="Open File / File Explorer"
+                            title="Open in File Manager"
                           >
                             <FolderOpen size={16} />
                           </button>

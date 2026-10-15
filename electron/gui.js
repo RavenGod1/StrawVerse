@@ -841,7 +841,16 @@ ipcMain.handle(
           const err = await shell.openPath(targetPath);
           return { success: !err, error: err };
         } else {
-          shell.showItemInFolder(targetPath);
+          try {
+            const shown = shell.showItemInFolder(targetPath);
+            if (!shown && process.platform === "linux") {
+              const dir = path.dirname(targetPath);
+              await shell.openPath(dir);
+            }
+          } catch (_) {
+            const dir = path.dirname(targetPath);
+            await shell.openPath(dir);
+          }
           return { success: true };
         }
       } else {

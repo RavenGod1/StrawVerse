@@ -20,7 +20,7 @@ async function verifyStreamReachability(
   try {
     const probeRes = await client.get(streamUrl, {
       headers: combinedHeaders,
-      timeout: 5000,
+      timeout: 2000,
       skipBypass: true,
       validateStatus: (status) => status < 400,
     });
@@ -78,12 +78,13 @@ async function verifyStreamReachability(
 
     return { ok: true };
   } catch (probeErr) {
+    const status = probeErr.response?.status;
+    const isProtected = status === 403 || status === 503;
     return {
       ok: false,
-      status: probeErr.response?.status,
-      message: probeErr.response?.status
-        ? `HTTP ${probeErr.response.status}`
-        : probeErr.message,
+      status,
+      isProtected,
+      message: status ? `HTTP ${status}` : probeErr.message,
     };
   }
 }
