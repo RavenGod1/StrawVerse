@@ -776,6 +776,26 @@ export default function Catalog({
         },
       },
     },
+    weebcentral: {
+      sort: {
+        label: "Sort",
+        options: {
+          "Latest Updates": "Latest Updates",
+          "Recently Added": "Recently Added",
+          Popularity: "Popularity",
+          Subscribers: "Subscribers",
+          Alphabet: "Alphabet",
+          "Best Match": "Best Match",
+        },
+      },
+      order: {
+        label: "Order",
+        options: {
+          Descending: "Descending",
+          Ascending: "Ascending",
+        },
+      },
+    },
     mangafire: {
       genre: {
         label: "Genre",
