@@ -879,6 +879,32 @@ global.cloudflarebypass = async (targetUrl, force = false, referer = null) => {
       let navUrl = targetUrl;
       let navFailed = false;
 
+      // Embed-only player pages (megavid/megaplay/vidstream family) refuse
+      // direct navigation with an "Embed Only" page, so a window bypass can
+      // never yield clearance there. Fail fast so callers rotate servers
+      // instead of hanging on the verification window.
+      try {
+        const navParsed = new URL(navUrl);
+        const navHost = navParsed.hostname.toLowerCase();
+        const isPlayerHost = [
+          "megavid.",
+          "megaplay.",
+          "vidplay",
+          "vidstream",
+          "megacloud.",
+          "vidcloud.",
+          "voe.",
+          "doodstream",
+          "dood.",
+        ].some((h) => navHost.includes(h));
+        if (isPlayerHost && navParsed.pathname !== "/") {
+          console.warn(
+            `[Bypass] Embed-only player URL (${navUrl}). Skipping window bypass.`,
+          );
+          return false;
+        }
+      } catch (_) {}
+
       if (force) {
         showScrapperWindow();
       }
