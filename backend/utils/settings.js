@@ -144,10 +144,10 @@ async function settingfetch() {
         changes = true;
       }
     }
-    // kept log files: default 5, user range 1..10
+    // kept log files: default 3, user range 1..10
     const parsedLogFiles = parseInt(config?.maxLogFiles, 10);
     const clampedLogFiles = isNaN(parsedLogFiles)
-      ? 5
+      ? 3
       : Math.min(Math.max(parsedLogFiles, 1), 10);
     if (config?.maxLogFiles !== clampedLogFiles) {
       config.maxLogFiles = clampedLogFiles;
@@ -289,7 +289,7 @@ async function SettingsLoad() {
             malToken: null,
             CustomDownloadLocation: getDownloadsFolder(),
             externalLogEnabled: true,
-            maxLogFiles: 5,
+            maxLogFiles: 3,
             Animeprovider: 0,
             Mangaprovider: 0,
             autoLoadNextChapter: true,
@@ -343,7 +343,7 @@ async function SettingsLoad() {
     // One-time migration: external logs were force-disabled on mobile
     // before this setting existed there, so flip it on exactly once.
     if (config && !config.hasOwnProperty("maxLogFiles")) {
-      config.maxLogFiles = 5;
+      config.maxLogFiles = 3;
     }
     if (
       process.env.NODEJS_MOBILE_DATA_DIR &&

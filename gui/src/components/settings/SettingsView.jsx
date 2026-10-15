@@ -160,7 +160,7 @@ export default function SettingsView({
   const [downloadLocation, setDownloadLocation] = useState("");
   const [browsingFolder, setBrowsingFolder] = useState(false);
   const [externalLogEnabled, setExternalLogEnabled] = useState(true);
-  const [maxLogFiles, setMaxLogFiles] = useState(5);
+  const [maxLogFiles, setMaxLogFiles] = useState(3);
   const [logDirectory, setLogDirectory] = useState("");
   const [autoSkipIntro, setAutoSkipIntro] = useState(true);
   const [subFontSize, setSubFontSize] = useState(46);
@@ -698,7 +698,7 @@ export default function SettingsView({
           s.externalLogEnabled !== undefined ? s.externalLogEnabled : true,
         );
         setMaxLogFiles(
-          s.maxLogFiles !== undefined ? parseInt(s.maxLogFiles, 10) || 5 : 5,
+          s.maxLogFiles !== undefined ? parseInt(s.maxLogFiles, 10) || 3 : 3,
         );
         setAutoSkipIntro(s.autoSkipIntro);
         const layoutVal = s.mangaReaderLayout || "long-strip";
@@ -900,7 +900,7 @@ export default function SettingsView({
       dirty.externalLogEnabled = externalLogEnabled;
     {
       const finalCount = parseInt(maxLogFiles, 10);
-      if (!isNaN(finalCount) && finalCount !== (settings.maxLogFiles || 5))
+      if (!isNaN(finalCount) && finalCount !== (settings.maxLogFiles || 3))
         dirty.maxLogFiles = finalCount;
     }
     if (autoSkipIntro !== settings.autoSkipIntro)
@@ -1035,7 +1035,7 @@ export default function SettingsView({
         (settings.externalLogEnabled !== undefined
           ? settings.externalLogEnabled
           : true) ||
-      (parseInt(maxLogFiles, 10) || 5) !== (settings.maxLogFiles || 5) ||
+      (parseInt(maxLogFiles, 10) || 3) !== (settings.maxLogFiles || 3) ||
       autoSkipIntro !== settings.autoSkipIntro ||
       mangaReaderLayout !== (settings.mangaReaderLayout || "long-strip") ||
       mangaReaderWidth !== (parseInt(settings.mangaReaderWidth, 10) || 800) ||
@@ -1680,7 +1680,7 @@ export default function SettingsView({
                       <>
                         <SettingsRow
                           label="Kept Log Files"
-                          desc="How many recent log files to keep (1–10, default 5). Older files are deleted automatically and the total is kept under 500 MB."
+                          desc="How many recent log files to keep (1–10, default 3). Older files are deleted automatically and the total is kept under 500 MB."
                         >
                           <Dropdown
                             value={String(maxLogFiles)}
