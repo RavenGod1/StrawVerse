@@ -128,9 +128,9 @@ router.post("/api/logger", async (req, res) => {
 });
 
 // Get image cache stats
-router.get("/api/cache/stats", (req, res) => {
+router.get("/api/cache/stats", async (req, res) => {
   try {
-    const stats = ImageCacheManager.getCacheStats();
+    const stats = await ImageCacheManager.getCacheStats();
     res.json(stats);
   } catch (err) {
     res.status(500).json({ error: err.message });
