@@ -2094,6 +2094,35 @@ router.get("/api/stream/m3u8", async (req, res) => {
         throw fetchErr;
       }
     }
+    // Some stacks hand back Buffer/ArrayBuffer even with responseType text —
+    // coerce instead of failing the whole open.
+    if (typeof data !== "string" && data != null) {
+      try {
+        data = Buffer.isBuffer(data)
+          ? data.toString("utf8")
+          : Buffer.from(data).toString("utf8");
+      } catch (_) {}
+    }
+    if (typeof data !== "string" || !data.includes("#EXTM3U")) {
+      logger.warn(
+        `[Stream Proxy] Upstream returned invalid m3u8 playlist for ${url} (retrying once)...`,
+      );
+      try {
+        const retry2 = await global.axios.get(url, {
+          headers: reqHeaders,
+          responseType: "text",
+          timeout: 15000,
+        });
+        data =
+          typeof retry2.data === "string"
+            ? retry2.data
+            : Buffer.from(retry2.data || []).toString("utf8");
+      } catch (retryErr) {
+        logger.warn(
+          `[Stream Proxy] m3u8 retry failed for ${url}: ${retryErr?.response?.status || retryErr.message}`,
+        );
+      }
+    }
     if (typeof data !== "string" || !data.includes("#EXTM3U")) {
       logger.warn(
         `[Stream Proxy] Upstream returned invalid m3u8 playlist for ${url}`,
