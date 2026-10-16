@@ -2066,6 +2066,7 @@ router.get("/api/stream/m3u8", async (req, res) => {
       reqHeaders.Referer = customReferer;
     }
     let data;
+    const m3u8Start = Date.now();
     try {
       const resp = await global.axios.get(url, {
         headers: reqHeaders,
@@ -2073,6 +2074,9 @@ router.get("/api/stream/m3u8", async (req, res) => {
         timeout: 15000,
       });
       data = resp.data;
+      logger.info(
+        `[StreamProxy] m3u8 upstream ${resp.status} for ${url} (${Date.now() - m3u8Start}ms, ${String(resp.data || "").length} chars)`,
+      );
     } catch (fetchErr) {
       if (
         fetchErr.response &&
@@ -2186,7 +2190,9 @@ router.get("/api/stream/m3u8", async (req, res) => {
     res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
     res.send(manifest);
   } catch (err) {
-    logger.error(`[StreamProxy] m3u8 error: ${err.message}`);
+    logger.error(
+      `[StreamProxy] m3u8 error for ${url}: status=${err?.response?.status || "none"} msg=${err.message}`,
+    );
     res.status(502).send(err.message);
   }
 });
@@ -2349,7 +2355,9 @@ router.get("/api/stream/segment", async (req, res) => {
     res.setHeader("Content-Type", ct.includes("image") ? "video/mp2t" : ct);
     res.send(buffer);
   } catch (err) {
-    logger.error(`[StreamProxy] segment error: ${err.message}`);
+    logger.error(
+      `[StreamProxy] segment error for ${url}: status=${err?.response?.status || "none"} msg=${err.message}`,
+    );
     res.status(502).send(err.message);
   }
 });
