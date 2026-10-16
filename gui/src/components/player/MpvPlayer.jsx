@@ -78,7 +78,7 @@ export default function VideoPlayer({
     setLoading(true);
     setStatusMsg(`Opening MPV player for Episode ${targetEpNum}...`);
 
-    const launchKey = `${id}|${targetEpId}|${targetEpNum}|${subdub || playerSubDub}`;
+    const launchKey = `${id}|${targetEpNum}|${subdub || playerSubDub}`;
     if (launchedRef.current === launchKey) return;
     launchedRef.current = launchKey;
 

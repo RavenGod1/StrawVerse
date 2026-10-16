@@ -392,20 +392,24 @@ async function playInMpv(window, options) {
   let url = options.url || "";
 
   // Duplicate-launch guard: identical play requests arriving within
-  // milliseconds (double effect fires / double clicks) used to spawn two
-  // MPV processes and confuse IPC sync. Same key within 3s reuses the
-  // in-flight launch instead.
-  const __launchKey = `${mediaId || ""}|${episodeId || ""}|${episode || ""}|${subdub || "sub"}`;
+  // milliseconds (double clicks / double code paths with different id forms)
+  // used to spawn two MPV processes. Same title + language with either the
+  // episode id OR number matching within 3s reuses the in-flight launch.
+  const __launchKey = `${mediaId || ""}|${subdub || "sub"}`;
+  const __epA = String(episodeId ?? "");
+  const __epB = String(episode ?? "");
   const __now = Date.now();
+  const __prev = global.__inFlightMpvLaunch;
   if (
-    global.__inFlightMpvLaunch &&
-    global.__inFlightMpvLaunch.key === __launchKey &&
-    __now - global.__inFlightMpvLaunch.at < 3000
+    __prev &&
+    __prev.key === __launchKey &&
+    (__prev.epA === __epA || __prev.epB === __epB) &&
+    __now - __prev.at < 3000
   ) {
-    logger.info(`[MPV] Duplicate launch suppressed for ${__launchKey}`);
+    logger.info(`[MPV] Duplicate launch suppressed for ${__launchKey} ${__epB}`);
     return { reused: true, suppressedDuplicate: true };
   }
-  global.__inFlightMpvLaunch = { key: __launchKey, at: __now };
+  global.__inFlightMpvLaunch = { key: __launchKey, epA: __epA, epB: __epB, at: __now };
 
   function formatMpvColor(hex, defaultHex = "#ffffffff") {
     if (!hex || hex === "transparent" || hex === "none") return "#00000000";
@@ -1700,10 +1704,10 @@ async function playInMpv(window, options) {
   let client = null;
   let duration = 0;
   let currentTime = startSeek;
-  // Furthest actually-played position. Broken streams park time-pos at 0 or
-  // jump straight to duration; gating auto-next on real progress stops the
-  // episode-skipping cascade on demux failures.
-  let maxTimePos = 0;
+  // Genuinely-played seconds: sum of small positive position advances.
+  // Broken streams park time-pos at 0 or jump straight to duration, which
+  // used to fake "video end" and cascade auto-next through every episode.
+  let advancedSecs = 0;
   let lastSavedTime = startSeek;
   let lastSyncTime = Date.now();
   let paused = false;
@@ -1879,16 +1883,12 @@ async function playInMpv(window, options) {
         ? sess.hasTriggeredAutoNext
         : hasTriggeredAutoNext;
 
-      // Only advance after genuinely watching something: broken streams
-      // report position 0 (or jump to duration without playing), which used
-      // to cascade through every remaining episode.
-      const played = maxTimePos || currentTime || 0;
-      const dur = duration || 0;
-      const watchedEnough =
-        played > 60 || (dur > 0 && played > dur * 0.05);
-      if (!watchedEnough) {
+      // Only advance after genuinely watching something: a single jump
+      // straight to the end (broken stream) must not count. Require 30s of
+      // accumulated real playback; seeks contribute at most 10s per jump.
+      if (advancedSecs <= 30) {
         logger.info(
-          `[MPV] Not auto-playing next (${reason}): only ${Math.round(played)}s played.`,
+          `[MPV] Not auto-playing next (${reason}): only ${Math.round(advancedSecs)}s actually played.`,
         );
         return;
       }
@@ -2317,7 +2317,9 @@ async function playInMpv(window, options) {
           } else if (msg.name === "time-pos" && typeof msg.data === "number") {
             const prevTime = currentTime;
             currentTime = msg.data;
-            if (msg.data > 0) maxTimePos = Math.max(maxTimePos, msg.data);
+            if (prevTime > 0 && msg.data > prevTime) {
+              advancedSecs += Math.min(msg.data - prevTime, 10);
+            }
             sendStarted();
 
             const now = Date.now();
