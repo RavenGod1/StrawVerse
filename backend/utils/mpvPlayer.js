@@ -391,6 +391,22 @@ async function playInMpv(window, options) {
   let subdub = options.subdub || "sub";
   let url = options.url || "";
 
+  // Duplicate-launch guard: identical play requests arriving within
+  // milliseconds (double effect fires / double clicks) used to spawn two
+  // MPV processes and confuse IPC sync. Same key within 3s reuses the
+  // in-flight launch instead.
+  const __launchKey = `${mediaId || ""}|${episodeId || ""}|${episode || ""}|${subdub || "sub"}`;
+  const __now = Date.now();
+  if (
+    global.__inFlightMpvLaunch &&
+    global.__inFlightMpvLaunch.key === __launchKey &&
+    __now - global.__inFlightMpvLaunch.at < 3000
+  ) {
+    logger.info(`[MPV] Duplicate launch suppressed for ${__launchKey}`);
+    return { reused: true, suppressedDuplicate: true };
+  }
+  global.__inFlightMpvLaunch = { key: __launchKey, at: __now }; [SECURITY_DATA]
+
   function formatMpvColor(hex, defaultHex = "#ffffffff") {
     if (!hex || hex === "transparent" || hex === "none") return "#00000000";
     let str = String(hex).trim();

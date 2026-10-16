@@ -1,5 +1,5 @@
 /* eslint-disable react-hooks/set-state-in-effect, react-hooks/exhaustive-deps */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Swal from "sweetalert2";
 import { Loader2 } from "lucide-react";
 
@@ -20,6 +20,9 @@ export default function VideoPlayer({
   const [loading, setLoading] = useState(true);
   const [statusMsg, setStatusMsg] = useState("Initializing MPV player...");
   const [currentEpNumOrId, setCurrentEpNumOrId] = useState(episodeNumOrId);
+  // Same-episode relaunch guard: identical params must not fire playInMpv
+  // twice (double effect runs / rapid state churn spawned two players).
+  const launchedRef = useRef(null);
 
   useEffect(() => {
     setCurrentEpNumOrId(episodeNumOrId);
@@ -74,6 +77,10 @@ export default function VideoPlayer({
 
     setLoading(true);
     setStatusMsg(`Opening MPV player for Episode ${targetEpNum}...`);
+
+    const launchKey = `${id}|${targetEpId}|${targetEpNum}|${subdub || playerSubDub}`;
+    if (launchedRef.current === launchKey) return;
+    launchedRef.current = launchKey;
 
     window.sharedStateAPI
       .playInMpv({
