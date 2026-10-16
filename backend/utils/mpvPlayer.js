@@ -405,7 +405,7 @@ async function playInMpv(window, options) {
     logger.info(`[MPV] Duplicate launch suppressed for ${__launchKey}`);
     return { reused: true, suppressedDuplicate: true };
   }
-  global.__inFlightMpvLaunch = { key: __launchKey, at: __now }; [SECURITY_DATA]
+  global.__inFlightMpvLaunch = { key: __launchKey, at: __now };
 
   function formatMpvColor(hex, defaultHex = "#ffffffff") {
     if (!hex || hex === "transparent" || hex === "none") return "#00000000";
