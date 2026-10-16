@@ -2154,17 +2154,40 @@ router.get("/api/stream/m3u8", async (req, res) => {
       }
     };
 
+    // Some hosts inject ad segments (e.g. TikTok CDN images) at the head of
+    // variant playlists. MPV locks onto the image codec ("Video: png") and
+    // then chokes on every real segment. Drop ad URIs (plus their EXTINF)
+    // so playback starts on genuine media.
+    const AD_SEGMENT_PATTERNS = [
+      /tiktokcdn/i,
+      /ad-site/i,
+      /doubleclick/i,
+      /googleads/i,
+      /imasdk/i,
+      /\/ads?\//i,
+      /vast/i,
+      /preroll/i,
+      /\.image(\?|$)/i,
+    ];
+    const isAdSegmentUrl = (abs) =>
+      AD_SEGMENT_PATTERNS.some((re) => re.test(abs));
+
     let nextIsVariantPlaylist = false;
-    const manifest = String(data)
-      .split("\n")
-      .map((line) => {
-        const t = line.trim();
-        if (!t) return line;
-        if (t.startsWith("#")) {
-          if (t.startsWith("#EXT-X-STREAM-INF:")) {
-            nextIsVariantPlaylist = true;
-          }
-          return t.includes('URI="')
+    const rawLines = String(data).split("\n");
+    const outLines = [];
+    let skippedAds = 0;
+    for (const line of rawLines) {
+      const t = line.trim();
+      if (!t) {
+        outLines.push(line);
+        continue;
+      }
+      if (t.startsWith("#")) {
+        if (t.startsWith("#EXT-X-STREAM-INF:")) {
+          nextIsVariantPlaylist = true;
+        }
+        outLines.push(
+          t.includes('URI="')
             ? t.replace(/URI="([^"]+)"/, (_, u) => {
                 const abs = u.startsWith("http") ? u : base + u;
                 regHost(abs);
@@ -2174,18 +2197,31 @@ router.get("/api/stream/m3u8", async (req, res) => {
                   abs.includes(".m3u8") || isSubOrAudio ? m3u8Proxy : segProxy;
                 return `URI="${proxy}${encodeURIComponent(abs)}${refParam}"`;
               })
-            : line;
-        }
+            : line,
+        );
+        continue;
+      }
 
-        const isVariant = nextIsVariantPlaylist;
-        nextIsVariantPlaylist = false;
+      const isVariant = nextIsVariantPlaylist;
+      nextIsVariantPlaylist = false;
 
-        const abs = t.startsWith("http") ? t : base + t;
-        regHost(abs);
-        const proxy = isVariant || abs.includes(".m3u8") ? m3u8Proxy : segProxy;
-        return `${proxy}${encodeURIComponent(abs)}${refParam}`;
-      })
-      .join("\n");
+      const abs = t.startsWith("http") ? t : base + t;
+      regHost(abs);
+      if (!isVariant && !abs.includes(".m3u8") && isAdSegmentUrl(abs)) {
+        const prev = outLines[outLines.length - 1];
+        if (prev && prev.trim().startsWith("#EXTINF")) outLines.pop();
+        skippedAds++;
+        continue;
+      }
+      const proxy = isVariant || abs.includes(".m3u8") ? m3u8Proxy : segProxy;
+      outLines.push(`${proxy}${encodeURIComponent(abs)}${refParam}`);
+    }
+    const manifest = outLines.join("\n");
+    if (skippedAds > 0) {
+      logger.info(
+        `[StreamProxy] Skipped ${skippedAds} ad segment(s) for ${url}`,
+      );
+    }
 
     res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
     res.send(manifest);
