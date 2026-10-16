@@ -13,6 +13,7 @@ const {
   run,
   batchRun,
   mappingQueryAll,
+  useLegacyUpserts,
 } = require("./db");
 const ImageCacheManager = require("./ImageCacheManager");
 const { sanitizeFolderName, getDownloadsFolder } = require("./DirectoryMaker");
@@ -1638,7 +1639,12 @@ async function syncMalCache(mediaType, data = []) {
       }
 
       operations.push({
-        sql: `
+        sql: useLegacyUpserts()
+          ? `
+          INSERT OR REPLACE INTO ${tableName} (id, title, image, ${totalCol}, ${progCol}, status, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `
+          : `
           INSERT INTO ${tableName} (id, title, image, ${totalCol}, ${progCol}, status, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET 

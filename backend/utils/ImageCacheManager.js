@@ -4,7 +4,7 @@ const crypto = require("crypto");
 const axios = require("axios");
 
 const { logger } = require("./AppLogger");
-const { getKeyValue, queryOne, queryAll, run, exec } = require("./db");
+const { getKeyValue, queryOne, queryAll, run, exec, runUpsertCompat } = require("./db");
 const { getHeaders } = require("./proxyHeaders");
 const { getUserDataPath } = require("./constants");
 
@@ -106,7 +106,7 @@ async function cacheImage(url, buffer = null) {
     const fileSize = imageBuffer.length;
 
     const now = Date.now();
-    await run(
+    await runUpsertCompat(
       `
       INSERT INTO ImageCache (url, filename, file_size, last_accessed)
       VALUES (?, ?, ?, ?)
@@ -116,6 +116,12 @@ async function cacheImage(url, buffer = null) {
         last_accessed = excluded.last_accessed
     `,
       [url, filename, fileSize, now],
+      () =>
+        run(
+          `INSERT OR REPLACE INTO ImageCache (url, filename, file_size, last_accessed)
+           VALUES (?, ?, ?, ?)`,
+          [url, filename, fileSize, now],
+        ),
     );
 
     enforceLimit().catch((err) =>
