@@ -67,7 +67,7 @@ function resolveUrl(relativeUrl, baseUrl) {
 }
 
 function stripPngHeader(buffer) {
-  if (!buffer || buffer.length < 8) return buffer;
+  if (!buffer || buffer.length <= 376) return buffer;
 
   if (
     buffer[0] === 0x89 &&
@@ -79,9 +79,18 @@ function stripPngHeader(buffer) {
     buffer[6] === 0x1a &&
     buffer[7] === 0x0a
   ) {
-    const iendOffset = buffer.indexOf(Buffer.from([0x49, 0x45, 0x4e, 0x44]));
-    if (iendOffset !== -1 && iendOffset < 1024) {
-      return buffer.subarray(iendOffset + 8);
+    // MPEG-TS packets are 188 bytes starting with sync byte 0x47: slice from
+    // the first offset with 3 consecutive syncs. Handles wrappers of any size;
+    // untouched when no sync pattern is found.
+    const maxScan = Math.min(buffer.length - 376, 65536);
+    for (let i = 0; i <= maxScan; i++) {
+      if (
+        buffer[i] === 0x47 &&
+        buffer[i + 188] === 0x47 &&
+        buffer[i + 376] === 0x47
+      ) {
+        return i === 0 ? buffer : buffer.subarray(i);
+      }
     }
   }
   return buffer;

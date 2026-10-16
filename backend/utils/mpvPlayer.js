@@ -1700,6 +1700,10 @@ async function playInMpv(window, options) {
   let client = null;
   let duration = 0;
   let currentTime = startSeek;
+  // Furthest actually-played position. Broken streams park time-pos at 0 or
+  // jump straight to duration; gating auto-next on real progress stops the
+  // episode-skipping cascade on demux failures.
+  let maxTimePos = 0;
   let lastSavedTime = startSeek;
   let lastSyncTime = Date.now();
   let paused = false;
@@ -1874,6 +1878,20 @@ async function playInMpv(window, options) {
       const alreadyTriggered = sess
         ? sess.hasTriggeredAutoNext
         : hasTriggeredAutoNext;
+
+      // Only advance after genuinely watching something: broken streams
+      // report position 0 (or jump to duration without playing), which used
+      // to cascade through every remaining episode.
+      const played = maxTimePos || currentTime || 0;
+      const dur = duration || 0;
+      const watchedEnough =
+        played > 60 || (dur > 0 && played > dur * 0.05);
+      if (!watchedEnough) {
+        logger.info(
+          `[MPV] Not auto-playing next (${reason}): only ${Math.round(played)}s played.`,
+        );
+        return;
+      }
 
       if (isAutoPlay && hasNextEp && !alreadyTriggered) {
         if (sess) sess.hasTriggeredAutoNext = true;
@@ -2299,6 +2317,7 @@ async function playInMpv(window, options) {
           } else if (msg.name === "time-pos" && typeof msg.data === "number") {
             const prevTime = currentTime;
             currentTime = msg.data;
+            if (msg.data > 0) maxTimePos = Math.max(maxTimePos, msg.data);
             sendStarted();
 
             const now = Date.now();

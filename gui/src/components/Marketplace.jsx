@@ -176,32 +176,41 @@ export default function Marketplace({ initialType }) {
       provider.uniqueId || `${provider.repoOwner}/${provider.name}`
     ).toLowerCase();
 
+    // Strict first: exact repo (uniqueId) or same owner + name. A fork install
+    // must never light up the official card as "installed".
+    const strict = list.find((ext) => {
+      const extUniqueId = (ext.uniqueId || "").toLowerCase();
+      const extName = (ext.name || "").toLowerCase();
+      const extOwner = (ext.repoOwner || "").toLowerCase();
+      if (extUniqueId && extUniqueId === expectedUniqueId) return true;
+      if (
+        extOwner &&
+        extName === expectedName &&
+        extOwner === expectedOwner
+      )
+        return true;
+      return false;
+    });
+    if (strict) return strict;
+
+    // Legacy fallback: stored entries without owner info only ever match
+    // the official card by name.
     return list.find((ext) => {
       const extUniqueId = (ext.uniqueId || "").toLowerCase();
       const extName = (ext.name || "").toLowerCase();
-      const extOwner = (ext.repoOwner || "theyogmehta").toLowerCase();
-
-      if (extUniqueId && extUniqueId === expectedUniqueId) return true;
-      if (extName === expectedName && extOwner === expectedOwner) return true;
-      if (
-        (expectedOwner === "theyogmehta" || extOwner === "theyogmehta") &&
-        extName === expectedName
-      ) {
-        return true;
-      }
-      return false;
+      const extOwner = (ext.repoOwner || "").toLowerCase();
+      if (extUniqueId || extOwner) return false;
+      return (
+        expectedOwner === "theyogmehta" && extName === expectedName
+      );
     });
   };
 
   const isInstalled = (provider) => {
     if (getInstalledItem(provider)) return true;
     const providerList = installedProviders[activeType] || [];
-    const targetName = provider.name;
     const targetUnique = provider.uniqueId;
-    return (
-      providerList.includes(targetName) ||
-      (targetUnique && providerList.includes(targetUnique))
-    );
+    return !!(targetUnique && providerList.includes(targetUnique));
   };
 
   const getInstalledVersion = (provider) => {

@@ -2286,8 +2286,14 @@ router.get("/api/stream/segment", async (req, res) => {
     }
     let buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
 
+    // Obfuscated wrappers (e.g. PNG headers prepended to segments) break
+    // demuxing ("Video: png", fatal packet errors). MPEG-TS packets are 188
+    // bytes starting with sync byte 0x47: slice from the first offset with 3
+    // consecutive syncs. Only applied when the payload opens with PNG magic,
+    // so clean segments and non-TS payloads (keys, subtitles) pass through
+    // untouched even if the wrapper outgrows the old 1KB scan window.
     if (
-      buffer.length >= 8 &&
+      buffer.length > 376 &&
       buffer[0] === 0x89 &&
       buffer[1] === 0x50 &&
       buffer[2] === 0x4e &&
@@ -2297,14 +2303,14 @@ router.get("/api/stream/segment", async (req, res) => {
       buffer[6] === 0x1a &&
       buffer[7] === 0x0a
     ) {
-      for (let i = 0; i < Math.min(buffer.length - 3, 1024); i++) {
+      const maxScan = Math.min(buffer.length - 376, 65536);
+      for (let i = 0; i <= maxScan; i++) {
         if (
-          buffer[i] === 0x49 &&
-          buffer[i + 1] === 0x45 &&
-          buffer[i + 2] === 0x4e &&
-          buffer[i + 3] === 0x44
+          buffer[i] === 0x47 &&
+          buffer[i + 188] === 0x47 &&
+          buffer[i + 376] === 0x47
         ) {
-          buffer = buffer.subarray(i + 8);
+          if (i > 0) buffer = buffer.subarray(i);
           break;
         }
       }
