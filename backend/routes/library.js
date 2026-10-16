@@ -710,7 +710,16 @@ async function openPathInSystem(targetPath, openFolder = false) {
       if (isDir) {
         await electron.shell.openPath(targetPath);
       } else {
-        electron.shell.showItemInFolder(targetPath);
+        try {
+          const shown = electron.shell.showItemInFolder(targetPath);
+          if (!shown && isLinux) {
+            const dir = path.dirname(targetPath);
+            await electron.shell.openPath(dir);
+          }
+        } catch (_) {
+          const dir = path.dirname(targetPath);
+          await electron.shell.openPath(dir);
+        }
       }
     } else {
       await electron.shell.openPath(targetPath);
@@ -755,7 +764,7 @@ router.post("/api/local/open", async (req, res) => {
       id,
       number,
       subdub,
-      action = "open_file",
+      action = "open_folder",
       customPath,
     } = req.body;
     let targetPath = customPath || "";

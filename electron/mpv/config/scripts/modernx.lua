@@ -517,6 +517,12 @@ local sub_menu = {
     selected_index = 1
 }
 
+local function unquote(s)
+    if not s or type(s) ~= "string" then return "" end
+    local q = s:match('^%s*"(.*)"%s*$') or s:match("^%s*'(.*)'%s*$") or s
+    return q:match("^%s*(.-)%s*$") or ""
+end
+
 local function is_server_sources(srcs)
     if not srcs or #srcs == 0 then return false end
     for _, s in ipairs(srcs) do
@@ -529,23 +535,28 @@ local function is_server_sources(srcs)
 end
 
 local function get_all_sources()
-    local sources_str = mp.get_opt("modernx-sources")
+    local sources_str = unquote(mp.get_property("user-data/strawverse-sources"))
+    if not sources_str or sources_str == "" then
+        sources_str = unquote(mp.get_opt("modernx-sources"))
+    end
     if not sources_str or sources_str == "" then
         return nil
     end
     
     local sources = {}
     for name, url in string.gmatch(sources_str, "([^|#]+)|([^#]+)") do
-        table.insert(sources, { name = name, url = url })
+        local decoded_name = name:gsub("%%2C", ","):gsub("%%2c", ",")
+        local decoded_url = url:gsub("%%2C", ","):gsub("%%2c", ",")
+        table.insert(sources, { name = decoded_name, url = decoded_url })
     end
     
     return #sources > 0 and sources or nil
 end
 
 local function get_all_subtitles()
-    local subs_str = mp.get_opt("modernx-subtitles")
+    local subs_str = unquote(mp.get_property("user-data/strawverse-subtitles"))
     if not subs_str or subs_str == "" then
-        subs_str = mp.get_property("user-data/strawverse-subtitles")
+        subs_str = unquote(mp.get_opt("modernx-subtitles"))
     end
     if not subs_str or subs_str == "" then
         return nil
@@ -553,7 +564,9 @@ local function get_all_subtitles()
     
     local subs = {}
     for name, url in string.gmatch(subs_str, "([^|#]+)|([^#]+)") do
-        table.insert(subs, { name = name, url = url })
+        local decoded_name = name:gsub("%%2C", ","):gsub("%%2c", ",")
+        local decoded_url = url:gsub("%%2C", ","):gsub("%%2c", ",")
+        table.insert(subs, { name = decoded_name, url = decoded_url })
     end
     
     return #subs > 0 and subs or nil
@@ -728,7 +741,7 @@ local function open_server_menu(menu_type)
     server_menu.menu_type = menu_type
     server_menu.active = true
 
-    local active_server = mp.get_property("user-data/strawverse-active-server")
+    local active_server = unquote(mp.get_property("user-data/strawverse-active-server"))
     local current_url = mp.get_property("stream-open-filename") or mp.get_property("path")
 
     if server_menu.current_selected and server_menu.current_selected > 0 and server_menu.current_selected <= #sources then
@@ -3652,13 +3665,15 @@ end
 validate_user_opts()
 update_duration_watch()
 
-state.has_next = mp.get_opt("modernx-has-next") or "yes"
-state.has_prev = mp.get_opt("modernx-has-prev") or "yes"
+state.has_next = unquote(mp.get_opt("modernx-has-next"))
+if state.has_next == "" then state.has_next = "yes" end
+state.has_prev = unquote(mp.get_opt("modernx-has-prev"))
+if state.has_prev == "" then state.has_prev = "yes" end
 
 mp.observe_property('user-data/strawverse-has-next', 'string',
     function(name, val)
         if val then
-            state.has_next = val
+            state.has_next = unquote(val)
             request_init()
         end
     end
@@ -3666,7 +3681,7 @@ mp.observe_property('user-data/strawverse-has-next', 'string',
 mp.observe_property('user-data/strawverse-has-prev', 'string',
     function(name, val)
         if val then
-            state.has_prev = val
+            state.has_prev = unquote(val)
             request_init()
         end
     end
@@ -3755,9 +3770,7 @@ mp.register_event('file-loaded', function()
     state.loading_active = false
     state.switching_episode = false
     state.loading_message = nil
-    if was_switching then
-        mp.set_property("pause", "no")
-    end
+    mp.set_property("pause", "no")
     if state.resume_pos and state.resume_pos > 0 then
         local pos = state.resume_pos
         state.resume_pos = nil
@@ -3822,19 +3835,23 @@ end)
 
 mp.observe_property('eof-reached', 'bool', function(name, val)
     if val and is_autoplay_next_enabled() and (state.has_next ~= "no") then
-        if not state.outro_skipped then
-            state.outro_skipped = true
-            if have_pl and (pl_pos < pl_count) then
-                mp.commandv("playlist-next")
-            else
-                state.loading_active = true
-                state.switching_episode = true
-                state.loading_message = "Loading next episode..."
-                state.loading_start_time = mp.get_time()
-                mp.set_property("pause", "yes")
-                show_osc()
-                request_tick()
-                mp.set_property("user-data/strawverse-action", "next")
+        local dur = mp.get_property_number("duration", 0)
+        local pos = mp.get_property_number("time-pos", 0)
+        if dur > 10 and pos >= (dur - 5) then
+            if not state.outro_skipped then
+                state.outro_skipped = true
+                if have_pl and (pl_pos < pl_count) then
+                    mp.commandv("playlist-next")
+                else
+                    state.loading_active = true
+                    state.switching_episode = true
+                    state.loading_message = "Loading next episode..."
+                    state.loading_start_time = mp.get_time()
+                    mp.set_property("pause", "yes")
+                    show_osc()
+                    request_tick()
+                    mp.set_property("user-data/strawverse-action", "next")
+                end
             end
         end
     end
@@ -3850,7 +3867,11 @@ end)
 mp.observe_property('user-data/strawverse-subtitles', 'string', function(name, val)
     request_tick()
 end)
-mp.observe_property('user-data/strawverse-loading', 'string', function(name, val)
+mp.observe_property('user-data/strawverse-sources', 'string', function(name, val)
+    request_tick()
+end)
+mp.observe_property('user-data/strawverse-loading', 'string', function(name, raw_val)
+    local val = unquote(raw_val)
     if val and val ~= "" and val ~= "no" and val ~= "false" then
         state.loading_active = true
         state.switching_episode = true

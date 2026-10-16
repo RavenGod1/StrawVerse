@@ -203,6 +203,10 @@ async function getFfmpegPath() {
     path.join(__dirname, "..", "..", "ffmpeg", platformDir, binaryName),
   );
 
+  if (process.platform === "linux") {
+    candidatePaths.push("/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg");
+  }
+
   let ffmpegStatic = null;
   try {
     ffmpegStatic = require("ffmpeg-static");
@@ -229,7 +233,7 @@ async function getFfmpegPath() {
     }
   }
 
-  throw new Error("FFmpeg binary not found.");
+  return binaryName;
 }
 
 // Tracks CDN-clearance refreshes so parallel segment workers share one
@@ -307,16 +311,18 @@ class downloader {
     ChangeTosrt = false,
     headers = {},
     quality = null,
+    isM3U8 = true,
   }) {
     this.directory = directory;
     this.quality = quality;
     if (streamUrl?.url) {
       this.streamUrl = streamUrl.url;
       this.headers = streamUrl.headers ?? headers;
-      this.isM3U8 = streamUrl.isM3U8;
+      this.isM3U8 = streamUrl.isM3U8 ?? isM3U8;
     } else {
       this.streamUrl = streamUrl;
       this.headers = headers ?? {};
+      this.isM3U8 = isM3U8;
     }
 
     try {
@@ -731,68 +737,571 @@ class downloader {
     }
   }
 
+  async fetchDirectVideoRange(targetUrl, rangeHeader = null, timeoutMs = 60000) {
+    const u = new URL(targetUrl);
+    const isHttps = u.protocol === "https:";
+    const transport = isHttps ? https : http;
+    const agent = isHttps ? keepAliveAgent.https : keepAliveAgent.http;
+
+    const baseHeaders = await this.getMediaRequestHeaders(targetUrl);
+    const headers = {
+      Host: u.hostname,
+      Accept: "*/*",
+      ...baseHeaders,
+    };
+    if (rangeHeader) {
+      headers.Range = rangeHeader;
+    }
+    const ua =
+      this.headers?.["User-Agent"] ||
+      this.headers?.["user-agent"] ||
+      headers["User-Agent"] ||
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+    headers["User-Agent"] = ua;
+
+    return new Promise((resolve, reject) => {
+      let isAborted = false;
+      const req = transport.request(
+        {
+          hostname: u.hostname,
+          port: u.port || (isHttps ? 443 : 80),
+          path: u.pathname + u.search,
+          method: "GET",
+          headers,
+          agent,
+          timeout: timeoutMs,
+        },
+        (res) => {
+          this.absorbResponseCookies(res.headers);
+          const statusCode = res.statusCode;
+          const statusText = res.statusMessage;
+
+          // Follow redirect if 301/302/303/307/308
+          if (
+            (statusCode === 301 ||
+              statusCode === 302 ||
+              statusCode === 303 ||
+              statusCode === 307 ||
+              statusCode === 308) &&
+            res.headers.location
+          ) {
+            const redirectUrl = resolveUrl(res.headers.location, targetUrl);
+            res.resume();
+            return resolve(
+              this.fetchDirectVideoRange(redirectUrl, rangeHeader, timeoutMs),
+            );
+          }
+
+          if (statusCode >= 400) {
+            const err = new Error(`Request failed with status code ${statusCode}`);
+            err.statusCode = statusCode;
+            err.response = {
+              status: statusCode,
+              statusText,
+              headers: res.headers,
+            };
+            res.resume();
+            return reject(err);
+          }
+
+          const chunks = [];
+          res.on("data", (chunk) => {
+            if (
+              (global.isQueuePaused && global.isQueuePaused()) ||
+              (global.isEpisodeInQueue && !global.isEpisodeInQueue(this.EpID))
+            ) {
+              isAborted = true;
+              req.destroy(
+                new Error(
+                  global.isQueuePaused && global.isQueuePaused()
+                    ? "Queue Paused"
+                    : "Episode Cancelled",
+                ),
+              );
+              return;
+            }
+            chunks.push(chunk);
+          });
+          res.on("end", () => {
+            if (isAborted) return;
+            resolve({
+              status: statusCode,
+              headers: res.headers,
+              data: Buffer.concat(chunks),
+            });
+          });
+          res.on("error", (err) => {
+            reject(err);
+          });
+        },
+      );
+
+      req.on("timeout", () => {
+        req.destroy(new Error(`Timeout of ${timeoutMs}ms exceeded`));
+      });
+      req.on("error", (err) => {
+        reject(err);
+      });
+      req.end();
+    });
+  }
+
+  async fetchDirectVideoStream(targetUrl, timeoutMs = 120000) {
+    const u = new URL(targetUrl);
+    const isHttps = u.protocol === "https:";
+    const transport = isHttps ? https : http;
+    const agent = isHttps ? keepAliveAgent.https : keepAliveAgent.http;
+
+    const baseHeaders = await this.getMediaRequestHeaders(targetUrl);
+    const headers = {
+      Host: u.hostname,
+      Accept: "*/*",
+      ...baseHeaders,
+    };
+    const ua =
+      this.headers?.["User-Agent"] ||
+      this.headers?.["user-agent"] ||
+      headers["User-Agent"] ||
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+    headers["User-Agent"] = ua;
+
+    return new Promise((resolve, reject) => {
+      const req = transport.request(
+        {
+          hostname: u.hostname,
+          port: u.port || (isHttps ? 443 : 80),
+          path: u.pathname + u.search,
+          method: "GET",
+          headers,
+          agent,
+          timeout: timeoutMs,
+        },
+        (res) => {
+          this.absorbResponseCookies(res.headers);
+          const statusCode = res.statusCode;
+
+          if (
+            (statusCode === 301 ||
+              statusCode === 302 ||
+              statusCode === 303 ||
+              statusCode === 307 ||
+              statusCode === 308) &&
+            res.headers.location
+          ) {
+            const redirectUrl = resolveUrl(res.headers.location, targetUrl);
+            res.resume();
+            return resolve(
+              this.fetchDirectVideoStream(redirectUrl, timeoutMs),
+            );
+          }
+
+          if (statusCode >= 400) {
+            const err = new Error(`Request failed with status code ${statusCode}`);
+            err.statusCode = statusCode;
+            err.response = {
+              status: statusCode,
+              headers: res.headers,
+            };
+            res.resume();
+            return reject(err);
+          }
+
+          resolve({
+            status: statusCode,
+            headers: res.headers,
+            data: res,
+          });
+        },
+      );
+
+      req.on("timeout", () => {
+        req.destroy(new Error(`Timeout of ${timeoutMs}ms exceeded`));
+      });
+      req.on("error", reject);
+      req.end();
+    });
+  }
+
+  async downloadDirectVideoMultiPart(targetFile, tempVideoFile, tempDir) {
+    if (
+      (global.isQueuePaused && global.isQueuePaused()) ||
+      (global.isEpisodeInQueue && !global.isEpisodeInQueue(this.EpID))
+    ) {
+      throw new Error(
+        global.isQueuePaused && global.isQueuePaused()
+          ? "Queue Paused"
+          : "Episode Cancelled",
+      );
+    }
+
+    // Step 1: Probe range support and file size
+    this.logProgress("Checking video stream information...");
+    let totalBytes = 0;
+    let supportsRange = false;
+
+    try {
+      const probeRes = await this.fetchWithClearanceRetry(this.streamUrl, () =>
+        this.fetchDirectVideoRange(this.streamUrl, "bytes=0-0", 20000),
+      );
+      this.absorbResponseCookies(probeRes?.headers);
+
+      const contentRange =
+        probeRes.headers?.["content-range"] ||
+        probeRes.headers?.["Content-Range"];
+      if (contentRange) {
+        const match = String(contentRange).match(/\/(\d+)$/);
+        if (match) {
+          totalBytes = parseInt(match[1], 10);
+          supportsRange = totalBytes > 0;
+        }
+      } else if (
+        probeRes.headers?.["accept-ranges"] === "bytes" &&
+        probeRes.headers?.["content-length"]
+      ) {
+        const cl = parseInt(probeRes.headers["content-length"], 10);
+        if (cl > 0) {
+          totalBytes = cl;
+          supportsRange = true;
+        }
+      }
+    } catch (probeErr) {
+      logger.warn(
+        `[Downloader] Range probe failed for direct video: ${probeErr.message}`,
+      );
+    }
+
+    // Fallback: If range probe did not reveal totalBytes, try HEAD
+    if (!supportsRange || !totalBytes) {
+      try {
+        const client = global.axios || require("axios");
+        const headHeaders = await this.getMediaRequestHeaders(this.streamUrl);
+        const headRes = await this.fetchWithClearanceRetry(this.streamUrl, () =>
+          client.head(this.streamUrl, {
+            headers: headHeaders,
+            timeout: 15000,
+          }),
+        );
+        this.absorbResponseCookies(headRes?.headers);
+
+        const cl = parseInt(headRes.headers?.["content-length"], 10);
+        const cr =
+          headRes.headers?.["content-range"] ||
+          headRes.headers?.["Content-Range"];
+        const ar = headRes.headers?.["accept-ranges"];
+
+        if (cr) {
+          const match = String(cr).match(/\/(\d+)$/);
+          if (match) {
+            totalBytes = parseInt(match[1], 10);
+            supportsRange = totalBytes > 0;
+          }
+        } else if (cl && cl > 0) {
+          totalBytes = cl;
+          if (ar === "bytes") {
+            supportsRange = true;
+          }
+        }
+      } catch (_) {}
+    }
+
+    const subCount =
+      this.subtitles && this.subtitles.length > 0 ? this.subtitles.length : 0;
+
+    // Case A: Multi-Part Range Download
+    if (supportsRange && totalBytes > 0) {
+      if (!fs.existsSync(tempDir)) {
+        fs.mkdirSync(tempDir, { recursive: true });
+      }
+      const CHUNK_SIZE = 5 * 1024 * 1024; // 5 MB per part
+      const totalParts = Math.ceil(totalBytes / CHUNK_SIZE);
+      this.totalSegments = totalParts + subCount;
+
+      let alreadyDownloadedBytes = 0;
+      let completedPartsCount = 0;
+      const partsToDownload = [];
+
+      for (let i = 0; i < totalParts; i++) {
+        const start = i * CHUNK_SIZE;
+        const end = Math.min(totalBytes - 1, (i + 1) * CHUNK_SIZE - 1);
+        const expectedSize = end - start + 1;
+        const partFile = path.join(tempDir, `${i}.part`);
+
+        let isComplete = false;
+        try {
+          if (fs.existsSync(partFile)) {
+            const stat = fs.statSync(partFile);
+            if (stat.size === expectedSize) {
+              isComplete = true;
+              alreadyDownloadedBytes += expectedSize;
+              completedPartsCount++;
+            } else {
+              fs.unlinkSync(partFile);
+            }
+          }
+        } catch (_) {}
+
+        if (!isComplete) {
+          partsToDownload.push({
+            index: i,
+            start,
+            end,
+            expectedSize,
+            partFile,
+          });
+        }
+      }
+
+      this.downloadedTotalBytes = alreadyDownloadedBytes;
+      this.currentSegments = completedPartsCount;
+
+      const domainName = extractDomain(
+        this.streamUrl,
+        this.headers?.Referer || this.headers?.referer,
+      );
+      let CONCURRENCY = await getInitialDomainConcurrency(domainName, 6);
+      CONCURRENCY = Math.max(2, Math.min(CONCURRENCY, 8));
+
+      logger.info(
+        `[Downloader] Starting multi-part direct video download: ${totalParts} parts (~${(totalBytes / 1024 / 1024).toFixed(1)} MB), ${completedPartsCount} cached, concurrency: ${CONCURRENCY}`,
+      );
+      this.logProgress(null, CONCURRENCY);
+
+      let nextPartIdx = 0;
+      let stopDownloading = false;
+
+      const downloadPart = async (part, retryCount = 0) => {
+        if (
+          stopDownloading ||
+          (global.isQueuePaused && global.isQueuePaused()) ||
+          (global.isEpisodeInQueue && !global.isEpisodeInQueue(this.EpID))
+        ) {
+          stopDownloading = true;
+          throw new Error(
+            global.isQueuePaused && global.isQueuePaused()
+              ? "Queue Paused"
+              : "Episode Cancelled",
+          );
+        }
+
+        const tempPartFile = `${part.partFile}.tmp`;
+        try {
+          const res = await this.fetchWithClearanceRetry(this.streamUrl, () =>
+            this.fetchDirectVideoRange(
+              this.streamUrl,
+              `bytes=${part.start}-${part.end}`,
+              60000,
+            ),
+          );
+          this.absorbResponseCookies(res?.headers);
+
+          const buf = Buffer.isBuffer(res.data)
+            ? res.data
+            : Buffer.from(res.data);
+          if (!buf || buf.length === 0) {
+            throw new Error(`Empty payload for part ${part.index}`);
+          }
+          if (buf.length !== part.expectedSize && part.end !== totalBytes - 1) {
+            throw new Error(
+              `Size mismatch for part ${part.index}: expected ${part.expectedSize}, got ${buf.length}`,
+            );
+          }
+
+          await fs.promises.writeFile(tempPartFile, buf);
+          await fs.promises.rename(tempPartFile, part.partFile);
+
+          this.downloadedTotalBytes =
+            (this.downloadedTotalBytes || 0) + buf.length;
+          this.currentSegments++;
+          this.logProgress(null, CONCURRENCY);
+        } catch (err) {
+          await fs.promises.unlink(tempPartFile).catch(() => {});
+          if (
+            stopDownloading ||
+            (global.isQueuePaused && global.isQueuePaused()) ||
+            (global.isEpisodeInQueue && !global.isEpisodeInQueue(this.EpID))
+          ) {
+            stopDownloading = true;
+            throw err;
+          }
+
+          const RETRY_DELAYS = [1000, 3000, 5000];
+          if (retryCount < RETRY_DELAYS.length) {
+            logger.warn(
+              `[Downloader] Part ${part.index} failed (${err.message}). Retrying in ${RETRY_DELAYS[retryCount]}ms (attempt ${retryCount + 1}/${RETRY_DELAYS.length})...`,
+            );
+            await new Promise((r) => setTimeout(r, RETRY_DELAYS[retryCount]));
+            return downloadPart(part, retryCount + 1);
+          }
+          throw new Error(
+            `SCRAPER_TEMPORARY_ERROR: Part ${part.index} failed after retries: ${err.message}`,
+          );
+        }
+      };
+
+      const worker = async () => {
+        while (nextPartIdx < partsToDownload.length && !stopDownloading) {
+          const part = partsToDownload[nextPartIdx++];
+          await downloadPart(part);
+        }
+      };
+
+      const workers = [];
+      const workerCount = Math.min(CONCURRENCY, partsToDownload.length || 1);
+      for (let w = 0; w < workerCount; w++) {
+        workers.push(worker());
+      }
+      await Promise.all(workers);
+
+      // Concatenating parts sequentially
+      this.logProgress("Concatenating parts...");
+      if (fs.existsSync(tempVideoFile)) {
+        await fs.promises.unlink(tempVideoFile).catch(() => {});
+      }
+
+      const writer = fs.createWriteStream(tempVideoFile, { flags: "w" });
+      for (let i = 0; i < totalParts; i++) {
+        const partFile = path.join(tempDir, `${i}.part`);
+        if (!fs.existsSync(partFile)) {
+          writer.destroy();
+          throw new Error(`Missing part file during concatenation: ${partFile}`);
+        }
+        const readStream = fs.createReadStream(partFile);
+        await new Promise((resolve, reject) => {
+          readStream.on("error", (err) => {
+            writer.destroy();
+            reject(err);
+          });
+          readStream.on("end", resolve);
+          readStream.pipe(writer, { end: false });
+        });
+      }
+      writer.end();
+      await new Promise((resolve, reject) => {
+        writer.on("finish", resolve);
+        writer.on("error", reject);
+      });
+
+      // Cleanup part files
+      for (let i = 0; i < totalParts; i++) {
+        const partFile = path.join(tempDir, `${i}.part`);
+        await fs.promises.unlink(partFile).catch(() => {});
+      }
+      await fs.promises.rmdir(tempDir).catch(() => {});
+
+      if (fs.existsSync(targetFile)) {
+        await fs.promises.unlink(targetFile).catch(() => {});
+      }
+      await fs.promises.rename(tempVideoFile, targetFile);
+      this.currentSegments = totalParts;
+      this.logProgress("Video download complete!");
+      return;
+    }
+
+    // Case B: Single Stream Download Fallback (when byte ranges not supported)
+    this.totalSegments = 1 + subCount;
+    this.currentSegments = 0;
+    this.logProgress("Downloading video stream...");
+
+    await this.fetchWithClearanceRetry(this.streamUrl, async () => {
+      const res = await this.fetchDirectVideoStream(this.streamUrl, 120000);
+      this.absorbResponseCookies(res?.headers);
+
+      const totalLength = parseInt(res.headers?.["content-length"], 10) || 0;
+      let downloaded = 0;
+      const writer = fs.createWriteStream(tempVideoFile);
+
+      await new Promise((resolve, reject) => {
+        const checkCancelInterval = setInterval(() => {
+          if (
+            (global.isQueuePaused && global.isQueuePaused()) ||
+            (global.isEpisodeInQueue && !global.isEpisodeInQueue(this.EpID))
+          ) {
+            clearInterval(checkCancelInterval);
+            try {
+              res.data.destroy();
+            } catch (_) {}
+            try {
+              writer.destroy();
+            } catch (_) {}
+            reject(
+              new Error(
+                global.isQueuePaused && global.isQueuePaused()
+                  ? "Queue Paused"
+                  : "Episode Cancelled",
+              ),
+            );
+          }
+        }, 1000);
+
+        if (res.data && typeof res.data.on === "function") {
+          res.data.on("data", (chunk) => {
+            downloaded += chunk.length;
+            this.downloadedTotalBytes = downloaded;
+            if (totalLength > 0) {
+              const pct = Math.floor((downloaded / totalLength) * 100);
+              this.logProgress(` (${pct}%)`);
+            } else {
+              const mb = (downloaded / (1024 * 1024)).toFixed(1);
+              this.logProgress(` (${mb} MB)`);
+            }
+          });
+          res.data.pipe(writer);
+          writer.on("finish", () => {
+            clearInterval(checkCancelInterval);
+            resolve();
+          });
+          writer.on("error", (err) => {
+            clearInterval(checkCancelInterval);
+            reject(err);
+          });
+          res.data.on("error", (err) => {
+            clearInterval(checkCancelInterval);
+            reject(err);
+          });
+        } else if (
+          Buffer.isBuffer(res.data) ||
+          res.data instanceof ArrayBuffer
+        ) {
+          clearInterval(checkCancelInterval);
+          const buf = Buffer.isBuffer(res.data)
+            ? res.data
+            : Buffer.from(res.data);
+          fs.writeFileSync(tempVideoFile, buf);
+          resolve();
+        } else {
+          clearInterval(checkCancelInterval);
+          reject(new Error("Unexpected response data type for direct video"));
+        }
+      });
+    });
+
+    if (fs.existsSync(targetFile)) {
+      await fs.promises.unlink(targetFile).catch(() => {});
+    }
+    await fs.promises.rename(tempVideoFile, targetFile);
+    this.currentSegments = 1;
+    this.logProgress("Video download complete!");
+  }
+
   async DownloadStart() {
     try {
       if (this.isDirectVideo) {
-        this.logProgress("Downloading video file...");
         const targetFile = this.mp4;
         const tempVideoFile = `${this.mp4}.downloading`;
+        const tempDir = path.join(
+          this.directory,
+          `.temp_${path.basename(this.SegmentsFile)}`,
+        );
 
-        const client = global.axios || require("axios");
-        const headers = await this.getMediaRequestHeaders(this.streamUrl);
-
-        await this.fetchWithClearanceRetry(this.streamUrl, async () => {
-          const res = await client.get(this.streamUrl, {
-            headers,
-            responseType: "stream",
-            timeout: 120000,
-          });
-
-          const totalLength =
-            parseInt(res.headers?.["content-length"], 10) || 0;
-          let downloaded = 0;
-          const writer = fs.createWriteStream(tempVideoFile);
-
-          await new Promise((resolve, reject) => {
-            if (res.data && typeof res.data.on === "function") {
-              res.data.on("data", (chunk) => {
-                downloaded += chunk.length;
-                this.downloadedTotalBytes = downloaded;
-                if (totalLength > 0) {
-                  const pct = Math.floor((downloaded / totalLength) * 100);
-                  this.logProgress(`Downloading video (${pct}%)`);
-                } else {
-                  const mb = (downloaded / (1024 * 1024)).toFixed(1);
-                  this.logProgress(`Downloading video (${mb} MB)`);
-                }
-              });
-              res.data.pipe(writer);
-              writer.on("finish", resolve);
-              writer.on("error", reject);
-              res.data.on("error", reject);
-            } else if (
-              Buffer.isBuffer(res.data) ||
-              res.data instanceof ArrayBuffer
-            ) {
-              const buf = Buffer.isBuffer(res.data)
-                ? res.data
-                : Buffer.from(res.data);
-              fs.writeFileSync(tempVideoFile, buf);
-              resolve();
-            } else {
-              reject(
-                new Error("Unexpected response data type for direct video"),
-              );
-            }
-          });
-        });
-
-        if (fs.existsSync(targetFile)) {
-          await fs.promises.unlink(targetFile).catch(() => {});
+        if (fs.existsSync(tempVideoFile)) {
+          await fs.promises.unlink(tempVideoFile).catch(() => {});
         }
-        await fs.promises.rename(tempVideoFile, targetFile);
-        this.currentSegments = 1;
-        this.logProgress("Video download complete!");
+
+        await this.downloadDirectVideoMultiPart(
+          targetFile,
+          tempVideoFile,
+          tempDir,
+        );
         return;
       }
 
@@ -1839,6 +2348,8 @@ class downloader {
 
     if (everything) {
       await fs.promises.unlink(this.mp4).catch(() => {});
+      await fs.promises.unlink(`${this.mp4}.downloading`).catch(() => {});
+      await fs.promises.unlink(`${this.mp4}.remux.mp4`).catch(() => {});
 
       const tempDir = path.join(
         this.directory,

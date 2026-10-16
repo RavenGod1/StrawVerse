@@ -236,8 +236,27 @@ async function checkForMappingUpdates(force = false) {
       vRes.data?.canaryChecks ||
       (vRes.data?.paheCanaryCheck ? { pahe: vRes.data.paheCanaryCheck } : null);
     if (canaryChecks && typeof canaryChecks === "object") {
-      setTimeout(() => {
+      setTimeout(async () => {
+        let activeAnime = "";
+        let activeManga = "";
+        try {
+          const { settingfetch } = require("./settings");
+          const cfg = await settingfetch();
+          activeAnime = (cfg?.Animeprovider || "").toLowerCase();
+          activeManga = (cfg?.Mangaprovider || "").toLowerCase();
+        } catch (_) {}
+
         for (const [providerName, canaryData] of Object.entries(canaryChecks)) {
+          const pLower = providerName.toLowerCase();
+          const isSelected =
+            activeAnime === pLower ||
+            activeAnime.endsWith(`/${pLower}`) ||
+            activeManga === pLower ||
+            activeManga.endsWith(`/${pLower}`);
+          if (!isSelected) {
+            continue;
+          }
+
           const provider =
             (global.Anime_providers &&
               (global.Anime_providers[providerName] ||

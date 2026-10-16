@@ -5,6 +5,9 @@ import android.content.Intent;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
+import android.app.DownloadManager;
+import android.provider.DocumentsContract;
 import android.provider.Settings;
 import android.webkit.CookieManager;
 import android.webkit.WebView;
@@ -620,35 +623,131 @@ public class CloudflareBypassPlugin extends Plugin {
 
             Context context = getContext();
 
+            // When openFolder is false and it's a file, open with the file's specific MIME type
+            if (!openFolder && file.isFile()) {
+                String ext = MimeTypeMap.getFileExtensionFromUrl(file.getName());
+                String mimeType = null;
+                if (ext != null) {
+                    mimeType = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext.toLowerCase());
+                }
+                if (mimeType == null) {
+                    mimeType = getMimeType(filePath);
+                }
+                Uri fileUri = FileProvider.getUriForFile(
+                    context,
+                    context.getPackageName() + ".fileprovider",
+                    file
+                );
+                Intent fileIntent = new Intent(Intent.ACTION_VIEW);
+                fileIntent.setDataAndType(fileUri, mimeType != null ? mimeType : "*/*");
+                fileIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+                context.startActivity(fileIntent);
+                call.resolve();
+                return;
+            }
+
+            // When openFolder is true (or path is a directory), open containing folder in File Manager
             File dir = file.isDirectory() ? file : file.getParentFile();
             if (dir == null) dir = file;
 
-            Uri dirUri = FileProvider.getUriForFile(
-                context,
-                context.getPackageName() + ".fileprovider",
-                dir
-            );
+            boolean opened = false;
+            String dirPath = dir.getAbsolutePath();
 
-            Intent intent = new Intent(Intent.ACTION_VIEW);
-            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            intent.setDataAndType(dirUri, "vnd.android.document/directory");
-
-            try {
-                context.startActivity(intent);
-            } catch (Exception e1) {
-                try {
-                    Intent filesIntent = new Intent(Intent.ACTION_VIEW);
-                    filesIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
-                    filesIntent.setDataAndType(dirUri, "*/*");
-                    context.startActivity(filesIntent);
-                } catch (Exception e2) {
-                    Intent chooser = Intent.createChooser(intent, "Open File Location");
-                    chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    context.startActivity(chooser);
+            // 1. Storage Access Framework (SAF) DocumentsUI intent targeting the folder
+            String extRoot = Environment.getExternalStorageDirectory().getAbsolutePath();
+            String relPath = null;
+            if (dirPath.startsWith(extRoot)) {
+                relPath = dirPath.substring(extRoot.length());
+                if (relPath.startsWith("/")) {
+                    relPath = relPath.substring(1);
+                }
+            } else {
+                int dlIdx = dirPath.indexOf("Download");
+                if (dlIdx != -1) {
+                    relPath = dirPath.substring(dlIdx);
                 }
             }
-            call.resolve();
+
+            if (relPath != null && !relPath.isEmpty()) {
+                try {
+                    Uri safUri = Uri.parse("content://com.android.externalstorage.documents/document/primary%3A" + Uri.encode(relPath));
+                    Intent safIntent = new Intent(Intent.ACTION_VIEW);
+                    safIntent.setDataAndType(safUri, "vnd.android.document/directory");
+                    safIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+                    context.startActivity(safIntent);
+                    opened = true;
+                } catch (Exception eSaf) {
+                    Log.w("StrawVerseBypass", "SAF open failed: " + eSaf.getMessage());
+                }
+            }
+
+            // 2. FileProvider URI with resource/folder (recognized by Samsung My Files, Solid Explorer, MiXplorer, etc.)
+            Uri dirUri = null;
+            try {
+                dirUri = FileProvider.getUriForFile(
+                    context,
+                    context.getPackageName() + ".fileprovider",
+                    dir
+                );
+            } catch (Exception ignored) {}
+
+            if (!opened && dirUri != null) {
+                try {
+                    Intent folderIntent = new Intent(Intent.ACTION_VIEW);
+                    folderIntent.setDataAndType(dirUri, "resource/folder");
+                    folderIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+                    context.startActivity(folderIntent);
+                    opened = true;
+                } catch (Exception eFolder) {
+                    Log.w("StrawVerseBypass", "resource/folder open failed: " + eFolder.getMessage());
+                }
+            }
+
+            // 3. FileProvider URI with vnd.android.document/directory
+            if (!opened && dirUri != null) {
+                try {
+                    Intent docIntent = new Intent(Intent.ACTION_VIEW);
+                    docIntent.setDataAndType(dirUri, "vnd.android.document/directory");
+                    docIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+                    context.startActivity(docIntent);
+                    opened = true;
+                } catch (Exception eDoc) {
+                    Log.w("StrawVerseBypass", "vnd.android.document/directory open failed: " + eDoc.getMessage());
+                }
+            }
+
+            // 4. Fall back to DownloadManager.ACTION_VIEW_DOWNLOADS (Universal Android Downloads manager)
+            if (!opened) {
+                try {
+                    Intent dmIntent = new Intent(DownloadManager.ACTION_VIEW_DOWNLOADS);
+                    dmIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    context.startActivity(dmIntent);
+                    opened = true;
+                } catch (Exception eDm) {
+                    Log.w("StrawVerseBypass", "ACTION_VIEW_DOWNLOADS failed: " + eDm.getMessage());
+                }
+            }
+
+            // 5. File manager chooser
+            if (!opened && dirUri != null) {
+                try {
+                    Intent chooserIntent = new Intent(Intent.ACTION_VIEW);
+                    chooserIntent.setDataAndType(dirUri, "resource/folder");
+                    chooserIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+                    Intent chooser = Intent.createChooser(chooserIntent, "Open with File Manager");
+                    chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    context.startActivity(chooser);
+                    opened = true;
+                } catch (Exception eChooser) {
+                    Log.w("StrawVerseBypass", "Chooser open failed: " + eChooser.getMessage());
+                }
+            }
+
+            if (opened) {
+                call.resolve();
+            } else {
+                call.reject("No compatible file manager found to open directory.");
+            }
         } catch (Exception e) {
             Log.e("StrawVerseBypass", "Failed to open file or folder: " + e.getMessage(), e);
             call.reject("Failed to open file or folder: " + e.getMessage());

@@ -134,8 +134,37 @@ const setupFfmpegWindows = async () => {
   console.log("Downloaded and extracted Windows ffmpeg.exe successfully.");
 };
 
+const patchSnapBuilder = () => {
+  try {
+    const snapLegacyPath = path.join(
+      __dirname,
+      "..",
+      "node_modules",
+      "app-builder-lib",
+      "out",
+      "targets",
+      "snap",
+      "coreLegacy.js"
+    );
+    if (fs.existsSync(snapLegacyPath)) {
+      let content = fs.readFileSync(snapLegacyPath, "utf8");
+      if (content.includes('await (0, promises_1.rm)(path.join(appOutDir, "chrome-sandbox"), { force: true });')) {
+        content = content.replace(
+          'await (0, promises_1.rm)(path.join(appOutDir, "chrome-sandbox"), { force: true });',
+          '// Patched by StrawVerse to prevent race condition with AppImage packaging\n    // await (0, promises_1.rm)(path.join(appOutDir, "chrome-sandbox"), { force: true });'
+        );
+        fs.writeFileSync(snapLegacyPath, content, "utf8");
+        console.log("Patched app-builder-lib snap coreLegacy.js to prevent AppImage race condition.");
+      }
+    }
+  } catch (err) {
+    console.warn("Could not patch app-builder-lib snap coreLegacy.js:", err.message);
+  }
+};
+
 const main = async () => {
   try {
+    patchSnapBuilder();
     await setupWindows();
     await setupLinux();
     await setupConfig();
