@@ -26,6 +26,7 @@ const {
 const { getKeyValue, queryOne, run } = require("../utils/db");
 const ImageCacheManager = require("../utils/ImageCacheManager");
 const { getHeaders } = require("../utils/proxyHeaders");
+const { isAdSegmentUrl } = require("../utils/adSegments");
 const axios = require("axios");
 const { checkForMappingUpdates } = require("../utils/mappingUpdater");
 const {
@@ -2157,21 +2158,7 @@ router.get("/api/stream/m3u8", async (req, res) => {
     // Some hosts inject ad segments (e.g. TikTok CDN images) at the head of
     // variant playlists. MPV locks onto the image codec ("Video: png") and
     // then chokes on every real segment. Drop ad URIs (plus their EXTINF)
-    // so playback starts on genuine media.
-    const AD_SEGMENT_PATTERNS = [
-      /tiktokcdn/i,
-      /ad-site/i,
-      /doubleclick/i,
-      /googleads/i,
-      /imasdk/i,
-      /\/ads?\//i,
-      /vast/i,
-      /preroll/i,
-      /\.image(\?|$)/i,
-    ];
-    const isAdSegmentUrl = (abs) =>
-      AD_SEGMENT_PATTERNS.some((re) => re.test(abs));
-
+    // so playback starts on genuine media. Patterns live in utils/adSegments.
     let nextIsVariantPlaylist = false;
     const rawLines = String(data).split("\n");
     const outLines = [];
