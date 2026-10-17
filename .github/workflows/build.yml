@@ -49,9 +49,12 @@ jobs:
         working-directory: electron
         run: npm ci
 
+      # --publish never: package.json declares a GitHub `publish` config, and CI
+      # would otherwise try to upload to it and fail without a GH_TOKEN. Our own
+      # release job uses softprops/action-gh-release instead.
       - name: Build Windows installer
         working-directory: electron
-        run: npx electron-builder --win nsis
+        run: npx electron-builder --win nsis --publish never
 
       - uses: actions/upload-artifact@v4
         with:
@@ -95,7 +98,7 @@ jobs:
 
       - name: Build AppImage + deb
         working-directory: electron
-        run: npx electron-builder --linux AppImage deb
+        run: npx electron-builder --linux AppImage deb --publish never
 
       - uses: actions/upload-artifact@v4
         with:
@@ -116,7 +119,7 @@ jobs:
         working-directory: electron
         run: |
           sudo snap install snapcraft --classic
-          npx electron-builder --linux snap
+          npx electron-builder --linux snap --publish never
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -145,12 +148,13 @@ jobs:
             capacitor/package-lock.json
             electron/package-lock.json
 
+      # Override `packages` — the default includes the deprecated "tools" package,
+      # which modern sdkmanager rejects ("Failed to find package 'tools'"). The
+      # action still provisions cmdline-tools and accepts licenses; we just point
+      # it at the exact SDK pieces this app needs (compileSdk 34, NDK 28).
       - uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK packages
-        run: |
-          yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;28.0.13004108"
+        with:
+          packages: 'platform-tools platforms;android-34 build-tools;34.0.0 ndk;28.0.13004108'
 
       - name: Install GUI dependencies
         working-directory: gui
