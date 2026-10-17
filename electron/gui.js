@@ -679,6 +679,14 @@ app.whenReady().then(async () => {
     });
     server.keepAliveTimeout = 65000;
     server.headersTimeout = 66000;
+    // Malformed requests (e.g. MPV's wrapped folded headers) are auto-400'd
+    // by llhttp before any route/middleware runs — log them or they vanish.
+    server.on("clientError", (err, socket) => {
+      logger.warn(
+        `[Express] Rejected malformed request (${err.code || err.message})`,
+      );
+      if (socket && !socket.destroyed) socket.destroy();
+    });
     server.on("error", (err) => {
       logger.error(
         `Express server failed to listen on port ${PORT}: ${err.message}`,

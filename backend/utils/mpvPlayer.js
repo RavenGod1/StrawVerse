@@ -350,6 +350,31 @@ const toProxyUrl = (url, customHeaders, prefQuality = "") => {
   return `${base}/segment?url=${encodeURIComponent(url)}${refParam}`;
 };
 
+// mpv/ffmpeg wraps --http-header-fields values longer than ~78 chars into a
+// folded second line. Modern HTTP parsers (llhttp — Node, Chromium, Go)
+// reject folded headers with HPE_INVALID_HEADER_TOKEN and answer 400 before
+// any route runs, which made every proxied MPV request fail instantly with
+// "Failed to open" and zero app log lines. Referer/User-Agent must use mpv's
+// dedicated options (never wrapped); any other header too long to fit on one
+// short line is dropped — the stream proxy re-attaches upstream headers
+// server-side anyway.
+const MAX_HEADER_LINE = 70;
+const sanitizeMpvHeaderFields = (headers) => {
+  const fields = [];
+  if (!headers || typeof headers !== "object") return fields;
+  for (const [hk, hv] of Object.entries(headers)) {
+    const hkl = hk.toLowerCase();
+    if (hkl === "referer" || hkl === "user-agent") continue;
+    if (typeof hv !== "string") continue;
+    const clean = hv.replace(/[\r\n]+/g, " ").trim();
+    if (!clean) continue;
+    const line = `${hk}: ${clean}`;
+    if (line.length > MAX_HEADER_LINE) continue;
+    fields.push(line);
+  }
+  return fields;
+};
+
 async function playInMpv(window, options) {
   if (!app || process.platform === "android") {
     throw new Error("MPV player is only supported on Desktop");
@@ -1025,20 +1050,18 @@ async function playInMpv(window, options) {
     activeSources[0]?.headers?.["user-agent"] ||
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
+  // Referer/User-Agent go through mpv's dedicated options — passing them via
+  // --http-header-fields triggers the 78-char wrap bug (see
+  // sanitizeMpvHeaderFields) that made every proxied request 400.
   if (activeReferer) {
     args.push(`--referrer=${activeReferer}`);
-    args.push(`--http-header-fields=Referer: ${activeReferer}`);
   }
-  args.push(`--http-header-fields=User-Agent: ${activeUserAgent}`);
   args.push(`--user-agent=${activeUserAgent}`);
 
-  if (activeSources[0]?.headers) {
-    for (const [hk, hv] of Object.entries(activeSources[0].headers)) {
-      const hkl = hk.toLowerCase();
-      if (hkl !== "referer" && hkl !== "user-agent" && typeof hv === "string") {
-        args.push(`--http-header-fields=${hk}: ${hv}`);
-      }
-    }
+  for (const headerLine of sanitizeMpvHeaderFields(
+    activeSources[0]?.headers,
+  )) {
+    args.push(`--http-header-fields=${headerLine}`);
   }
 
   if (options.hasNext === undefined || options.hasPrev === undefined) {
@@ -1515,28 +1538,19 @@ async function playInMpv(window, options) {
         window.webContents.send("mpv-loading", { episode, title });
       }
 
-      const headerFields = [];
       if (activeReferer) {
         client.write(
           JSON.stringify({
             command: ["set_property", "referrer", activeReferer],
           }) + "\n",
         );
-        headerFields.push(`Referer: ${activeReferer}`);
       }
-      headerFields.push(`User-Agent: ${activeUserAgent}`);
-      if (activeSources[0]?.headers) {
-        for (const [hk, hv] of Object.entries(activeSources[0].headers)) {
-          const hkl = hk.toLowerCase();
-          if (
-            hkl !== "referer" &&
-            hkl !== "user-agent" &&
-            typeof hv === "string"
-          ) {
-            headerFields.push(`${hk}: ${hv}`);
-          }
-        }
-      }
+      client.write(
+        JSON.stringify({
+          command: ["set_property", "user-agent", activeUserAgent],
+        }) + "\n",
+      );
+      const headerFields = sanitizeMpvHeaderFields(activeSources[0]?.headers);
       client.write(
         JSON.stringify({
           command: ["set_property", "http-header-fields", headerFields],
@@ -2145,34 +2159,25 @@ async function playInMpv(window, options) {
                           finalServer.headers?.referer ||
                           activeReferer ||
                           "";
-                        const sHeaderFields = [];
                         if (sReferer) {
                           client.write(
                             JSON.stringify({
                               command: ["set_property", "referrer", sReferer],
                             }) + "\n",
                           );
-                          sHeaderFields.push(`Referer: ${sReferer}`);
                         }
                         const sUserAgent =
                           finalServer.headers?.["User-Agent"] ||
                           finalServer.headers?.["user-agent"] ||
                           activeUserAgent;
-                        sHeaderFields.push(`User-Agent: ${sUserAgent}`);
-                        if (finalServer.headers) {
-                          for (const [hk, hv] of Object.entries(
-                            finalServer.headers,
-                          )) {
-                            const hkl = hk.toLowerCase();
-                            if (
-                              hkl !== "referer" &&
-                              hkl !== "user-agent" &&
-                              typeof hv === "string"
-                            ) {
-                              sHeaderFields.push(`${hk}: ${hv}`);
-                            }
-                          }
-                        }
+                        client.write(
+                          JSON.stringify({
+                            command: ["set_property", "user-agent", sUserAgent],
+                          }) + "\n",
+                        );
+                        const sHeaderFields = sanitizeMpvHeaderFields(
+                          finalServer.headers,
+                        );
                         client.write(
                           JSON.stringify({
                             command: [
