@@ -1,5 +1,27 @@
 # Changelog
 
+# [11.0.5] - 2026-10-17
+
+### Video Player & Streaming
+
+- **Playback Fix (Windows):** MPV's wrapped `User-Agent` header was silently making every proxied stream return `400` ("Failed to open" with no logs). Headers now go through dedicated MPV options instead of folded header-lines.
+- **Ad-Decoy Fallback:** Streams that are entirely ad-image placeholders are rejected during verification, so playback automatically falls through to the next working server.
+- **Ad Filtering:** Ad-image segments are stripped from proxied HLS playlists on every platform.
+
+### Android Mobile
+
+- **SQLite Compat:** Database writes use a legacy path on older Android SQLite (<3.24), fixing startup on pre-2018 devices.
+
+### Reliability
+
+- **Smarter Auto-Next:** Episode auto-advance now requires 30s of real accumulated playback instead of triggering on a network stall.
+- **No Duplicate Players:** Launching a title no longer spawns two MPV instances.
+- **Marketplace Safety:** Custom extension repos only match their exact owner.
+
+### Build
+
+- **Cross-Platform CI:** GitHub Actions now builds Windows, Linux (AppImage/deb/snap) and Android artifacts on every push, and publishes a release on version tags.
+
 # [11.0.2] - 2026-10-16
 
 ### Video Player & Streaming
