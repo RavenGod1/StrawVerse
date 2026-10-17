@@ -162,7 +162,11 @@ jobs:
 
       - name: Install Capacitor deps
         working-directory: capacitor
-        run: npm ci
+        # package.json mixes Capacitor core/app/browser v6 with android/cli v8;
+        # strict peer resolution rejects that on a fresh CI install, but the
+        # resolved tree is exactly what local builds use and works. Install the
+        # lockfile as-is instead of "fixing" the versions.
+        run: npm ci --legacy-peer-deps
 
       # Backend deps for esbuild resolution (NODE_PATH). --ignore-scripts skips
       # the desktop binary download, which Android does not use.
