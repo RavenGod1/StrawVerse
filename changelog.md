@@ -1,5 +1,16 @@
 # Changelog
 
+# [11.0.6] - 2026-10-23
+
+### Dependencies & Security
+
+- **sprintf-js DoS Fix:** `@electron/get` is pinned to `^5.1.0`, removing the vulnerable `sprintf-js`/`roarr` chain from the dependency tree.
+- **Vite 8.3.5:** GUI build tooling upgraded from `8.0.12` to `8.3.5`.
+
+### Build
+
+- **Local Builds Only:** Windows, Linux and Android artifacts are built locally — no CI workflows run.
+
 # [11.0.5] - 2026-10-17
 
 ### Video Player & Streaming
