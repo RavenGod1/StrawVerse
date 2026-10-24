@@ -347,7 +347,7 @@ const toProxyUrl = (url, customHeaders, prefQuality = "") => {
   if (url.includes(".m3u8")) {
     return `${base}/m3u8?url=${encodeURIComponent(url)}${refParam}${qualParam}`;
   }
-  return `${base}/segment?url=${encodeURIComponent(url)}${refParam}`;
+  return `${base}/segment.ts?url=${encodeURIComponent(url)}${refParam}`;
 };
 
 async function playInMpv(window, options) {
@@ -992,7 +992,7 @@ async function playInMpv(window, options) {
     "--demuxer-lavf-probesize=1000000",
     "--demuxer-max-bytes=100M",
     "--demuxer-max-back-bytes=30M",
-    "--demuxer-lavf-o=timeout=10000000",
+    "--demuxer-lavf-o=timeout=10000000,allowed_extensions=ALL,allowed_segment_extensions=ALL",
     "--osd-on-seek=msg",
     `--volume=${options.volume !== undefined ? Math.floor(options.volume) : 100}`,
     `--speed=${options.speed || 1.0}`,
@@ -1007,16 +1007,14 @@ async function playInMpv(window, options) {
 
   if (activeReferer) {
     args.push(`--referrer=${activeReferer}`);
-    args.push(`--http-header-fields=Referer: ${activeReferer}`);
   }
-  args.push(`--http-header-fields=User-Agent: ${activeUserAgent}`);
   args.push(`--user-agent=${activeUserAgent}`);
 
   if (activeSources[0]?.headers) {
     for (const [hk, hv] of Object.entries(activeSources[0].headers)) {
       const hkl = hk.toLowerCase();
       if (hkl !== "referer" && hkl !== "user-agent" && typeof hv === "string") {
-        args.push(`--http-header-fields=${hk}: ${hv}`);
+        args.push(`--http-header-fields=${hk}: ${hv.replace(/,/g, "%2C")}`);
       }
     }
   }
@@ -1495,16 +1493,19 @@ async function playInMpv(window, options) {
         window.webContents.send("mpv-loading", { episode, title });
       }
 
-      const headerFields = [];
       if (activeReferer) {
         client.write(
           JSON.stringify({
             command: ["set_property", "referrer", activeReferer],
           }) + "\n",
         );
-        headerFields.push(`Referer: ${activeReferer}`);
       }
-      headerFields.push(`User-Agent: ${activeUserAgent}`);
+      client.write(
+        JSON.stringify({
+          command: ["set_property", "user-agent", activeUserAgent],
+        }) + "\n",
+      );
+      const headerFields = [];
       if (activeSources[0]?.headers) {
         for (const [hk, hv] of Object.entries(activeSources[0].headers)) {
           const hkl = hk.toLowerCase();
@@ -1517,11 +1518,13 @@ async function playInMpv(window, options) {
           }
         }
       }
-      client.write(
-        JSON.stringify({
-          command: ["set_property", "http-header-fields", headerFields],
-        }) + "\n",
-      );
+      if (headerFields.length > 0) {
+        client.write(
+          JSON.stringify({
+            command: ["set_property", "http-header-fields", headerFields],
+          }) + "\n",
+        );
+      }
 
       client.write(
         JSON.stringify({ command: ["loadfile", playUrl, "replace"] }) + "\n",
@@ -1620,12 +1623,7 @@ async function playInMpv(window, options) {
         m.includes("parametric stereo")
       )
         return true;
-      if (
-        m.includes("ffmpeg/audio") ||
-        m.includes("ffmpeg/video") ||
-        m.includes("[ffmpeg]")
-      )
-        return true;
+      if (m.includes("ffmpeg/audio") || m.includes("ffmpeg/video")) return true;
       if (
         m.includes("aac:") ||
         m.includes("h264:") ||

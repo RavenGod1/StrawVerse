@@ -2097,7 +2097,7 @@ router.get("/api/stream/m3u8", async (req, res) => {
     const refParam = customReferer
       ? `&referer=${encodeURIComponent(customReferer)}`
       : "";
-    const segProxy = `http://127.0.0.1:${port}/api/stream/segment?url=`;
+    const segProxy = `http://127.0.0.1:${port}/api/stream/segment.ts?url=`;
     const m3u8Proxy = `http://127.0.0.1:${port}/api/stream/m3u8?url=`;
 
     const regHost = (targetAbs) => {
@@ -2154,42 +2154,104 @@ router.get("/api/stream/m3u8", async (req, res) => {
 });
 
 // Proxy for m3u8 video segment
-router.get("/api/stream/segment", async (req, res) => {
-  const url = req.query.url;
-  const customReferer = req.query.referer;
-  if (!url) return res.status(400).send("No URL");
-  try {
-    if (customReferer && global.setDynamicReferer) {
-      global.setDynamicReferer(url, customReferer);
-    }
-    const reqHeaders = getHeaders(url);
-    if (customReferer) {
-      reqHeaders.Referer = customReferer;
-    }
-
-    const isDirectVideo =
-      Boolean(url.split("?")[0].match(/\.(mp4|mkv|webm|mov|avi)$/i)) ||
-      Boolean(req.headers.range);
-
-    if (isDirectVideo) {
-      if (req.headers.range) {
-        reqHeaders.Range = req.headers.range;
+router.get(
+  ["/api/stream/segment", "/api/stream/segment.ts"],
+  async (req, res) => {
+    const url = req.query.url;
+    const customReferer = req.query.referer;
+    if (!url) return res.status(400).send("No URL");
+    try {
+      if (customReferer && global.setDynamicReferer) {
+        global.setDynamicReferer(url, customReferer);
       }
+      const reqHeaders = getHeaders(url);
+      if (customReferer) {
+        reqHeaders.Referer = customReferer;
+      }
+
+      const isDirectVideo = Boolean(
+        url.split("?")[0].match(/\.(mp4|mkv|webm|mov|avi)$/i),
+      );
+
+      if (isDirectVideo) {
+        if (req.headers.range) {
+          reqHeaders.Range = req.headers.range;
+        }
+        let attempts = 0;
+        let resp;
+        while (attempts < 2) {
+          try {
+            resp = await global.axios.get(url, {
+              headers: reqHeaders,
+              responseType: "stream",
+              timeout: 30000,
+              validateStatus: (s) => s < 400,
+            });
+            break;
+          } catch (err) {
+            attempts++;
+            const status = err.response?.status;
+            if (
+              (status === 403 || status === 503) &&
+              attempts < 2 &&
+              global.cloudflarebypass
+            ) {
+              try {
+                const bypassTarget = customReferer || url;
+                await global.cloudflarebypass(bypassTarget, true);
+                const fresh = getHeaders(url);
+                if (customReferer) fresh.Referer = customReferer;
+                if (req.headers.range) fresh.Range = req.headers.range;
+                Object.assign(reqHeaders, fresh);
+              } catch (_) {}
+            } else if (attempts >= 2) {
+              throw err;
+            }
+          }
+        }
+
+        const status = resp.status || (req.headers.range ? 206 : 200);
+        res.status(status);
+        const copyHeaders = [
+          "content-type",
+          "content-length",
+          "content-range",
+          "accept-ranges",
+          "last-modified",
+          "etag",
+        ];
+        copyHeaders.forEach((h) => {
+          const val = resp.headers?.[h];
+          if (val) res.setHeader(h, val);
+        });
+        if (!res.getHeader("accept-ranges")) {
+          res.setHeader("Accept-Ranges", "bytes");
+        }
+        if (req.method === "HEAD") {
+          return res.end();
+        }
+        resp.data.pipe(res);
+        return;
+      }
+
       let attempts = 0;
-      let resp;
+      let data, headers;
       while (attempts < 2) {
         try {
-          resp = await global.axios.get(url, {
+          const resp = await global.axios.get(url, {
             headers: reqHeaders,
-            responseType: "stream",
-            timeout: 30000,
-            validateStatus: (s) => s < 400,
+            responseType: "arraybuffer",
+            timeout: 10000,
           });
+          data = resp.data;
+          headers = resp.headers;
           break;
         } catch (err) {
           attempts++;
           const status = err.response?.status;
-          if (
+          if (status === 429 && attempts < 2) {
+            await new Promise((r) => setTimeout(r, 1000));
+          } else if (
             (status === 403 || status === 503) &&
             attempts < 2 &&
             global.cloudflarebypass
@@ -2199,7 +2261,6 @@ router.get("/api/stream/segment", async (req, res) => {
               await global.cloudflarebypass(bypassTarget, true);
               const fresh = getHeaders(url);
               if (customReferer) fresh.Referer = customReferer;
-              if (req.headers.range) fresh.Range = req.headers.range;
               Object.assign(reqHeaders, fresh);
             } catch (_) {}
           } else if (attempts >= 2) {
@@ -2208,107 +2269,69 @@ router.get("/api/stream/segment", async (req, res) => {
         }
       }
 
-      const status = resp.status || (req.headers.range ? 206 : 200);
-      res.status(status);
-      const copyHeaders = [
-        "content-type",
-        "content-length",
-        "content-range",
-        "accept-ranges",
-        "last-modified",
-        "etag",
-      ];
-      copyHeaders.forEach((h) => {
-        const val = resp.headers?.[h];
-        if (val) res.setHeader(h, val);
-      });
-      if (!res.getHeader("accept-ranges")) {
-        res.setHeader("Accept-Ranges", "bytes");
+      if (
+        !Buffer.isBuffer(data) &&
+        !(data instanceof ArrayBuffer) &&
+        !ArrayBuffer.isView(data) &&
+        typeof data !== "string"
+      ) {
+        throw new Error("Invalid binary/stream payload from upstream");
       }
-      if (req.method === "HEAD") {
-        return res.end();
-      }
-      resp.data.pipe(res);
-      return;
-    }
+      let buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
 
-    let attempts = 0;
-    let data, headers;
-    while (attempts < 2) {
-      try {
-        const resp = await global.axios.get(url, {
-          headers: reqHeaders,
-          responseType: "arraybuffer",
-          timeout: 10000,
-        });
-        data = resp.data;
-        headers = resp.headers;
-        break;
-      } catch (err) {
-        attempts++;
-        const status = err.response?.status;
-        if (status === 429 && attempts < 2) {
-          await new Promise((r) => setTimeout(r, 1000));
-        } else if (
-          (status === 403 || status === 503) &&
-          attempts < 2 &&
-          global.cloudflarebypass
-        ) {
-          try {
-            const bypassTarget = customReferer || url;
-            await global.cloudflarebypass(bypassTarget, true);
-            const fresh = getHeaders(url);
-            if (customReferer) fresh.Referer = customReferer;
-            Object.assign(reqHeaders, fresh);
-          } catch (_) {}
-        } else if (attempts >= 2) {
-          throw err;
+      if (
+        buffer.length >= 8 &&
+        buffer[0] === 0x89 &&
+        buffer[1] === 0x50 &&
+        buffer[2] === 0x4e &&
+        buffer[3] === 0x47 &&
+        buffer[4] === 0x0d &&
+        buffer[5] === 0x0a &&
+        buffer[6] === 0x1a &&
+        buffer[7] === 0x0a
+      ) {
+        for (let i = 0; i < Math.min(buffer.length - 3, 1024); i++) {
+          if (
+            buffer[i] === 0x49 &&
+            buffer[i + 1] === 0x45 &&
+            buffer[i + 2] === 0x4e &&
+            buffer[i + 3] === 0x44
+          ) {
+            buffer = buffer.subarray(i + 8);
+            break;
+          }
         }
       }
-    }
 
-    if (
-      !Buffer.isBuffer(data) &&
-      !(data instanceof ArrayBuffer) &&
-      !ArrayBuffer.isView(data) &&
-      typeof data !== "string"
-    ) {
-      throw new Error("Invalid binary/stream payload from upstream");
-    }
-    let buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
+      const ct = headers?.["content-type"] || "application/octet-stream";
+      res.setHeader("Content-Type", ct.includes("image") ? "video/mp2t" : ct);
 
-    if (
-      buffer.length >= 8 &&
-      buffer[0] === 0x89 &&
-      buffer[1] === 0x50 &&
-      buffer[2] === 0x4e &&
-      buffer[3] === 0x47 &&
-      buffer[4] === 0x0d &&
-      buffer[5] === 0x0a &&
-      buffer[6] === 0x1a &&
-      buffer[7] === 0x0a
-    ) {
-      for (let i = 0; i < Math.min(buffer.length - 3, 1024); i++) {
-        if (
-          buffer[i] === 0x49 &&
-          buffer[i + 1] === 0x45 &&
-          buffer[i + 2] === 0x4e &&
-          buffer[i + 3] === 0x44
-        ) {
-          buffer = buffer.subarray(i + 8);
-          break;
+      if (req.headers.range) {
+        const match = req.headers.range.match(/bytes=(\d+)-(\d*)/);
+        if (match) {
+          const start = parseInt(match[1], 10);
+          const end = match[2] ? parseInt(match[2], 10) : buffer.length - 1;
+          if (start < buffer.length && end >= start) {
+            const chunk = buffer.subarray(start, end + 1);
+            res.status(206);
+            res.setHeader(
+              "Content-Range",
+              `bytes ${start}-${end}/${buffer.length}`,
+            );
+            res.setHeader("Content-Length", chunk.length);
+            res.setHeader("Accept-Ranges", "bytes");
+            return res.send(chunk);
+          }
         }
       }
-    }
 
-    const ct = headers?.["content-type"] || "application/octet-stream";
-    res.setHeader("Content-Type", ct.includes("image") ? "video/mp2t" : ct);
-    res.send(buffer);
-  } catch (err) {
-    logger.error(`[StreamProxy] segment error: ${err.message}`);
-    res.status(502).send(err.message);
-  }
-});
+      res.send(buffer);
+    } catch (err) {
+      logger.error(`[StreamProxy] segment error: ${err.message}`);
+      res.status(502).send(err.message);
+    }
+  },
+);
 
 async function linkMediaItem({ oldId, malId, type, title, image }) {
   const itemType = type || "Anime";
