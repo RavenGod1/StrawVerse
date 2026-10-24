@@ -1,5 +1,19 @@
 # Changelog
 
+# [11.0.3] - 2026-10-24
+
+### Video Player & Streaming Fixes
+
+- **Anikoto & HLS Streaming Fix:** Resolved an issue where HLS streams (e.g., from Anikoto) failed to buffer or load in MPV due to demuxer segment restrictions and proxy URL routing.
+- **Enhanced Segment Streaming & Byte-Range Support:** Added `.ts` extension support and partial content byte-range handling (`206 Partial Content`) to the local stream proxy, enabling smooth segment buffering and seeking in MPV.
+- **MPV Demuxer & Header Hardening:** Configured MPV's libavformat demuxer (`allowed_extensions=ALL,allowed_segment_extensions=ALL`) and fixed comma escaping in HTTP header fields so providers with complex tokens or custom headers load without misparsing.
+- **Stream Clearance Retries:** Added automatic Cloudflare clearance retry handling to video segment proxy requests to reliably recover from transient 403/503 errors during playback.
+
+### Security & Dependency Updates
+
+- **Security Hardening:** Updated `@electron/get` to mitigate transitive `sprintf-js` prototype pollution vulnerabilities.
+- **Dependencies Bump:** Updated `vite` and frontend dependencies to their latest stable releases.
+
 # [11.0.2] - 2026-10-16
 
 ### Video Player & Streaming
