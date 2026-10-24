@@ -26,7 +26,7 @@ export default function Marketplace({ initialType }) {
     Anime: [],
     Manga: [],
   });
-  const [appVersion, setAppVersion] = useState("10.1.2");
+  const [appVersion, setAppVersion] = useState("11.0.4");
   const [loading, setLoading] = useState(true);
   const [processingId, setProcessingId] = useState(null);
   const [showRepoModal, setShowRepoModal] = useState(false);
@@ -115,7 +115,7 @@ export default function Marketplace({ initialType }) {
       }
 
       // 5. Fetch current app version
-      let currentAppVer = "10.1.2";
+      let currentAppVer = "11.0.4";
       if (window.sharedStateAPI && window.sharedStateAPI.getAppVersion) {
         try {
           const v = await window.sharedStateAPI.getAppVersion();
@@ -126,7 +126,8 @@ export default function Marketplace({ initialType }) {
           const vRes = await fetch("/api/version");
           if (vRes.ok) {
             const vData = await vRes.json();
-            if (vData.version) currentAppVer = vData.version;
+            const v = vData.version || vData.result;
+            if (v) currentAppVer = v;
           }
         } catch (_) {}
       }
@@ -144,8 +145,14 @@ export default function Marketplace({ initialType }) {
 
   const isAppVersionBelow = (current, minRequired) => {
     if (!current || !minRequired) return false;
-    const curr = String(current).replace(/^v/, "").split(".").map((n) => parseInt(n, 10) || 0);
-    const req = String(minRequired).replace(/^v/, "").split(".").map((n) => parseInt(n, 10) || 0);
+    const curr = String(current)
+      .replace(/^v/, "")
+      .split(".")
+      .map((n) => parseInt(n, 10) || 0);
+    const req = String(minRequired)
+      .replace(/^v/, "")
+      .split(".")
+      .map((n) => parseInt(n, 10) || 0);
     for (let i = 0; i < Math.max(curr.length, req.length); i++) {
       const c = curr[i] || 0;
       const r = req[i] || 0;
@@ -510,7 +517,10 @@ export default function Marketplace({ initialType }) {
                       }}
                     >
                       <ShieldAlert size={14} />
-                      <span>Requires App v{provider.MinAppVersion}+ (You: v{appVersion})</span>
+                      <span>
+                        Requires App v{provider.MinAppVersion}+ (You: v
+                        {appVersion})
+                      </span>
                     </div>
                   ) : null}
 

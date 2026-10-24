@@ -507,6 +507,44 @@ async function CheckScrapperFolderExists() {
 
 // --- Extension Security & Multi-Repo Marketplace Utilities ---
 
+async function httpGetText(url, timeoutMs = 15000) {
+  try {
+    const client = global.axios || require("axios");
+    const res = await client.get(url, {
+      timeout: timeoutMs,
+      responseType: "text",
+      transformResponse: [(data) => data],
+    });
+    return typeof res.data === "string" ? res.data : JSON.stringify(res.data);
+  } catch (axiosErr) {
+    try {
+      return await got(url, { timeout: { request: timeoutMs } }).text();
+    } catch (_) {
+      throw axiosErr;
+    }
+  }
+}
+
+async function httpGetBuffer(url, timeoutMs = 10000) {
+  try {
+    const client = global.axios || require("axios");
+    const res = await client.get(url, {
+      timeout: timeoutMs,
+      responseType: "arraybuffer",
+    });
+    return Buffer.from(res.data);
+  } catch (axiosErr) {
+    try {
+      return await got(url, {
+        responseType: "buffer",
+        timeout: { request: timeoutMs },
+      }).buffer();
+    } catch (_) {
+      throw axiosErr;
+    }
+  }
+}
+
 const BLOCKED_MODULES = new Set([
   "child_process",
   "worker_threads",
@@ -691,9 +729,7 @@ async function addExtensionRepo(inputUrl) {
   }
 
   // Validate that marketplace.json exists and is valid
-  const res = await got(parsed.marketplaceUrl, {
-    timeout: { request: 10000 },
-  }).text();
+  const res = await httpGetText(parsed.marketplaceUrl, 10000);
   let json = null;
   try {
     json = JSON.parse(res);
@@ -770,9 +806,7 @@ async function fetchAggregatedMarketplace(activeType = "Anime") {
   const results = await Promise.allSettled(
     repos.map(async (repo) => {
       try {
-        const text = await got(repo.marketplaceUrl, {
-          timeout: { request: 8000 },
-        }).text();
+        const text = await httpGetText(repo.marketplaceUrl, 8000);
         const data = JSON.parse(text);
         const list = Array.isArray(data[activeType]) ? data[activeType] : [];
         return list.map((item) => ({
@@ -1257,14 +1291,10 @@ async function HandleExtensions(
       let response;
 
       try {
-        response = await got(extScriptUrl, {
-          timeout: { request: 15000 },
-        }).text();
+        response = await httpGetText(extScriptUrl, 15000);
       } catch (err) {
         try {
-          response = await got(directScriptUrl, {
-            timeout: { request: 15000 },
-          }).text();
+          response = await httpGetText(directScriptUrl, 15000);
           scriptUrl = directScriptUrl;
         } catch (_) {
           throw err;
@@ -1320,16 +1350,10 @@ async function HandleExtensions(
         const iconUrl = `${rawBase.replace(/\/$/, "")}/ico/${ExtensionName}.ico`;
         let iconBuffer;
         try {
-          iconBuffer = await got(iconUrl, {
-            responseType: "buffer",
-            timeout: { request: 8000 },
-          }).buffer();
+          iconBuffer = await httpGetBuffer(iconUrl, 8000);
         } catch (_) {
           const fallbackIconUrl = `${rawBase.replace(/\/$/, "")}/extensions/ico/${ExtensionName}.ico`;
-          iconBuffer = await got(fallbackIconUrl, {
-            responseType: "buffer",
-            timeout: { request: 8000 },
-          }).buffer();
+          iconBuffer = await httpGetBuffer(fallbackIconUrl, 8000);
         }
         if (iconBuffer && iconBuffer.length > 0) {
           await fs.promises.writeFile(iconDest, iconBuffer);

@@ -31,7 +31,8 @@ router.delete("/api/logs", async (req, res) => {
 
 // Get app version
 router.get("/api/version", (req, res) => {
-  res.json({ version: getCurrentAppVersion() });
+  const version = getCurrentAppVersion();
+  res.json({ ok: true, result: version, version });
 });
 
 // Get application changelog / release notes
@@ -170,7 +171,7 @@ router.get("/api/marketplace/repos", (req, res) => {
 router.post("/api/marketplace/repos", async (req, res) => {
   try {
     const { addExtensionRepo } = require("../utils/settings");
-    const { url } = req.body;
+    const url = req.body?.url || req.body?.args?.[0];
     const result = await addExtensionRepo(url);
     res.json(result);
   } catch (err) {
@@ -185,6 +186,18 @@ router.delete("/api/marketplace/repos/:owner", async (req, res) => {
     res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });
+  }
+});
+
+// Extensions API (Add / Delete / Reload)
+router.post("/api/extensions", async (req, res) => {
+  try {
+    const { HandleExtensions } = require("../utils/settings");
+    const args = Array.isArray(req.body?.args) ? req.body.args : [];
+    const result = await HandleExtensions(...args);
+    res.json({ ok: true, result });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
   }
 });
 

@@ -197,12 +197,21 @@ function applyDefaultPaths() {
 
 function readOwnVersion() {
   try {
-    return JSON.parse(
-      fs.readFileSync(path.join(__dirname, "package.json"), "utf-8"),
-    ).version;
-  } catch (_) {
-    return "0.0.0";
-  }
+    const {
+      getCurrentAppVersion,
+    } = require("../../../backend/utils/constants");
+    const v = getCurrentAppVersion();
+    if (v && v !== "0.0.0" && v !== "1.0.0") return v;
+  } catch (_) {}
+  try {
+    const pkg = require("./package.json");
+    if (pkg?.version) return pkg.version;
+  } catch (_) {}
+  try {
+    const rootPkg = require("../../../package.json");
+    if (rootPkg?.version) return rootPkg.version;
+  } catch (_) {}
+  return "11.0.4";
 }
 
 let booted = false;
@@ -704,9 +713,21 @@ async function boot() {
   });
 
   router.get("/api/version", (req, res) => {
+    let version = process.env.STRAWVERSE_APP_VERSION;
+    try {
+      const {
+        getCurrentAppVersion,
+      } = require("../../../backend/utils/constants");
+      const v = getCurrentAppVersion();
+      if (v && v !== "0.0.0" && v !== "1.0.0") version = v;
+    } catch (_) {}
+    if (!version || version === "0.0.0" || version === "1.0.0") {
+      version = "11.0.4";
+    }
     res.json({
       ok: true,
-      result: process.env.STRAWVERSE_APP_VERSION || "1.0.0",
+      result: version,
+      version: version,
     });
   });
 
@@ -721,13 +742,9 @@ async function boot() {
 
   router.post("/api/extensions", async (req, res) => {
     try {
-      const [TaskType, AnimeManga, ExtentionName] = req.body.args || [];
+      const args = req.body.args || [];
       const { HandleExtensions } = require("../../../backend/utils/settings");
-      const result = await HandleExtensions(
-        TaskType,
-        AnimeManga,
-        ExtentionName,
-      );
+      const result = await HandleExtensions(...args);
       res.json({ ok: true, result });
     } catch (e) {
       res.status(500).json({ ok: false, error: e.message });
@@ -1248,18 +1265,31 @@ async function boot() {
       let settingsObj = {};
 
       const getProviders = () => ({
-        Anime: global.Anime_providers
-          ? Object.keys(global.Anime_providers)
-          : [],
-        Manga: global.Manga_providers
-          ? Object.keys(global.Manga_providers)
-          : [],
+        Anime: Array.from(
+          new Set(
+            Object.values(global.Anime_providers || {}).map(
+              (p) => p.uniqueId || p.name,
+            ),
+          ),
+        ),
+        Manga: Array.from(
+          new Set(
+            Object.values(global.Manga_providers || {}).map(
+              (p) => p.uniqueId || p.name,
+            ),
+          ),
+        ),
       });
 
       const getIconUrl = (name, valScraper) => {
         if (valScraper?.logo) return valScraper.logo;
         const iconsDir = getScraperIconsPath();
         if (iconsDir) {
+          const repo = valScraper?.repoOwner || "TheYogMehta";
+          const scopedIconPath = path.join(iconsDir, repo, `${name}.ico`);
+          if (fs.existsSync(scopedIconPath)) {
+            return `/api/image?url=${encodeURIComponent(`file://${scopedIconPath}`)}`;
+          }
           const iconPath = path.join(iconsDir, `${name}.ico`);
           if (fs.existsSync(iconPath)) {
             return `/api/image?url=${encodeURIComponent(`file://${iconPath}`)}`;
@@ -1269,20 +1299,38 @@ async function boot() {
       };
 
       const getInstalledExtensions = () => ({
-        Anime: global.Anime_providers
-          ? Object.entries(global.Anime_providers).map(([key, val]) => ({
-              name: key,
-              version: val.version || "1.0.0",
-              icon: getIconUrl(key, val),
-            }))
-          : [],
-        Manga: global.Manga_providers
-          ? Object.entries(global.Manga_providers).map(([key, val]) => ({
-              name: key,
-              version: val.version || "1.0.0",
-              icon: getIconUrl(key, val),
-            }))
-          : [],
+        Anime: Array.from(
+          new Map(
+            Object.values(global.Anime_providers || {}).map((val) => [
+              val.uniqueId || val.name,
+              {
+                name: val.name,
+                repoOwner: val.repoOwner || "TheYogMehta",
+                uniqueId:
+                  val.uniqueId ||
+                  `${val.repoOwner || "TheYogMehta"}/${val.name}`,
+                version: val.version || "1.0.0",
+                icon: getIconUrl(val.name, val),
+              },
+            ]),
+          ).values(),
+        ),
+        Manga: Array.from(
+          new Map(
+            Object.values(global.Manga_providers || {}).map((val) => [
+              val.uniqueId || val.name,
+              {
+                name: val.name,
+                repoOwner: val.repoOwner || "TheYogMehta",
+                uniqueId:
+                  val.uniqueId ||
+                  `${val.repoOwner || "TheYogMehta"}/${val.name}`,
+                version: val.version || "1.0.0",
+                icon: getIconUrl(val.name, val),
+              },
+            ]),
+          ).values(),
+        ),
       });
 
       if (Array.isArray(keys)) {
@@ -1315,7 +1363,8 @@ async function boot() {
 
       let mobileLogDirectory = null;
       try {
-        mobileLogDirectory = require("../../../backend/utils/settings").getEffectiveLogDir();
+        mobileLogDirectory =
+          require("../../../backend/utils/settings").getEffectiveLogDir();
       } catch (_) {}
       res.json({
         ok: true,

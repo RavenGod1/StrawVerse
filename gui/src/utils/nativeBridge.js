@@ -273,8 +273,42 @@ function createPolyfill() {
     marketplace: (AnimeManga) => {
       invoke("marketplace", AnimeManga).catch(() => {});
     },
-    extensions: (TaskType, AnimeManga, ExtentionName) =>
-      invoke("extensions", TaskType, AnimeManga, ExtentionName),
+    getMarketplace: async (activeType = "Anime") => {
+      const res = await fetch(
+        `/api/marketplace?type=${encodeURIComponent(activeType)}`,
+      );
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || "Failed to fetch marketplace");
+      return body;
+    },
+    getExtensionRepos: async () => {
+      const res = await fetch("/api/marketplace/repos");
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || "Failed to fetch repos");
+      return body.repos || [];
+    },
+    addExtensionRepo: async (url) => {
+      const res = await fetch("/api/marketplace/repos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || "Failed to add repository");
+      return body;
+    },
+    removeExtensionRepo: async (owner) => {
+      const res = await fetch(
+        `/api/marketplace/repos/${encodeURIComponent(owner)}`,
+        {
+          method: "DELETE",
+        },
+      );
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || "Failed to remove repository");
+      return body;
+    },
+    extensions: (...args) => invoke("extensions", ...args),
     checkWhatsNew: () => invoke("check-whats-new"),
     disableWhatsNew: () => invoke("disable-whats-new"),
     ensureCfBypass: (url, referer) => invoke("ensure-cf-bypass", url, referer),
@@ -284,7 +318,22 @@ function createPolyfill() {
     checkForUpdate: () => invoke("check-for-update"),
     downloadUpdate: () => invoke("download-update"),
     installUpdate: () => invoke("install-update"),
-    getAppVersion: () => invoke("get-app-version"),
+    getAppVersion: async () => {
+      try {
+        const res = await invoke("get-app-version");
+        if (typeof res === "string" && res) return res;
+        if (res?.version) return res.version;
+        if (res?.result) return res.result;
+      } catch (_) {}
+      try {
+        const resp = await fetch("/api/version");
+        if (resp.ok) {
+          const body = await resp.json();
+          return body?.version || body?.result || "11.0.4";
+        }
+      } catch (_) {}
+      return "11.0.4";
+    },
     openLocalPath: (targetPath, openFolder = true) =>
       invoke("open-local-path", {
         customPath: targetPath,

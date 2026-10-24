@@ -1,5 +1,18 @@
 # Changelog
 
+# [11.0.4] - 2026-10-25
+
+### Android Extensions & Marketplace
+
+- **Fixed Extension Downloads on Android:** Fixed a bug where installing or updating anime and manga extensions on Android would show a false "App Update Required" error or refuse to download.
+- **Custom Repositories on Android:** You can now add and remove community extension repositories directly in the mobile app.
+- **Smoother & Faster Mobile Downloads:** Extension files, icons, and marketplace updates on Android now download through your phone's native network connection, making them much faster and more reliable.
+
+### Video Player & Streaming Improvements
+
+- **Fixed Anime Playback Issues:** Resolved stream failures on sources like Anikoto where episodes would get stuck on a loading screen or fail to play.
+- **Instant Video Loading:** Fixed internal player communication so that video streams, quality options, and subtitles load immediately without errors.
+
 # [11.0.3] - 2026-10-24
 
 ### Video Player & Streaming Fixes
