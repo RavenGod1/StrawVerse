@@ -941,28 +941,27 @@ async function syncLibraryIdsWithMapping() {
       if (!matched) continue;
 
       const targetTable = matched.table_name;
-      const useUuid =
-        (matched.primary_key_field || "").toLowerCase() === "uuid";
+      const isPahe = targetTable === "pahe";
 
       let targetRow = null;
       if (malid) {
-        const query = useUuid
+        const query = isPahe
           ? `SELECT id, uuid, malid FROM ${targetTable} WHERE malid = ? LIMIT 1`
           : `SELECT id, malid FROM ${targetTable} WHERE malid = ? LIMIT 1`;
         targetRow = await mappingQueryOne(query, [malid]);
       }
       if (!targetRow) {
-        const query = useUuid
+        const query = isPahe
           ? `SELECT id, uuid, malid FROM ${targetTable} WHERE id = ? OR uuid = ? LIMIT 1`
           : `SELECT id, malid FROM ${targetTable} WHERE id = ? LIMIT 1`;
-        targetRow = useUuid
+        targetRow = isPahe
           ? await mappingQueryOne(query, [anime.id, anime.id])
           : await mappingQueryOne(query, [anime.id]);
       }
 
       if (targetRow) {
-        const latestId = useUuid
-          ? targetRow.uuid || targetRow.id
+        const latestId = isPahe
+          ? targetRow.id || targetRow.uuid
           : targetRow.id;
         if (latestId && latestId !== anime.id) {
           const existingFolder =
@@ -1063,12 +1062,13 @@ async function syncLibraryIdsWithMapping() {
           } catch (_) {}
         }
 
-        if (targetRow?.uuid && targetRow.uuid !== hist.anime_id) {
+        const targetId = targetRow ? (targetRow.id || targetRow.uuid) : null;
+        if (targetId && targetId !== hist.anime_id) {
           await run(
             "UPDATE WatchHistory SET anime_id = REPLACE(anime_id, ?, ?) WHERE anime_id = ? OR anime_id LIKE ?",
             [
               hist.anime_id,
-              targetRow.uuid,
+              targetId,
               hist.anime_id,
               `${hist.anime_id}-%`,
             ],
@@ -1077,7 +1077,7 @@ async function syncLibraryIdsWithMapping() {
             "UPDATE OR REPLACE SkipTimes SET anime_id = REPLACE(anime_id, ?, ?) WHERE anime_id = ? OR anime_id LIKE ?",
             [
               hist.anime_id,
-              targetRow.uuid,
+              targetId,
               hist.anime_id,
               `${hist.anime_id}-%`,
             ],
@@ -1166,29 +1166,22 @@ async function syncLibraryIdsWithMapping() {
       if (!matched) continue;
 
       const targetTable = matched.table_name;
-      const useUuid =
-        (matched.primary_key_field || "").toLowerCase() === "uuid";
-
       let targetRow = null;
       if (malid) {
-        const query = useUuid
-          ? `SELECT id, uuid, malid FROM ${targetTable} WHERE malid = ? LIMIT 1`
-          : `SELECT id, malid FROM ${targetTable} WHERE malid = ? LIMIT 1`;
-        targetRow = await mappingQueryOne(query, [malid]);
+        targetRow = await mappingQueryOne(
+          `SELECT id, malid FROM ${targetTable} WHERE malid = ? LIMIT 1`,
+          [malid],
+        );
       }
       if (!targetRow) {
-        const query = useUuid
-          ? `SELECT id, uuid, malid FROM ${targetTable} WHERE id = ? OR uuid = ? LIMIT 1`
-          : `SELECT id, malid FROM ${targetTable} WHERE id = ? LIMIT 1`;
-        targetRow = useUuid
-          ? await mappingQueryOne(query, [manga.id, manga.id])
-          : await mappingQueryOne(query, [manga.id]);
+        targetRow = await mappingQueryOne(
+          `SELECT id, malid FROM ${targetTable} WHERE id = ? LIMIT 1`,
+          [manga.id],
+        );
       }
 
       if (targetRow) {
-        const latestId = useUuid
-          ? targetRow.uuid || targetRow.id
-          : targetRow.id;
+        const latestId = targetRow.id;
         if (latestId && latestId !== manga.id) {
           const existingFolder =
             manga.folder_name ||
@@ -1284,9 +1277,7 @@ async function syncLibraryIdsWithMapping() {
             [malid],
           );
           if (targetRow) {
-            const latestId = isUuid
-              ? targetRow.uuid || targetRow.id
-              : targetRow.id;
+            const latestId = targetRow.id || targetRow.uuid;
             if (latestId && latestId !== item.anime_id) {
               await run(
                 "UPDATE WatchHistory SET anime_id = REPLACE(anime_id, ?, ?) WHERE anime_id = ? OR anime_id LIKE ?",

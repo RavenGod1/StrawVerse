@@ -2041,6 +2041,42 @@ router.post(
                       .run(cleanProv, provName, targetId, targetId);
                     return;
                   }
+
+                  // Guard: Check if series title matches canonical anime in mapping.db
+                  const checkTitle = (
+                    unmappedData.name ||
+                    unmappedData.title ||
+                    data.title ||
+                    ""
+                  ).trim();
+                  if (checkTitle) {
+                    const matchAnime = await global.mappingDb
+                      .prepare(
+                        "SELECT malid FROM anime WHERE LOWER(TRIM(title)) = LOWER(TRIM(?)) LIMIT 1",
+                      )
+                      .get(checkTitle);
+                    if (matchAnime && matchAnime.malid) {
+                      if (cleanProv === "pahe") {
+                        await global.mappingDb
+                          .prepare(
+                            "INSERT OR REPLACE INTO pahe (id, uuid, malid) VALUES (?, ?, ?)",
+                          )
+                          .run(targetId, targetId, matchAnime.malid);
+                      } else {
+                        await global.mappingDb
+                          .prepare(
+                            `INSERT OR REPLACE INTO "${cleanProv}" (id, malid) VALUES (?, ?)`,
+                          )
+                          .run(targetId, matchAnime.malid);
+                      }
+                      await global.mappingDb
+                        .prepare(
+                          "DELETE FROM unmapped_items WHERE (provider = ? OR provider = ?) AND (id = ? OR id = ?)",
+                        )
+                        .run(cleanProv, provName, targetId, targetId);
+                      return;
+                    }
+                  }
                 } catch (_) {}
 
                 try {
@@ -2281,6 +2317,41 @@ router.post(
                           )
                           .run(cleanProv, provName, targetId, targetId);
                         return;
+                      }
+
+                      // Guard: Check if series title matches canonical manga in mapping.db
+                      const checkTitle = (
+                        unmappedData.name ||
+                        unmappedData.title ||
+                        data.title ||
+                        ""
+                      ).trim();
+                      if (checkTitle) {
+                        const matchManga = await global.mappingDb
+                          .prepare(
+                            "SELECT malid FROM manga WHERE LOWER(TRIM(title)) = LOWER(TRIM(?)) LIMIT 1",
+                          )
+                          .get(checkTitle);
+                        if (matchManga && matchManga.malid) {
+                          const hasTbl = await global.mappingDb
+                            .prepare(
+                              "SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?",
+                            )
+                            .get(cleanProv);
+                          if (hasTbl) {
+                            await global.mappingDb
+                              .prepare(
+                                `INSERT OR REPLACE INTO "${cleanProv}" (id, malid) VALUES (?, ?)`,
+                              )
+                              .run(targetId, matchManga.malid);
+                          }
+                          await global.mappingDb
+                            .prepare(
+                              "DELETE FROM unmapped_items WHERE (provider = ? OR provider = ?) AND (id = ? OR id = ?)",
+                            )
+                            .run(cleanProv, provName, targetId, targetId);
+                          return;
+                        }
                       }
                     } catch (_) {}
 
