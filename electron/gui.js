@@ -232,8 +232,8 @@ const { checkForMappingUpdates } = require(
 // Express Server
 const routes = require(path.join(backendDir, "routes", "index"));
 const appExpress = express();
-appExpress.use(express.urlencoded({ extended: true }));
-appExpress.use(express.json());
+appExpress.use(express.urlencoded({ limit: "50mb", extended: true }));
+appExpress.use(express.json({ limit: "50mb" }));
 appExpress.use(express.static(guiDistDir));
 appExpress.set("views", guiDistDir);
 appExpress.use((req, res, next) => {

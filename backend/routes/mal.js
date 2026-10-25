@@ -168,46 +168,98 @@ router.post("/api/mal/link", async (req, res) => {
       }
 
       let providerTitle = title || null;
-      if (!providerTitle) {
-        try {
-          if (type === "Anime") {
-            const row = await global.db
-              .prepare("SELECT title, MalID FROM Anime WHERE id = ? LIMIT 1")
-              .get(id);
-            if (row) {
-              providerTitle = row.title;
-              if (!targetMalID && row.MalID) {
-                targetMalID = parseInt(row.MalID, 10);
-              }
-            }
-          } else {
-            const row = await global.db
-              .prepare("SELECT title, MalID FROM Manga WHERE id = ? LIMIT 1")
-              .get(id);
-            if (row) {
-              providerTitle = row.title;
-              if (!targetMalID && row.MalID) {
-                targetMalID = parseInt(row.MalID, 10);
-              }
-            }
+      let metadata = req.body.metadata || {};
+      if (req.body.image && !metadata.image) metadata.image = req.body.image;
+      if (req.body.type && !metadata.type) metadata.type = req.body.type;
+      if (req.body.episodes && !metadata.episodes)
+        metadata.episodes = req.body.episodes;
+      if (req.body.chapters && !metadata.chapters)
+        metadata.chapters = req.body.chapters;
+
+      try {
+        const table = type === "Anime" ? "Anime" : "Manga";
+        const row = await global.db
+          .prepare(`SELECT * FROM ${table} WHERE id = ? LIMIT 1`)
+          .get(id);
+        if (row) {
+          if (!providerTitle) providerTitle = row.title;
+          if (!targetMalID && row.MalID) {
+            targetMalID = parseInt(row.MalID, 10);
           }
-        } catch (e) {
-          logger.error(`Error querying title from local DB: ${e.message}`);
+          metadata = {
+            title: row.title || providerTitle,
+            image: row.image_url || row.image || metadata.image || null,
+            type: row.type || metadata.type || null,
+            episodes:
+              row.episodes || row.total_episodes || metadata.episodes || null,
+            chapters:
+              row.chapters || row.total_chapters || metadata.chapters || null,
+            description: row.description || metadata.description || null,
+          };
         }
+      } catch (e) {
+        logger.error(`Error querying title from local DB: ${e.message}`);
+      }
+
+      const cleanProv = (resolvedProvider || "").toLowerCase().split("/").pop();
+      if (
+        (!metadata.image || !providerTitle) &&
+        global.mappingDb &&
+        cleanProv
+      ) {
+        try {
+          const unmapped = global.mappingDb
+            .prepare(
+              "SELECT * FROM unmapped_items WHERE (provider = ? OR provider = ?) AND (id = ? OR id = ?) LIMIT 1",
+            )
+            .get(cleanProv, resolvedProvider, id, String(id));
+          if (unmapped) {
+            if (!providerTitle) providerTitle = unmapped.name;
+            metadata.title = metadata.title || unmapped.name || providerTitle;
+            metadata.image = metadata.image || unmapped.image_url || null;
+            metadata.type = metadata.type || unmapped.type || null;
+            metadata.episodes = metadata.episodes || unmapped.episodes || null;
+          }
+        } catch (_) {}
       }
 
       const osName = getOSName();
 
-      if (targetMalID && resolvedProvider !== "pahe") {
+      const toCount = (v) => {
+        if (Array.isArray(v)) return v.length;
+        if (typeof v === "number") return v;
+        if (typeof v === "string" && !isNaN(parseInt(v, 10)))
+          return parseInt(v, 10);
+        return null;
+      };
+
+      const finalEpisodes = toCount(metadata.episodes || req.body.episodes);
+      const finalChapters = toCount(metadata.chapters || req.body.chapters);
+
+      const cleanMeta = {
+        title: metadata.title || providerTitle || null,
+        image: metadata.image || req.body.image || null,
+        type: metadata.type || type || null,
+        episodes: finalEpisodes,
+        chapters: finalChapters,
+        status: metadata.status || null,
+      };
+
+      if (targetMalID && cleanProv) {
         if (MalID) {
           axios
             .post(
               "https://strawverse.theyogmehta.online/mapping",
               {
                 malid: targetMalID,
-                provider: resolvedProvider,
+                provider: cleanProv,
                 id: id,
                 title: providerTitle,
+                image: cleanMeta.image,
+                type: cleanMeta.type,
+                episodes: finalEpisodes,
+                chapters: finalChapters,
+                metadata: cleanMeta,
               },
               {
                 headers: {
@@ -233,7 +285,7 @@ router.post("/api/mal/link", async (req, res) => {
               },
               data: {
                 malid: targetMalID,
-                provider: resolvedProvider,
+                provider: cleanProv,
                 title: providerTitle,
               },
             })
@@ -247,6 +299,89 @@ router.post("/api/mal/link", async (req, res) => {
                 `[Mapper] Failed to report custom mapping unlink: ${err.message}`,
               ),
             );
+        }
+      }
+
+      if (global.mappingDb && cleanProv) {
+        try {
+          if (MalID && targetMalID) {
+            await global.mappingDb
+              .prepare(
+                "DELETE FROM unmapped_items WHERE (provider = ? OR provider = ?) AND (id = ? OR id = ?)",
+              )
+              .run(cleanProv, resolvedProvider, id, String(id));
+
+            if (cleanProv === "pahe") {
+              const isUuid =
+                /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+                  String(id),
+                );
+              if (isUuid) {
+                await global.mappingDb
+                  .prepare(
+                    "INSERT OR REPLACE INTO pahe (id, uuid, malid) VALUES (?, ?, ?)",
+                  )
+                  .run(id, id, targetMalID);
+              } else {
+                await global.mappingDb
+                  .prepare(
+                    "INSERT OR REPLACE INTO pahe (id, malid) VALUES (?, ?)",
+                  )
+                  .run(id, targetMalID);
+              }
+            } else {
+              try {
+                await global.mappingDb.exec(`
+                  CREATE TABLE IF NOT EXISTS "${cleanProv}" (
+                    id TEXT PRIMARY KEY,
+                    malid INTEGER
+                  );
+                `);
+              } catch (_) {}
+              await global.mappingDb
+                .prepare(
+                  `INSERT OR REPLACE INTO "${cleanProv}" (id, malid) VALUES (?, ?)`,
+                )
+                .run(id, targetMalID);
+            }
+
+            const malTable = type === "Anime" ? "anime" : "manga";
+            await global.mappingDb
+              .prepare(`UPDATE ${malTable} SET has_mapping = 1 WHERE malid = ?`)
+              .run(targetMalID);
+
+            try {
+              global.mappingDb
+                .prepare(
+                  "DELETE FROM unmapped_items WHERE (provider = ? OR provider = ? OR provider LIKE ?) AND (id = ? OR id = ?)",
+                )
+                .run(cleanProv, provider, `%/${cleanProv}`, id, String(id));
+            } catch (_) {}
+          } else {
+            if (cleanProv === "pahe") {
+              await global.mappingDb
+                .prepare(
+                  "DELETE FROM pahe WHERE id = ? OR uuid = ? OR (malid = ? AND malid IS NOT NULL)",
+                )
+                .run(id, id, targetMalID || 0);
+            } else {
+              try {
+                await global.mappingDb.exec(`
+                  CREATE TABLE IF NOT EXISTS "${cleanProv}" (
+                    id TEXT PRIMARY KEY,
+                    malid INTEGER
+                  );
+                `);
+              } catch (_) {}
+              await global.mappingDb
+                .prepare(
+                  `DELETE FROM "${cleanProv}" WHERE id = ? OR (malid = ? AND malid IS NOT NULL)`,
+                )
+                .run(id, targetMalID || 0);
+            }
+          }
+        } catch (mErr) {
+          logger.error(`Error updating mappingDb on link: ${mErr.message}`);
         }
       }
     }

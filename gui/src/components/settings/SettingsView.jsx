@@ -325,7 +325,21 @@ export default function SettingsView({
       type === "Anime"
         ? settings.installedExtensions.Anime
         : settings.installedExtensions.Manga;
-    const ext = list?.find((e) => e.name === name);
+    const cleanName = String(name || "")
+      .toLowerCase()
+      .replace(/^@/, "");
+    const ext = list?.find((e) => {
+      const eName = String(e.name || "").toLowerCase();
+      const eUnique = String(e.uniqueId || "")
+        .toLowerCase()
+        .replace(/^@/, "");
+      return (
+        eName === cleanName ||
+        eUnique === cleanName ||
+        cleanName.endsWith(`/${eName}`) ||
+        cleanName === `${(e.repoOwner || "").toLowerCase()}/${eName}`
+      );
+    });
     return ext?.icon || null;
   };
 
@@ -1283,7 +1297,10 @@ export default function SettingsView({
                         value={downloadLocation}
                         placeholder="Default (system Downloads folder)"
                         readOnly
-                        title={downloadLocation || "Default (system Downloads folder)"}
+                        title={
+                          downloadLocation ||
+                          "Default (system Downloads folder)"
+                        }
                       />
                       <button
                         type="button"
@@ -1662,55 +1679,51 @@ export default function SettingsView({
                 </div>
                 <SettingsRow
                   label="Save Log Files"
-                      desc="Keep a log file per app session in a folder outside the app, useful for troubleshooting and sharing."
+                  desc="Keep a log file per app session in a folder outside the app, useful for troubleshooting and sharing."
+                >
+                  <Dropdown
+                    value={String(externalLogEnabled)}
+                    onChange={(val) => setExternalLogEnabled(val === "true")}
+                    options={[
+                      { value: "true", label: "Enabled" },
+                      { value: "false", label: "Disabled" },
+                    ]}
+                    minWidth={200}
+                  />
+                </SettingsRow>
+                {externalLogEnabled && (
+                  <>
+                    <SettingsRow
+                      label="Kept Log Files"
+                      desc="How many recent log files to keep (1–10, default 5). Older files are deleted automatically and the total is kept under 500 MB."
                     >
                       <Dropdown
-                        value={String(externalLogEnabled)}
+                        value={String(maxLogFiles)}
                         onChange={(val) =>
-                          setExternalLogEnabled(val === "true")
+                          setMaxLogFiles(parseInt(val, 10) || 5)
                         }
-                        options={[
-                          { value: "true", label: "Enabled" },
-                          { value: "false", label: "Disabled" },
-                        ]}
+                        options={[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => ({
+                          value: String(n),
+                          label: `${n} file${n > 1 ? "s" : ""}`,
+                        }))}
                         minWidth={200}
                       />
                     </SettingsRow>
-                    {externalLogEnabled && (
-                      <>
-                        <SettingsRow
-                          label="Kept Log Files"
-                          desc="How many recent log files to keep (1–10, default 5). Older files are deleted automatically and the total is kept under 500 MB."
-                        >
-                          <Dropdown
-                            value={String(maxLogFiles)}
-                            onChange={(val) =>
-                              setMaxLogFiles(parseInt(val, 10) || 5)
-                            }
-                            options={[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(
-                              (n) => ({
-                                value: String(n),
-                                label: `${n} file${n > 1 ? "s" : ""}`,
-                              }),
-                            )}
-                            minWidth={200}
-                          />
-                        </SettingsRow>
-                        <SettingsRow
-                          label="Log Folder"
-                          desc="Where the log files are stored."
-                        >
-                          <input
-                            type="text"
-                            className="settings-text-input download-location-path"
-                            value={logDirectory}
-                            placeholder="Default log folder"
-                            readOnly
-                            title={logDirectory || "Default log folder"}
-                          />
-                        </SettingsRow>
-                      </>
-                    )}
+                    <SettingsRow
+                      label="Log Folder"
+                      desc="Where the log files are stored."
+                    >
+                      <input
+                        type="text"
+                        className="settings-text-input download-location-path"
+                        value={logDirectory}
+                        placeholder="Default log folder"
+                        readOnly
+                        title={logDirectory || "Default log folder"}
+                      />
+                    </SettingsRow>
+                  </>
+                )}
               </div>
               {/* Community & Support */}
               <div className="settings-section glass-panel">

@@ -58,10 +58,28 @@ router.get("/api/local/tags/view/:type", async (req, res) => {
     }
     const includeHidden = req.query.includeHidden === "true";
     const defaultTags = getReservedTags(type);
-    const savedOrder =
-      (await getKeyValue("Settings", `tag_order_${type}`)) || defaultTags;
+    let savedOrder = (await getKeyValue("Settings", `tag_order_${type}`)) || [
+      ...defaultTags,
+    ];
     const hiddenTags =
       (await getKeyValue("Settings", `hidden_tags_${type}`)) || [];
+
+    for (const dt of defaultTags) {
+      if (!savedOrder.includes(dt)) {
+        if (dt === "Completed") {
+          const planIdx = savedOrder.findIndex((t) =>
+            /plan to (watch|read)/i.test(t),
+          );
+          if (planIdx !== -1) {
+            savedOrder.splice(planIdx + 1, 0, "Completed");
+          } else {
+            savedOrder.push("Completed");
+          }
+        } else {
+          savedOrder.push(dt);
+        }
+      }
+    }
 
     const rows = await queryAll(
       `SELECT CustomTag FROM ${type} WHERE CustomTag IS NOT NULL AND CustomTag != ''`,

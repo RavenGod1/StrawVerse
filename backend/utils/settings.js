@@ -121,6 +121,9 @@ async function settingupdate(newSettings = {}) {
 // returns valid settings
 async function settingfetch() {
   try {
+    if (!config || Object.keys(config).length === 0) {
+      await SettingsLoad();
+    }
     let changes = false;
     if (typeof config?.CustomDownloadLocation === "string") {
       config.CustomDownloadLocation = config.CustomDownloadLocation.replace(
@@ -567,12 +570,14 @@ const BLOCKED_MODULES = new Set([
  * @param {string} code - The extension JavaScript code
  * @returns {{ safe: boolean, reason?: string }}
  */
-function validateExtensionSafety(code) {
+function validateExtensionSafety(code, repoOwner = "TheYogMehta") {
   if (!code || typeof code !== "string") {
     return { safe: false, reason: "Empty or invalid extension code." };
   }
 
-  // 1. Prohibited module requires (child_process, fs, cluster, worker_threads, electron, vm, v8)
+  const isOfficial = String(repoOwner).toLowerCase() === "theyogmehta";
+
+  // 1. Prohibited module requires (child_process, fs, cluster, worker_threads, electron, vm, v8, database drivers)
   const forbiddenModules = [
     "child_process",
     "cluster",
@@ -585,6 +590,18 @@ function validateExtensionSafety(code) {
     "electron",
     "vm",
     "v8",
+    "better-sqlite3",
+    "sqlite3",
+    "sqlite",
+    "mysql",
+    "mysql2",
+    "pg",
+    "sequelize",
+    "typeorm",
+    "knex",
+    "prisma",
+    "mongoose",
+    "mongodb",
   ];
 
   for (const mod of forbiddenModules) {
@@ -600,7 +617,29 @@ function validateExtensionSafety(code) {
     }
   }
 
-  // 2. Dangerous process manipulation
+  // 2. Prohibited direct database access to main user database (global.db)
+  const directMainDbRegex = /\bglobal(?:\??\.)\s*db\b/i;
+  if (directMainDbRegex.test(code)) {
+    return {
+      safe: false,
+      reason:
+        "Extension attempts unauthorized direct access to main app database (global.db). Use getExtensionDb() instead.",
+    };
+  }
+
+  // 3. For unofficial extensions, prevent raw mappingDb bypass (must use getExtensionDb)
+  if (!isOfficial) {
+    const rawMappingDbRegex = /\bglobal(?:\??\.)\s*mappingDb\b/i;
+    if (rawMappingDbRegex.test(code)) {
+      return {
+        safe: false,
+        reason:
+          "Community extension attempts direct raw access to global.mappingDb. Use getExtensionDb() instead.",
+      };
+    }
+  }
+
+  // 4. Dangerous process manipulation
   const processDangerRegex =
     /\bprocess\s*\.\s*(exit|kill|abort|mainModule|binding|_linkedBinding)\b/i;
   if (processDangerRegex.test(code)) {
@@ -1004,7 +1043,7 @@ async function loadAllScrapers() {
     const loadScraperFile = (fullPath, repoOwner, type) => {
       try {
         const code = fs.readFileSync(fullPath, "utf8");
-        const safety = validateExtensionSafety(code);
+        const safety = validateExtensionSafety(code, repoOwner);
         if (!safety.safe) {
           logger.warn(
             `[Security] Blocked unsafe scraper ${type}/${repoOwner}/${path.basename(fullPath)}: ${safety.reason}`,
@@ -1028,15 +1067,20 @@ async function loadAllScrapers() {
             return null;
           }
 
+          const isOfficial = repoOwner.toLowerCase() === "theyogmehta";
+          const atScopedId = `@${repoOwner}/${scraper.name}`;
+          const slashScopedId = `${repoOwner}/${scraper.name}`;
+
           scraper.repoOwner = repoOwner;
-          scraper.uniqueId = `${repoOwner}/${scraper.name}`;
+          scraper.uniqueId = isOfficial ? scraper.name : atScopedId;
           scraper.filePath = fullPath;
 
           const targetProviders =
             type === "Anime" ? global.Anime_providers : global.Manga_providers;
-          targetProviders[scraper.uniqueId] = scraper;
+          targetProviders[atScopedId] = scraper;
+          targetProviders[slashScopedId] = scraper;
 
-          if (!targetProviders[scraper.name] || repoOwner === "TheYogMehta") {
+          if (isOfficial) {
             targetProviders[scraper.name] = scraper;
           }
 
@@ -1158,7 +1202,7 @@ async function loadSingleScraper(
     const fullPath = scopedPath;
 
     const code = fs.readFileSync(fullPath, "utf8");
-    const safety = validateExtensionSafety(code);
+    const safety = validateExtensionSafety(code, RepoOwner);
     if (!safety.safe) {
       logger.warn(
         `[Security] Blocked unsafe scraper ${fullPath}: ${safety.reason}`,
@@ -1182,16 +1226,22 @@ async function loadSingleScraper(
         return;
       }
 
+      const isOfficial = RepoOwner.toLowerCase() === "theyogmehta";
+      const atScopedId = `@${RepoOwner}/${scraper.name}`;
+      const slashScopedId = `${RepoOwner}/${scraper.name}`;
+
       scraper.repoOwner = RepoOwner;
-      scraper.uniqueId = `${RepoOwner}/${scraper.name}`;
+      scraper.uniqueId = isOfficial ? scraper.name : atScopedId;
       scraper.filePath = fullPath;
 
       const targetProviders =
         AnimeManga === "Anime"
           ? global.Anime_providers
           : global.Manga_providers;
-      targetProviders[scraper.uniqueId] = scraper;
-      if (!targetProviders[scraper.name] || RepoOwner === "TheYogMehta") {
+      targetProviders[atScopedId] = scraper;
+      targetProviders[slashScopedId] = scraper;
+
+      if (isOfficial) {
         targetProviders[scraper.name] = scraper;
       }
 
@@ -1221,10 +1271,14 @@ async function unloadSingleScraper(
   try {
     const targetProviders =
       AnimeManga === "Anime" ? global.Anime_providers : global.Manga_providers;
-    const uniqueId = `${RepoOwner}/${ExtensionName}`;
-    delete targetProviders[uniqueId];
+    const isOfficial = RepoOwner.toLowerCase() === "theyogmehta";
+    const atScopedId = `@${RepoOwner}/${ExtensionName}`;
+    const slashScopedId = `${RepoOwner}/${ExtensionName}`;
 
-    if (targetProviders[ExtensionName]?.repoOwner === RepoOwner) {
+    delete targetProviders[atScopedId];
+    delete targetProviders[slashScopedId];
+
+    if (isOfficial && targetProviders[ExtensionName]?.repoOwner === RepoOwner) {
       delete targetProviders[ExtensionName];
       const remaining = Object.values(targetProviders).find(
         (p) => p.name === ExtensionName,
@@ -1310,7 +1364,7 @@ async function HandleExtensions(
       }
 
       // Security Safety Check
-      const safety = validateExtensionSafety(response);
+      const safety = validateExtensionSafety(response, RepoOwner);
       if (!safety.safe) {
         logger.warn(
           `[Security] Rejected unsafe scraper ${AnimeManga}/${RepoOwner}/${ExtensionName}: ${safety.reason}`,
@@ -1361,6 +1415,12 @@ async function HandleExtensions(
       } catch (iconErr) {}
 
       await loadSingleScraper(AnimeManga, ExtensionName, RepoOwner);
+
+      try {
+        const { syncExtensionMapping } = require("./mappingUpdater");
+        syncExtensionMapping(ExtensionName).catch(() => {});
+      } catch (_) {}
+
       return {
         type: "success",
         title: `Added ${AnimeManga} Extension!`,
@@ -1416,6 +1476,12 @@ async function HandleExtensions(
       }
 
       await unloadSingleScraper(AnimeManga, ExtensionName, RepoOwner);
+
+      try {
+        const { cleanupExtensionMapping } = require("./mappingUpdater");
+        cleanupExtensionMapping(ExtensionName).catch(() => {});
+      } catch (_) {}
+
       return {
         type: "success",
         title: `Removed ${AnimeManga} Extension!`,
@@ -1442,54 +1508,58 @@ async function HandleExtensions(
 // return provider
 async function providerFetch(type, index) {
   try {
-    let providerName;
-    if (type === "Anime") {
-      const providers = Object.keys(global.Anime_providers);
-      if (providers.length === 0) {
-        throw new Error(
-          "No Anime scraper available. Please download one from marketplace.",
-        );
-      }
-      if (
-        index !== null &&
-        index !== undefined &&
-        global.Anime_providers[index]
-      ) {
-        providerName = index;
-      } else {
-        providerName =
-          config.Animeprovider && global.Anime_providers[config.Animeprovider]
-            ? config.Animeprovider
-            : providers[0];
-      }
-      return {
-        provider: global.Anime_providers[providerName],
-        provider_name: providerName,
-      };
-    } else if (type === "Manga") {
-      const providers = Object.keys(global.Manga_providers);
-      if (providers.length === 0) {
-        throw new Error(
-          "No Manga scraper available. Please download one from marketplace.",
-        );
-      }
-      if (
-        index !== null &&
-        index !== undefined &&
-        global.Manga_providers[index]
-      ) {
-        providerName = index;
-      } else {
-        providerName =
-          config.Mangaprovider && global.Manga_providers[config.Mangaprovider]
-            ? config.Mangaprovider
-            : providers[0];
-      }
-      return {
-        provider: global.Manga_providers[providerName],
-        provider_name: providerName,
-      };
+    const pMap =
+      type === "Anime" ? global.Anime_providers : global.Manga_providers;
+    const providers = Object.keys(pMap || {});
+    if (providers.length === 0) {
+      throw new Error(
+        `No ${type} scraper available. Please download one from marketplace.`,
+      );
     }
+
+    let matchedProvider = null;
+    let providerName = null;
+
+    if (index !== null && index !== undefined) {
+      const idxStr = String(index).trim();
+      if (pMap[idxStr]) {
+        providerName = idxStr;
+        matchedProvider = pMap[idxStr];
+      } else if (pMap[`@${idxStr}`]) {
+        providerName = `@${idxStr}`;
+        matchedProvider = pMap[`@${idxStr}`];
+      } else if (idxStr.startsWith("@") && pMap[idxStr.slice(1)]) {
+        providerName = idxStr;
+        matchedProvider = pMap[idxStr.slice(1)];
+      }
+    }
+
+    if (!matchedProvider) {
+      const activePref =
+        type === "Anime" ? config.Animeprovider : config.Mangaprovider;
+      if (activePref && pMap[activePref]) {
+        providerName = activePref;
+        matchedProvider = pMap[activePref];
+      } else {
+        providerName = providers[0];
+        matchedProvider = pMap[providerName];
+      }
+    }
+
+    let canonicalName = providerName;
+    if (matchedProvider) {
+      const owner = (matchedProvider.repoOwner || "").toLowerCase();
+      if (owner && owner !== "theyogmehta") {
+        canonicalName = `@${matchedProvider.repoOwner}/${matchedProvider.name}`;
+      } else if (matchedProvider.uniqueId) {
+        canonicalName = matchedProvider.uniqueId;
+      }
+    }
+
+    return {
+      provider: matchedProvider,
+      provider_name: canonicalName,
+    };
   } catch (err) {
     logger.error("Failed To Return Provider: " + err.message);
     throw err;
@@ -1539,6 +1609,7 @@ module.exports = {
   settingfetch,
   settingSave,
   SettingsLoad,
+  reconcileActiveProvider,
   providerFetch,
   loadAllScrapers,
   HandleExtensions,

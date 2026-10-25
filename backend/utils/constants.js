@@ -159,8 +159,8 @@ function parseTags(val) {
 }
 
 const SYSTEM_TAGS = Object.freeze({
-  Anime: Object.freeze(["Watching", "Downloads", "Plan to Watch"]),
-  Manga: Object.freeze(["Reading", "Downloads", "Plan to Read"]),
+  Anime: Object.freeze(["Watching", "Plan to Watch", "Completed", "Downloads"]),
+  Manga: Object.freeze(["Reading", "Plan to Read", "Completed", "Downloads"]),
 });
 
 const RESERVED_TAGS = Object.freeze({

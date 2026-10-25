@@ -209,12 +209,98 @@ function initDesktopDb() {
         logger.error("Failed to set WAL mode on mapping.db: " + e.message);
       }
       global.mappingDb = desktopMappingDb;
+      initExtensionDbSystem();
     } catch (err) {
       logger.error(
         "Failed to initialize Desktop Mapping DatabaseSync: " + err.message,
       );
     }
   }
+}
+
+function initExtensionDbSystem() {
+  if (!global.mappingDb) return;
+  try {
+    global.mappingDb.exec(`
+      CREATE TABLE IF NOT EXISTS extension_settings (
+        provider TEXT NOT NULL,
+        key TEXT NOT NULL,
+        value TEXT,
+        PRIMARY KEY (provider, key)
+      );
+    `);
+  } catch (err) {
+    logger.warn(`Failed to init extension_settings table: ${err.message}`);
+  }
+
+  global.getExtensionDb = function (providerName, repoOwner = "TheYogMehta") {
+    const isOfficial = !repoOwner || repoOwner.toLowerCase() === "theyogmehta";
+    const tableName = isOfficial
+      ? providerName
+      : `@${repoOwner}/${providerName}`;
+    const providerKey = tableName;
+
+    if (!isOfficial && global.mappingDb) {
+      try {
+        global.mappingDb.exec(`
+          CREATE TABLE IF NOT EXISTS "${tableName}" (
+            id TEXT PRIMARY KEY,
+            uuid TEXT,
+            malid INTEGER,
+            metadata TEXT,
+            extra TEXT
+          );
+        `);
+      } catch (_) {}
+    }
+
+    return {
+      tableName,
+      providerKey,
+      getSetting: async (key) => {
+        if (!global.mappingDb) return null;
+        try {
+          const row = await global.mappingDb
+            .prepare(
+              "SELECT value FROM extension_settings WHERE provider = ? AND key = ? LIMIT 1",
+            )
+            .get(providerKey, String(key));
+          return row ? row.value : null;
+        } catch (_) {
+          return null;
+        }
+      },
+      setSetting: async (key, value) => {
+        if (!global.mappingDb) return;
+        try {
+          await global.mappingDb
+            .prepare(
+              "INSERT OR REPLACE INTO extension_settings (provider, key, value) VALUES (?, ?, ?)",
+            )
+            .run(providerKey, String(key), String(value));
+        } catch (_) {}
+      },
+      prepare: (sql) => {
+        if (!global.mappingDb)
+          throw new Error("Mapping database not available");
+        const lower = String(sql).toLowerCase();
+        if (
+          lower.includes("attach") ||
+          lower.includes("pragma") ||
+          lower.includes("sqlite_master") ||
+          lower.includes("sqlite_schema")
+        ) {
+          throw new Error("Prohibited database operation in extension query");
+        }
+        return global.mappingDb.prepare(sql);
+      },
+      exec: (sql) => {
+        if (!global.mappingDb)
+          throw new Error("Mapping database not available");
+        return global.mappingDb.exec(sql);
+      },
+    };
+  };
 }
 
 function migrateNumericColumns(dbInstance) {

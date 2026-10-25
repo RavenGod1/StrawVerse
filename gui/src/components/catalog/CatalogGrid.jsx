@@ -14,7 +14,7 @@ import {
   SearchX,
 } from "lucide-react";
 
-const getProxiedImageUrl = (url) => {
+const getProxiedImageUrl = (url, item) => {
   if (!url) return "/images/image-404.png";
   if (
     url.startsWith("/api/image") ||
@@ -24,7 +24,15 @@ const getProxiedImageUrl = (url) => {
   ) {
     return url;
   }
-  return `/api/image?url=${encodeURIComponent(url)}`;
+  let query = `url=${encodeURIComponent(url)}`;
+  const malid = item?.malid || item?.MalID || item?.id;
+  if (malid && !isNaN(parseInt(malid, 10))) {
+    query += `&malid=${malid}`;
+  }
+  if (item?.title) {
+    query += `&title=${encodeURIComponent(item.title)}`;
+  }
+  return `/api/image?${query}`;
 };
 
 export default function CatalogGrid({
@@ -156,39 +164,17 @@ export default function CatalogGrid({
           >
             <div className="img-container">
               <img
-                src={getProxiedImageUrl(item.image || item.scraper_image)}
+                src={getProxiedImageUrl(
+                  item.mal_image || item.image || item.scraper_image,
+                  item,
+                )}
                 alt={item.title}
                 className="media-img"
                 loading="lazy"
                 draggable={false}
                 onError={(e) => {
-                  const currentSrc = e.target.getAttribute("src");
-                  if (
-                    currentSrc &&
-                    !e.target.dataset.retried &&
-                    !currentSrc.includes("/images/")
-                  ) {
-                    e.target.dataset.retried = "1";
-                    setTimeout(() => {
-                      const separator = currentSrc.includes("?") ? "&" : "?";
-                      e.target.src = `${currentSrc}${separator}_r=${Date.now()}`;
-                    }, 800);
-                    return;
-                  }
-                  const fallback = item.scraper_image || item.fallback_image;
-                  const proxiedFallback = fallback
-                    ? getProxiedImageUrl(fallback)
-                    : null;
-                  if (
-                    proxiedFallback &&
-                    currentSrc !== proxiedFallback &&
-                    e.target.src !== proxiedFallback
-                  ) {
-                    e.target.src = proxiedFallback;
-                  } else {
-                    e.target.onerror = null;
-                    e.target.src = "/images/image-404.png";
-                  }
+                  e.target.onerror = null;
+                  e.target.src = "/images/image-404.png";
                 }}
               />
 
