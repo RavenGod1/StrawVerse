@@ -62,11 +62,87 @@ async function ensureMappingTablesExist() {
       CREATE TABLE IF NOT EXISTS mapping_changelog (
         id INTEGER PRIMARY KEY,
         version TEXT
-      )
+      );
+      CREATE TABLE IF NOT EXISTS unmapped_items (
+        id TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        media_type TEXT,
+        name TEXT,
+        image_url TEXT,
+        type TEXT,
+        episodes TEXT,
+        status TEXT,
+        season TEXT,
+        year INTEGER,
+        last_fetched TEXT,
+        PRIMARY KEY (provider, id)
+      );
+      CREATE TABLE IF NOT EXISTS anime (
+        malid INTEGER PRIMARY KEY,
+        title TEXT,
+        type TEXT,
+        episodes INTEGER,
+        status TEXT,
+        season TEXT,
+        year INTEGER,
+        image_url TEXT,
+        livechart_id TEXT UNIQUE,
+        has_mapping INTEGER DEFAULT 0
+      );
+      CREATE TABLE IF NOT EXISTS manga (
+        malid INTEGER PRIMARY KEY,
+        title TEXT,
+        type TEXT,
+        chapters INTEGER,
+        volumes INTEGER,
+        status TEXT,
+        image_url TEXT,
+        has_mapping INTEGER DEFAULT 0
+      );
+      CREATE TABLE IF NOT EXISTS provider_metadata (
+        table_name TEXT PRIMARY KEY,
+        media_type TEXT,
+        primary_key_field TEXT,
+        display_name TEXT,
+        updated_at TEXT
+      );
     `);
+
+    try {
+      await mappingExec(`
+        CREATE INDEX IF NOT EXISTS idx_unmapped_provider ON unmapped_items(provider);
+        CREATE INDEX IF NOT EXISTS idx_unmapped_media_type ON unmapped_items(media_type);
+      `);
+    } catch (_) {}
+
+    // Ensure title and image_url columns exist if tables were created with an earlier minimal schema
+    try {
+      const animeCols = await mappingQueryAll("PRAGMA table_info(anime)");
+      const colNames = new Set((animeCols || []).map((c) => c.name));
+      if (!colNames.has("title")) {
+        await mappingExec("ALTER TABLE anime ADD COLUMN title TEXT;");
+      }
+      if (!colNames.has("image_url")) {
+        await mappingExec("ALTER TABLE anime ADD COLUMN image_url TEXT;");
+      }
+      if (!colNames.has("livechart_id")) {
+        await mappingExec("ALTER TABLE anime ADD COLUMN livechart_id TEXT;");
+      }
+    } catch (_) {}
+
+    try {
+      const mangaCols = await mappingQueryAll("PRAGMA table_info(manga)");
+      const mColNames = new Set((mangaCols || []).map((c) => c.name));
+      if (!mColNames.has("title")) {
+        await mappingExec("ALTER TABLE manga ADD COLUMN title TEXT;");
+      }
+      if (!mColNames.has("image_url")) {
+        await mappingExec("ALTER TABLE manga ADD COLUMN image_url TEXT;");
+      }
+    } catch (_) {}
   } catch (e) {
     logger.error(
-      `[mappingUpdater] Failed to ensure mapping_changelog table exists: ${e.message}`,
+      `[mappingUpdater] Failed to ensure mapping tables exist: ${e.message}`,
     );
   }
 }
@@ -446,6 +522,7 @@ async function applyDeltaUpdates(updates, latestVersion, storedTag) {
     `[mappingUpdater] Applying ${updates.length} delta updates${storedTag ? ` since version ${storedTag}` : ""}...`,
   );
   try {
+    await ensureMappingTablesExist();
     await mappingExec("PRAGMA foreign_keys = OFF");
 
     const changelogSql =
@@ -674,6 +751,7 @@ async function syncExtensionMapping(extensionName) {
   if (!cleanProv) return;
 
   try {
+    await ensureMappingTablesExist();
     if (cleanProv === "pahe") {
       await mappingExec(`
         CREATE TABLE IF NOT EXISTS pahe (

@@ -2988,9 +2988,7 @@ export default function SettingsView({
                       className="update-btn-ready"
                     >
                       <CheckCircle size={14} />
-                      <span>
-                        Install Update v{updateProgress?.version || ""}
-                      </span>
+                      <span>Update App</span>
                     </button>
                   )}
 

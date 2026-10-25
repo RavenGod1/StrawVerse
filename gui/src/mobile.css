@@ -340,8 +340,65 @@
   /* ---------------------------------------------------------------- */
   /* Marketplace                                                       */
   /* ---------------------------------------------------------------- */
+  html .market-wrapper {
+    overflow-x: hidden !important;
+    max-width: 100vw !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+    padding: 12px 14px !important;
+  }
+
+  html .market-header-row {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 12px !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  html .market-title {
+    font-size: 20px !important;
+    margin: 0 !important;
+  }
+
+  html .market-header-actions {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    align-items: center !important;
+    gap: 8px !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  html .market-tabs-wrapper {
+    flex: 1 1 auto !important;
+    display: flex !important;
+  }
+
+  html .market-tab-btn {
+    flex: 1 !important;
+    text-align: center !important;
+    padding: 7px 12px !important;
+  }
+
+  html .btn-header-action {
+    padding: 7px 12px !important;
+    font-size: 13px !important;
+    white-space: nowrap !important;
+  }
+
   html .market-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: 1fr !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+    gap: 14px !important;
+  }
+
+  html .market-card {
+    width: 100% !important;
+    box-sizing: border-box !important;
+    padding: 18px !important;
+    min-height: auto !important;
   }
 
   /* ---------------------------------------------------------------- */

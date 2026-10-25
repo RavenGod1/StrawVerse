@@ -1,5 +1,19 @@
 # Changelog
 
+# [11.1.1] - 2026-10-26
+
+### Android Updates & Notifications
+
+- **Tap to Install from Notification Bar:** When an app update finishes downloading, you can now tap the notification directly in your Android notification shade to open the installer immediately
+
+### Mobile & Marketplace
+
+- **Fixed Broken Mobile Marketplace Layout:** extension cards were cut off on the left with blank space on the right on mobile screens. The header buttons and tabs now wrap neatly to fit your phone.
+
+### Database & Mapping Stability
+
+- **Fixed Mapping Sync Errors:** Fixed an issue where mapping database updates would fail on mobile due to missing unmapped tables and schema differences, ensuring updates apply smoothly.
+
 # [11.1.0] - 2026-10-25
 
 ### Discover, Filters & Browsing

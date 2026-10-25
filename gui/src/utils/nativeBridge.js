@@ -240,6 +240,28 @@ function ensureEventSource() {
           );
         }
       }
+
+      if (channel === "update-download-progress" && data) {
+        const CloudflareBypass = window.Capacitor?.Plugins?.CloudflareBypass;
+        if (CloudflareBypass?.updateApkDownloadProgress) {
+          CloudflareBypass.updateApkDownloadProgress({
+            percent: Math.round(data.percent || 0),
+            version: data.version || "",
+            apkName: data.apkName || "",
+          }).catch(() => {});
+        }
+      }
+
+      if (channel === "update-downloaded" && data?.path) {
+        const CloudflareBypass = window.Capacitor?.Plugins?.CloudflareBypass;
+        if (CloudflareBypass?.showApkDownloadedNotification) {
+          CloudflareBypass.showApkDownloadedNotification({
+            path: data.path,
+            version: data.version || "",
+            apkName: data.apkName || "",
+          }).catch(() => {});
+        }
+      }
     } catch (e) {
       console.error("[nativeBridge] Error handling EventSource message:", e);
     }
