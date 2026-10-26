@@ -128,6 +128,11 @@ async function ensureMappingTablesExist() {
       if (!colNames.has("livechart_id")) {
         await mappingExec("ALTER TABLE anime ADD COLUMN livechart_id TEXT;");
       }
+      if (!colNames.has("has_mapping")) {
+        await mappingExec(
+          "ALTER TABLE anime ADD COLUMN has_mapping INTEGER DEFAULT 0;",
+        );
+      }
     } catch (_) {}
 
     try {
@@ -138,6 +143,11 @@ async function ensureMappingTablesExist() {
       }
       if (!mColNames.has("image_url")) {
         await mappingExec("ALTER TABLE manga ADD COLUMN image_url TEXT;");
+      }
+      if (!mColNames.has("has_mapping")) {
+        await mappingExec(
+          "ALTER TABLE manga ADD COLUMN has_mapping INTEGER DEFAULT 0;",
+        );
       }
     } catch (_) {}
   } catch (e) {
