@@ -1,14 +1,12 @@
 # Changelog
 
-# [11.1.2] - 2026-10-26
+# [11.1.1] - 2026-10-26
 
 ### Discover & Extensions
 
 - **Universal Dynamic Provider Discovery:** Extensions and their filter definitions are now discovered dynamically at runtime, with animepahe IDs standardized across discovery, catalog, and mapping lookups.
 - **Capacitor Peer-Dependency Fix:** `@capacitor/android` and the Capacitor CLI are restored to v6 so Android installs resolve their peer dependencies cleanly.
 - **Dependency Refresh:** Electron and GUI build dependencies updated to their latest stable releases.
-
-# [11.1.1] - 2026-10-26
 
 ### Android Updates & Notifications
 
