@@ -346,8 +346,50 @@ function resolveLocalFolder(metadata, folderSet, type) {
   return null;
 }
 
+function matchSeasonYearHelper(airedStr, season, year) {
+  if (!airedStr && (season || year)) return false;
+  if (!season && !year) return true;
+  const s = String(airedStr).toLowerCase();
+
+  if (year && year !== "All" && year !== "") {
+    if (year === "Older") {
+      const match = s.match(/\b(19\d\d|200\d)\b/);
+      if (!match) return false;
+    } else if (!s.includes(String(year).toLowerCase())) {
+      return false;
+    }
+  }
+
+  if (season && season !== "All" && season !== "") {
+    const sLower = season.toLowerCase();
+    if (s.includes(sLower)) return true;
+
+    const winterMonths = ["jan", "feb", "mar", "-01-", "-02-", "-03-"];
+    const springMonths = ["apr", "may", "jun", "-04-", "-05-", "-06-"];
+    const summerMonths = ["jul", "aug", "sep", "-07-", "-08-", "-09-"];
+    const fallMonths = ["oct", "nov", "dec", "-10-", "-11-", "-12-"];
+
+    let months = [];
+    if (sLower === "winter") months = winterMonths;
+    else if (sLower === "spring") months = springMonths;
+    else if (sLower === "summer") months = summerMonths;
+    else if (sLower === "fall") months = fallMonths;
+
+    return months.some((m) => s.includes(m));
+  }
+
+  return true;
+}
+
 // Get All Metadata
-async function getAllMetadata(type, baseDir, page = 1, tag = null) {
+async function getAllMetadata(
+  type,
+  baseDir,
+  page = 1,
+  tag = null,
+  filters = {},
+  keyword = "",
+) {
   baseDir =
     typeof baseDir === "string" && baseDir.trim()
       ? baseDir
@@ -770,7 +812,6 @@ async function getAllMetadata(type, baseDir, page = 1, tag = null) {
       }
 
       if (type === "Anime") {
-
         if (item.MalID && mappingMap[Number(item.MalID)]) {
           const livechartId = mappingMap[Number(item.MalID)];
 
@@ -866,6 +907,92 @@ async function getAllMetadata(type, baseDir, page = 1, tag = null) {
     });
 
     storedMetadata = groupedMetadata;
+
+    if (keyword && typeof keyword === "string" && keyword.trim()) {
+      const cleanKw = keyword.trim().toLowerCase();
+      storedMetadata = storedMetadata.filter((item) =>
+        (item.title || "").toLowerCase().includes(cleanKw),
+      );
+    }
+
+    if (filters && typeof filters === "object") {
+      if (filters.genre && filters.genre !== "All" && filters.genre !== "") {
+        const targetGenre = String(filters.genre).toLowerCase();
+        storedMetadata = storedMetadata.filter((item) =>
+          (item.genres || "").toLowerCase().includes(targetGenre),
+        );
+      }
+
+      if (
+        filters.mapping &&
+        filters.mapping !== "All" &&
+        filters.mapping !== ""
+      ) {
+        if (filters.mapping === "mapped") {
+          storedMetadata = storedMetadata.filter((item) =>
+            Boolean(item.MalID && String(item.MalID).trim() !== ""),
+          );
+        } else if (filters.mapping === "unmapped") {
+          storedMetadata = storedMetadata.filter(
+            (item) => !item.MalID || String(item.MalID).trim() === "",
+          );
+        }
+      }
+
+      if (filters.source && filters.source !== "All" && filters.source !== "") {
+        const targetSource = String(filters.source).toLowerCase();
+        storedMetadata = storedMetadata.filter((item) =>
+          (item.provider || "").toLowerCase().includes(targetSource),
+        );
+      }
+
+      if (filters.format && filters.format !== "All" && filters.format !== "") {
+        const targetFormat = String(filters.format).toLowerCase();
+        storedMetadata = storedMetadata.filter(
+          (item) => (item.type || "").toLowerCase() === targetFormat,
+        );
+      }
+
+      if (filters.status && filters.status !== "All" && filters.status !== "") {
+        const targetStatus = String(filters.status).toLowerCase();
+        storedMetadata = storedMetadata.filter((item) => {
+          const itemStatus = (item.status || "").toLowerCase();
+          if (targetStatus === "airing" || targetStatus === "ongoing") {
+            return (
+              itemStatus.includes("airing") || itemStatus.includes("ongoing")
+            );
+          }
+          if (targetStatus === "completed" || targetStatus === "finished") {
+            return (
+              itemStatus.includes("completed") ||
+              itemStatus.includes("finished")
+            );
+          }
+          return itemStatus.includes(targetStatus);
+        });
+      }
+
+      if (
+        filters.malStatus &&
+        filters.malStatus !== "All" &&
+        filters.malStatus !== ""
+      ) {
+        const targetMalStatus = String(filters.malStatus).toLowerCase();
+        storedMetadata = storedMetadata.filter((item) => {
+          const mStatus = (item.malStatus || "").toLowerCase();
+          if (targetMalStatus === "watching" || targetMalStatus === "reading") {
+            return mStatus === "watching" || mStatus === "reading";
+          }
+          return mStatus === targetMalStatus;
+        });
+      }
+
+      if (filters.season || filters.year) {
+        storedMetadata = storedMetadata.filter((item) =>
+          matchSeasonYearHelper(item.aired, filters.season, filters.year),
+        );
+      }
+    }
 
     // Pagination logic
     const limit = 15;
@@ -1696,4 +1823,5 @@ module.exports = {
   MalMangaMap,
   formatFallbackTitle,
   getMalIdFromMapping,
+  matchSeasonYearHelper,
 };

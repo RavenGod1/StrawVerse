@@ -62,11 +62,87 @@ async function ensureMappingTablesExist() {
       CREATE TABLE IF NOT EXISTS mapping_changelog (
         id INTEGER PRIMARY KEY,
         version TEXT
-      )
+      );
+      CREATE TABLE IF NOT EXISTS unmapped_items (
+        id TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        media_type TEXT,
+        name TEXT,
+        image_url TEXT,
+        type TEXT,
+        episodes TEXT,
+        status TEXT,
+        season TEXT,
+        year INTEGER,
+        last_fetched TEXT,
+        PRIMARY KEY (provider, id)
+      );
+      CREATE TABLE IF NOT EXISTS anime (
+        malid INTEGER PRIMARY KEY,
+        title TEXT,
+        type TEXT,
+        episodes INTEGER,
+        status TEXT,
+        season TEXT,
+        year INTEGER,
+        image_url TEXT,
+        livechart_id TEXT UNIQUE,
+        has_mapping INTEGER DEFAULT 0
+      );
+      CREATE TABLE IF NOT EXISTS manga (
+        malid INTEGER PRIMARY KEY,
+        title TEXT,
+        type TEXT,
+        chapters INTEGER,
+        volumes INTEGER,
+        status TEXT,
+        image_url TEXT,
+        has_mapping INTEGER DEFAULT 0
+      );
+      CREATE TABLE IF NOT EXISTS provider_metadata (
+        table_name TEXT PRIMARY KEY,
+        media_type TEXT,
+        primary_key_field TEXT,
+        display_name TEXT,
+        updated_at TEXT
+      );
     `);
+
+    try {
+      await mappingExec(`
+        CREATE INDEX IF NOT EXISTS idx_unmapped_provider ON unmapped_items(provider);
+        CREATE INDEX IF NOT EXISTS idx_unmapped_media_type ON unmapped_items(media_type);
+      `);
+    } catch (_) {}
+
+    // Ensure title and image_url columns exist if tables were created with an earlier minimal schema
+    try {
+      const animeCols = await mappingQueryAll("PRAGMA table_info(anime)");
+      const colNames = new Set((animeCols || []).map((c) => c.name));
+      if (!colNames.has("title")) {
+        await mappingExec("ALTER TABLE anime ADD COLUMN title TEXT;");
+      }
+      if (!colNames.has("image_url")) {
+        await mappingExec("ALTER TABLE anime ADD COLUMN image_url TEXT;");
+      }
+      if (!colNames.has("livechart_id")) {
+        await mappingExec("ALTER TABLE anime ADD COLUMN livechart_id TEXT;");
+      }
+    } catch (_) {}
+
+    try {
+      const mangaCols = await mappingQueryAll("PRAGMA table_info(manga)");
+      const mColNames = new Set((mangaCols || []).map((c) => c.name));
+      if (!mColNames.has("title")) {
+        await mappingExec("ALTER TABLE manga ADD COLUMN title TEXT;");
+      }
+      if (!mColNames.has("image_url")) {
+        await mappingExec("ALTER TABLE manga ADD COLUMN image_url TEXT;");
+      }
+    } catch (_) {}
   } catch (e) {
     logger.error(
-      `[mappingUpdater] Failed to ensure mapping_changelog table exists: ${e.message}`,
+      `[mappingUpdater] Failed to ensure mapping tables exist: ${e.message}`,
     );
   }
 }
@@ -297,9 +373,25 @@ async function checkForMappingUpdates(force = false) {
 
   let updateResponse = null;
   try {
+    const installedProviders = [];
+    if (global.Anime_providers) {
+      for (const p of Object.values(global.Anime_providers)) {
+        if (p?.name) installedProviders.push(p.name.toLowerCase());
+      }
+    }
+    if (global.Manga_providers) {
+      for (const p of Object.values(global.Manga_providers)) {
+        if (p?.name) installedProviders.push(p.name.toLowerCase());
+      }
+    }
+    const cleanProviders = Array.from(new Set(installedProviders)).join(",");
+    const provQuery = cleanProviders
+      ? `&providers=${encodeURIComponent(cleanProviders)}`
+      : "";
+
     const url = storedTag
-      ? `https://strawverse.theyogmehta.online/api/mapping/updates?version=${storedTag}&last_id=${lastId}`
-      : `https://strawverse.theyogmehta.online/api/mapping/updates?last_id=${lastId}`;
+      ? `https://strawverse.theyogmehta.online/api/mapping/updates?version=${storedTag}&last_id=${lastId}${provQuery}`
+      : `https://strawverse.theyogmehta.online/api/mapping/updates?last_id=${lastId}${provQuery ? `?${provQuery.slice(1)}` : ""}`;
     const response = await mappingClient.get(url, {
       responseType: "arraybuffer",
       headers: {
@@ -320,7 +412,7 @@ async function checkForMappingUpdates(force = false) {
   }
   let updates = updateResponse?.updates || [];
 
-  if (action === "delta" && updates.length > 10000) {
+  if (action === "delta" && updates.length > 50000) {
     logger.info(
       `[mappingUpdater] Delta update contains ${updates.length} records. Forcing full sync...`,
     );
@@ -406,183 +498,7 @@ async function checkForMappingUpdates(force = false) {
     await ensureMappingTablesExist();
 
     if (action === "delta" && updates.length > 0) {
-      logger.info(
-        `[mappingUpdater] Applying ${updates.length} delta updates since version ${storedTag}...`,
-      );
-      try {
-        await mappingExec("PRAGMA foreign_keys = OFF");
-
-        const changelogSql =
-          "INSERT OR REPLACE INTO mapping_changelog (id, version) VALUES (?, ?)";
-
-        const paheRotations = [];
-        const UPDATE_CHUNK_SIZE = 500;
-        for (let i = 0; i < updates.length; i += UPDATE_CHUNK_SIZE) {
-          const updateChunk = updates.slice(i, i + UPDATE_CHUNK_SIZE);
-          const ops = [];
-
-          for (const update of updateChunk) {
-            const { id, action: act, tbl, row_id, data } = update;
-
-            const tableCheck = await mappingQueryOne(
-              "SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?",
-              [tbl],
-            );
-
-            if (!tableCheck) {
-              ops.push({
-                sql: changelogSql,
-                params: [id, latestVersion],
-              });
-              continue;
-            }
-
-            if (act === "INSERT" || act === "UPDATE") {
-              if (data) {
-                const parsedData = JSON.parse(data);
-
-                if (tbl === "pahe" && parsedData.id && parsedData.uuid) {
-                  try {
-                    const existingPahe = await mappingQueryOne(
-                      "SELECT uuid FROM pahe WHERE id = ?",
-                      [parsedData.id],
-                    );
-                    if (
-                      existingPahe?.uuid &&
-                      existingPahe.uuid.toLowerCase() !==
-                        parsedData.uuid.toLowerCase()
-                    ) {
-                      paheRotations.push({
-                        oldUuid: existingPahe.uuid,
-                        newUuid: parsedData.uuid,
-                        malid: parsedData.malid || null,
-                      });
-                    }
-                  } catch (_) {}
-                }
-
-                const tableColsRes = await mappingQueryAll(
-                  `PRAGMA table_info(${tbl})`,
-                );
-                const validCols = new Set(
-                  (tableColsRes || []).map((c) => c.name),
-                );
-                const validKeys = Object.keys(parsedData).filter((k) =>
-                  validCols.has(k),
-                );
-
-                if (validKeys.length > 0) {
-                  const cols = validKeys.join(", ");
-                  const placeholders = validKeys.map(() => "?").join(", ");
-                  const values = validKeys.map((k) => parsedData[k] ?? null);
-                  ops.push({
-                    sql: `INSERT OR REPLACE INTO ${tbl} (${cols}) VALUES (${placeholders})`,
-                    params: values,
-                  });
-                }
-              }
-            } else if (act === "DELETE") {
-              if (tbl === "anime" || tbl === "manga") {
-                ops.push({
-                  sql: `DELETE FROM ${tbl} WHERE malid = ?`,
-                  params: [row_id],
-                });
-              } else if (tbl === "next_episodes") {
-                const parts = row_id.split("_");
-                const livechartId = parts[0];
-                const episode = parseInt(parts[1], 10);
-                ops.push({
-                  sql: "DELETE FROM next_episodes WHERE livechart_id = ? AND episode = ?",
-                  params: [
-                    livechartId ?? null,
-                    isNaN(episode) ? null : episode,
-                  ],
-                });
-              } else if (tbl === "provider_metadata") {
-                ops.push({
-                  sql: "DELETE FROM provider_metadata WHERE table_name = ?",
-                  params: [row_id],
-                });
-              } else {
-                ops.push({
-                  sql: `DELETE FROM ${tbl} WHERE id = ?`,
-                  params: [row_id],
-                });
-              }
-            }
-
-            ops.push({
-              sql: changelogSql,
-              params: [id, latestVersion],
-            });
-          }
-
-          if (ops.length > 0) {
-            await batchRun("mapping", ops);
-            await new Promise((r) => setTimeout(r, 0));
-          }
-        }
-
-        if (paheRotations.length > 0) {
-          for (const rot of paheRotations) {
-            try {
-              await run(
-                "UPDATE OR REPLACE Anime SET id = REPLACE(id, ?, ?) WHERE id = ? OR id LIKE ?",
-                [rot.oldUuid, rot.newUuid, rot.oldUuid, `${rot.oldUuid}-%`],
-              );
-              await run(
-                "UPDATE WatchHistory SET anime_id = REPLACE(anime_id, ?, ?) WHERE anime_id = ? OR anime_id LIKE ?",
-                [rot.oldUuid, rot.newUuid, rot.oldUuid, `${rot.oldUuid}-%`],
-              );
-              await run(
-                "UPDATE OR REPLACE SkipTimes SET anime_id = REPLACE(anime_id, ?, ?) WHERE anime_id = ? OR anime_id LIKE ?",
-                [rot.oldUuid, rot.newUuid, rot.oldUuid, `${rot.oldUuid}-%`],
-              );
-              await run(
-                "UPDATE DownloadQueue SET id = REPLACE(id, ?, ?) WHERE id = ? OR id LIKE ?",
-                [rot.oldUuid, rot.newUuid, rot.oldUuid, `${rot.oldUuid}-%`],
-              );
-              if (rot.malid) {
-                await run(
-                  "UPDATE Anime SET MalID = ? WHERE (id = ? OR id LIKE ?) AND (MalID IS NULL OR MalID = '')",
-                  [String(rot.malid), rot.newUuid, `${rot.newUuid}-%`],
-                );
-              }
-              if (typeof global.sendToRenderer === "function") {
-                global.sendToRenderer("anime-id-updated", {
-                  oldId: rot.oldUuid,
-                  newId: rot.newUuid,
-                  provider: "pahe",
-                  mediaType: "Anime",
-                });
-              }
-            } catch (rotErr) {
-              logger.error(
-                `[mappingUpdater] Error applying delta UUID rotation ${rot.oldUuid} -> ${rot.newUuid}: ${rotErr.message}`,
-              );
-            }
-          }
-        }
-
-        await mappingExec("PRAGMA foreign_keys = ON");
-
-        if (latestVersion) {
-          await setKeyValue("Settings", mappingTagKey, latestVersion);
-        }
-        logger.info(
-          `[mappingUpdater] Mapping database successfully updated via delta to version: ${latestVersion}`,
-        );
-        try {
-          await syncLibraryIdsWithMapping();
-        } catch (syncErr) {}
-      } catch (err) {
-        logger.error(
-          `[mappingUpdater] Failed to apply delta updates: ${err.message}`,
-        );
-        try {
-          await mappingExec("PRAGMA foreign_keys = ON");
-        } catch (e) {}
-      }
+      await applyDeltaUpdates(updates, latestVersion, storedTag);
     } else {
       logger.info("[mappingUpdater] Mapping database is up to date.");
       if (latestVersion && latestVersion !== storedTag) {
@@ -595,6 +511,336 @@ async function checkForMappingUpdates(force = false) {
         await syncLibraryIdsWithMapping();
       } catch (syncErr) {}
     }
+  }
+}
+
+async function applyDeltaUpdates(updates, latestVersion, storedTag) {
+  if (!updates || updates.length === 0) return;
+  const mappingTagKey = "mapping_release_tag";
+
+  logger.info(
+    `[mappingUpdater] Applying ${updates.length} delta updates${storedTag ? ` since version ${storedTag}` : ""}...`,
+  );
+  try {
+    await ensureMappingTablesExist();
+    await mappingExec("PRAGMA foreign_keys = OFF");
+
+    const changelogSql =
+      "INSERT OR REPLACE INTO mapping_changelog (id, version) VALUES (?, ?)";
+
+    const paheRotations = [];
+    const UPDATE_CHUNK_SIZE = 500;
+    for (let i = 0; i < updates.length; i += UPDATE_CHUNK_SIZE) {
+      const updateChunk = updates.slice(i, i + UPDATE_CHUNK_SIZE);
+      const ops = [];
+
+      for (const update of updateChunk) {
+        const { id, action: act, tbl, row_id, data } = update;
+
+        const tableCheck = await mappingQueryOne(
+          "SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?",
+          [tbl],
+        );
+
+        if (!tableCheck) {
+          if (id) {
+            ops.push({
+              sql: changelogSql,
+              params: [id, latestVersion || "v0"],
+            });
+          }
+          continue;
+        }
+
+        if (act === "INSERT" || act === "UPDATE") {
+          if (data) {
+            const parsedData = JSON.parse(data);
+
+            if (tbl === "pahe" && parsedData.id && parsedData.uuid) {
+              try {
+                const existingPahe = await mappingQueryOne(
+                  "SELECT uuid FROM pahe WHERE id = ?",
+                  [parsedData.id],
+                );
+                if (
+                  existingPahe?.uuid &&
+                  existingPahe.uuid.toLowerCase() !==
+                    parsedData.uuid.toLowerCase()
+                ) {
+                  paheRotations.push({
+                    oldUuid: existingPahe.uuid,
+                    newUuid: parsedData.uuid,
+                    malid: parsedData.malid || null,
+                  });
+                }
+              } catch (_) {}
+            }
+
+            if (parsedData.malid) {
+              const targetIds = [parsedData.id, parsedData.uuid, row_id]
+                .filter(Boolean)
+                .map(String);
+
+              if (global.db && targetIds.length > 0) {
+                try {
+                  for (const tid of targetIds) {
+                    const localEntry = await queryOne(
+                      "SELECT malid FROM unlinked_mal_ids WHERE id = ? LIMIT 1",
+                      [tid],
+                    );
+                    if (localEntry) {
+                      await run("DELETE FROM unlinked_mal_ids WHERE id = ?", [
+                        tid,
+                      ]);
+                      logger.info(
+                        `[mappingUpdater] Pruned duplicate local mapping for ${tid} (server now provides canonical MAL ID ${parsedData.malid})`,
+                      );
+                    }
+                  }
+                } catch (_) {}
+              }
+
+              for (const tid of targetIds) {
+                ops.push({
+                  sql: "DELETE FROM unmapped_items WHERE (provider = ? OR provider = ? OR provider LIKE ?) AND (id = ? OR id = ?)",
+                  params: [tbl, tbl, `%/${tbl}`, tid, tid],
+                });
+              }
+            }
+
+            const tableColsRes = await mappingQueryAll(
+              `PRAGMA table_info(${tbl})`,
+            );
+            const validCols = new Set((tableColsRes || []).map((c) => c.name));
+            const validKeys = Object.keys(parsedData).filter((k) =>
+              validCols.has(k),
+            );
+
+            if (validKeys.length > 0) {
+              const cols = validKeys.join(", ");
+              const placeholders = validKeys.map(() => "?").join(", ");
+              const values = validKeys.map((k) => parsedData[k] ?? null);
+              ops.push({
+                sql: `INSERT OR REPLACE INTO ${tbl} (${cols}) VALUES (${placeholders})`,
+                params: values,
+              });
+            }
+          }
+        } else if (act === "DELETE") {
+          if (tbl === "anime" || tbl === "manga") {
+            ops.push({
+              sql: `DELETE FROM ${tbl} WHERE malid = ?`,
+              params: [row_id],
+            });
+          } else if (tbl === "next_episodes") {
+            const parts = row_id.split("_");
+            const livechartId = parts[0];
+            const episode = parseInt(parts[1], 10);
+            ops.push({
+              sql: "DELETE FROM next_episodes WHERE livechart_id = ? AND episode = ?",
+              params: [livechartId ?? null, isNaN(episode) ? null : episode],
+            });
+          } else if (tbl === "provider_metadata") {
+            ops.push({
+              sql: "DELETE FROM provider_metadata WHERE table_name = ?",
+              params: [row_id],
+            });
+          } else if (tbl === "unmapped_items") {
+            const parts = String(row_id).split(":::");
+            if (parts.length >= 2) {
+              ops.push({
+                sql: "DELETE FROM unmapped_items WHERE provider = ? AND id = ?",
+                params: [parts[0], parts.slice(1).join(":::")],
+              });
+            } else {
+              ops.push({
+                sql: "DELETE FROM unmapped_items WHERE id = ?",
+                params: [row_id],
+              });
+            }
+          } else {
+            ops.push({
+              sql: `DELETE FROM ${tbl} WHERE id = ?`,
+              params: [row_id],
+            });
+          }
+        }
+
+        if (id) {
+          ops.push({
+            sql: changelogSql,
+            params: [id, latestVersion || "v0"],
+          });
+        }
+      }
+
+      if (ops.length > 0) {
+        await batchRun("mapping", ops);
+        await new Promise((r) => setTimeout(r, 0));
+      }
+    }
+
+    if (paheRotations.length > 0) {
+      for (const rot of paheRotations) {
+        try {
+          await run(
+            "UPDATE OR REPLACE Anime SET id = REPLACE(id, ?, ?) WHERE id = ? OR id LIKE ?",
+            [rot.oldUuid, rot.newUuid, rot.oldUuid, `${rot.oldUuid}-%`],
+          );
+          await run(
+            "UPDATE WatchHistory SET anime_id = REPLACE(anime_id, ?, ?) WHERE anime_id = ? OR anime_id LIKE ?",
+            [rot.oldUuid, rot.newUuid, rot.oldUuid, `${rot.oldUuid}-%`],
+          );
+          await run(
+            "UPDATE OR REPLACE SkipTimes SET anime_id = REPLACE(anime_id, ?, ?) WHERE anime_id = ? OR anime_id LIKE ?",
+            [rot.oldUuid, rot.newUuid, rot.oldUuid, `${rot.oldUuid}-%`],
+          );
+          await run(
+            "UPDATE DownloadQueue SET id = REPLACE(id, ?, ?) WHERE id = ? OR id LIKE ?",
+            [rot.oldUuid, rot.newUuid, rot.oldUuid, `${rot.oldUuid}-%`],
+          );
+          if (rot.malid) {
+            await run(
+              "UPDATE Anime SET MalID = ? WHERE (id = ? OR id LIKE ?) AND (MalID IS NULL OR MalID = '')",
+              [String(rot.malid), rot.newUuid, `${rot.newUuid}-%`],
+            );
+          }
+          if (typeof global.sendToRenderer === "function") {
+            global.sendToRenderer("anime-id-updated", {
+              oldId: rot.oldUuid,
+              newId: rot.newUuid,
+              provider: "pahe",
+              mediaType: "Anime",
+            });
+          }
+        } catch (rotErr) {
+          logger.error(
+            `[mappingUpdater] Error applying delta UUID rotation ${rot.oldUuid} -> ${rot.newUuid}: ${rotErr.message}`,
+          );
+        }
+      }
+    }
+
+    await mappingExec("PRAGMA foreign_keys = ON");
+
+    if (latestVersion) {
+      await setKeyValue("Settings", mappingTagKey, latestVersion);
+    }
+    logger.info(
+      `[mappingUpdater] Mapping database successfully updated via delta to version: ${latestVersion}`,
+    );
+    try {
+      await syncLibraryIdsWithMapping();
+    } catch (syncErr) {}
+  } catch (err) {
+    logger.error(
+      `[mappingUpdater] Failed to apply delta updates: ${err.message}`,
+    );
+    try {
+      await mappingExec("PRAGMA foreign_keys = ON");
+    } catch (e) {}
+  }
+}
+
+/**
+ * Fetches and initializes mapping data for an installed extension from the server.
+ */
+async function syncExtensionMapping(extensionName) {
+  if (!extensionName || !global.mappingDb) return;
+  const cleanProv = String(extensionName).toLowerCase().trim().split("/").pop();
+  if (!cleanProv) return;
+
+  try {
+    await ensureMappingTablesExist();
+    if (cleanProv === "pahe") {
+      await mappingExec(`
+        CREATE TABLE IF NOT EXISTS pahe (
+          id TEXT PRIMARY KEY,
+          uuid TEXT,
+          malid INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_pahe_malid ON pahe(malid);
+      `);
+    } else {
+      await mappingExec(`
+        CREATE TABLE IF NOT EXISTS "${cleanProv}" (
+          id TEXT PRIMARY KEY,
+          malid INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS "idx_${cleanProv}_malid" ON "${cleanProv}"(malid);
+      `);
+    }
+
+    const axiosClient = global.axios || require("axios");
+    const osName = getOSName();
+    const url = `https://strawverse.theyogmehta.online/api/mapping/provider?provider=${encodeURIComponent(cleanProv)}`;
+    const response = await axiosClient.get(url, {
+      responseType: "arraybuffer",
+      headers: { os: osName },
+      timeout: 25000,
+    });
+    if (response?.data) {
+      const delta = deserializeDelta(Buffer.from(response.data));
+      if (delta && delta.updates && delta.updates.length > 0) {
+        await applyDeltaUpdates(delta.updates, delta.version || null, null);
+        logger.info(
+          `[mappingUpdater] Initialized ${delta.updates.length} mappings for ${cleanProv}`,
+        );
+      }
+    }
+  } catch (err) {
+    logger.warn(
+      `[mappingUpdater] Could not fetch mappings for ${cleanProv}: ${err.message}`,
+    );
+  }
+}
+
+/**
+ * Deletes all mapping records, tables, unmapped items, and settings for an uninstalled extension.
+ */
+async function cleanupExtensionMapping(extensionName) {
+  if (!extensionName || !global.mappingDb) return;
+  const cleanProv = String(extensionName).toLowerCase().trim().split("/").pop();
+  if (!cleanProv) return;
+
+  try {
+    // 1. Drop provider table
+    await mappingExec(`DROP TABLE IF EXISTS "${cleanProv}"`);
+
+    // 2. Remove unmapped items for this provider
+    try {
+      global.mappingDb
+        .prepare(
+          "DELETE FROM unmapped_items WHERE provider = ? OR provider = ? OR provider LIKE ?",
+        )
+        .run(cleanProv, extensionName, `%/${cleanProv}`);
+    } catch (_) {}
+
+    // 3. Remove provider metadata
+    try {
+      global.mappingDb
+        .prepare(
+          "DELETE FROM provider_metadata WHERE table_name = ? OR table_name = ?",
+        )
+        .run(cleanProv, extensionName);
+    } catch (_) {}
+
+    // 4. Remove extension settings
+    try {
+      global.mappingDb
+        .prepare(
+          "DELETE FROM extension_settings WHERE provider = ? OR provider = ?",
+        )
+        .run(cleanProv, extensionName);
+    } catch (_) {}
+
+    logger.info(
+      `[mappingUpdater] Purged all mapping data for deleted extension: ${cleanProv}`,
+    );
+  } catch (err) {
+    logger.error(
+      `[mappingUpdater] Failed to cleanup mapping data for ${cleanProv}: ${err.message}`,
+    );
   }
 }
 
@@ -695,28 +941,27 @@ async function syncLibraryIdsWithMapping() {
       if (!matched) continue;
 
       const targetTable = matched.table_name;
-      const useUuid =
-        (matched.primary_key_field || "").toLowerCase() === "uuid";
+      const isPahe = targetTable === "pahe";
 
       let targetRow = null;
       if (malid) {
-        const query = useUuid
+        const query = isPahe
           ? `SELECT id, uuid, malid FROM ${targetTable} WHERE malid = ? LIMIT 1`
           : `SELECT id, malid FROM ${targetTable} WHERE malid = ? LIMIT 1`;
         targetRow = await mappingQueryOne(query, [malid]);
       }
       if (!targetRow) {
-        const query = useUuid
+        const query = isPahe
           ? `SELECT id, uuid, malid FROM ${targetTable} WHERE id = ? OR uuid = ? LIMIT 1`
           : `SELECT id, malid FROM ${targetTable} WHERE id = ? LIMIT 1`;
-        targetRow = useUuid
+        targetRow = isPahe
           ? await mappingQueryOne(query, [anime.id, anime.id])
           : await mappingQueryOne(query, [anime.id]);
       }
 
       if (targetRow) {
-        const latestId = useUuid
-          ? targetRow.uuid || targetRow.id
+        const latestId = isPahe
+          ? targetRow.id || targetRow.uuid
           : targetRow.id;
         if (latestId && latestId !== anime.id) {
           const existingFolder =
@@ -817,12 +1062,13 @@ async function syncLibraryIdsWithMapping() {
           } catch (_) {}
         }
 
-        if (targetRow?.uuid && targetRow.uuid !== hist.anime_id) {
+        const targetId = targetRow ? (targetRow.id || targetRow.uuid) : null;
+        if (targetId && targetId !== hist.anime_id) {
           await run(
             "UPDATE WatchHistory SET anime_id = REPLACE(anime_id, ?, ?) WHERE anime_id = ? OR anime_id LIKE ?",
             [
               hist.anime_id,
-              targetRow.uuid,
+              targetId,
               hist.anime_id,
               `${hist.anime_id}-%`,
             ],
@@ -831,7 +1077,7 @@ async function syncLibraryIdsWithMapping() {
             "UPDATE OR REPLACE SkipTimes SET anime_id = REPLACE(anime_id, ?, ?) WHERE anime_id = ? OR anime_id LIKE ?",
             [
               hist.anime_id,
-              targetRow.uuid,
+              targetId,
               hist.anime_id,
               `${hist.anime_id}-%`,
             ],
@@ -920,29 +1166,22 @@ async function syncLibraryIdsWithMapping() {
       if (!matched) continue;
 
       const targetTable = matched.table_name;
-      const useUuid =
-        (matched.primary_key_field || "").toLowerCase() === "uuid";
-
       let targetRow = null;
       if (malid) {
-        const query = useUuid
-          ? `SELECT id, uuid, malid FROM ${targetTable} WHERE malid = ? LIMIT 1`
-          : `SELECT id, malid FROM ${targetTable} WHERE malid = ? LIMIT 1`;
-        targetRow = await mappingQueryOne(query, [malid]);
+        targetRow = await mappingQueryOne(
+          `SELECT id, malid FROM ${targetTable} WHERE malid = ? LIMIT 1`,
+          [malid],
+        );
       }
       if (!targetRow) {
-        const query = useUuid
-          ? `SELECT id, uuid, malid FROM ${targetTable} WHERE id = ? OR uuid = ? LIMIT 1`
-          : `SELECT id, malid FROM ${targetTable} WHERE id = ? LIMIT 1`;
-        targetRow = useUuid
-          ? await mappingQueryOne(query, [manga.id, manga.id])
-          : await mappingQueryOne(query, [manga.id]);
+        targetRow = await mappingQueryOne(
+          `SELECT id, malid FROM ${targetTable} WHERE id = ? LIMIT 1`,
+          [manga.id],
+        );
       }
 
       if (targetRow) {
-        const latestId = useUuid
-          ? targetRow.uuid || targetRow.id
-          : targetRow.id;
+        const latestId = targetRow.id;
         if (latestId && latestId !== manga.id) {
           const existingFolder =
             manga.folder_name ||
@@ -1038,9 +1277,7 @@ async function syncLibraryIdsWithMapping() {
             [malid],
           );
           if (targetRow) {
-            const latestId = isUuid
-              ? targetRow.uuid || targetRow.id
-              : targetRow.id;
+            const latestId = targetRow.id || targetRow.uuid;
             if (latestId && latestId !== item.anime_id) {
               await run(
                 "UPDATE WatchHistory SET anime_id = REPLACE(anime_id, ?, ?) WHERE anime_id = ? OR anime_id LIKE ?",
@@ -1066,6 +1303,39 @@ async function syncLibraryIdsWithMapping() {
       }
     } catch (_) {}
 
+    // 3. Prune duplicate local mappings in unlinked_mal_ids that now exist in mapping.db
+    try {
+      if (global.db && global.mappingDb) {
+        const localOverrides = await queryAll(
+          "SELECT id, malid FROM unlinked_mal_ids WHERE malid IS NOT NULL",
+        );
+        for (const row of localOverrides || []) {
+          if (!row.id) continue;
+          let resolvedMalId = await resolveMalIdFromMapping({ id: row.id });
+          if (!resolvedMalId && row.id.includes("-")) {
+            const stripped = row.id.replace(/-[^-]+$/, "");
+            resolvedMalId = await resolveMalIdFromMapping({ id: stripped });
+          }
+          if (resolvedMalId) {
+            await run("DELETE FROM unlinked_mal_ids WHERE id = ?", [row.id]);
+            try {
+              await mappingRun(
+                "DELETE FROM unmapped_items WHERE id = ? OR id LIKE ?",
+                [row.id, `%${row.id}%`],
+              );
+            } catch (_) {}
+            logger.info(
+              `[mappingUpdater] Pruned duplicate local mapping for ${row.id} as it is mapped in server mapping.db (MAL ID: ${resolvedMalId})`,
+            );
+          }
+        }
+      }
+    } catch (pruneErr) {
+      logger.error(
+        `[mappingUpdater] Error pruning duplicate local mappings: ${pruneErr.message}`,
+      );
+    }
+
     if (typeof syncDomainConcurrencyFromMappingDb === "function") {
       await syncDomainConcurrencyFromMappingDb();
     }
@@ -1076,4 +1346,7 @@ async function syncLibraryIdsWithMapping() {
 
 module.exports = {
   checkForMappingUpdates,
+  applyDeltaUpdates,
+  syncExtensionMapping,
+  cleanupExtensionMapping,
 };

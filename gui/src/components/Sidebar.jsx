@@ -2,6 +2,7 @@ import "./css/Sidebar.css";
 import {
   Play,
   Library,
+  SlidersHorizontal,
   Download,
   Terminal,
   Settings,
@@ -20,6 +21,7 @@ export default function Sidebar({
   const menuItems = [
     { id: "home", label: "Home", icon: Library },
     { id: "discover", label: "Discover", icon: Play },
+    { id: "filters", label: "Filters", icon: SlidersHorizontal },
     { id: "downloads", label: "Downloads", icon: Download },
     { id: "marketplace", label: "Extensions", icon: ShoppingBag },
     { id: "logs", label: "Logs", icon: Terminal },

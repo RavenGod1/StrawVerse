@@ -9,51 +9,13 @@ function invalidateMappingMetadataCache() {
   lastProviderMetadataFetch = 0;
 }
 
-const DEFAULT_PROVIDERS = [
-  {
-    table_name: "pahe",
-    media_type: "Anime",
-    primary_key_field: "uuid",
-    display_name: "AnimePahe",
-  },
-  {
-    table_name: "anikoto",
-    media_type: "Anime",
-    primary_key_field: "id",
-    display_name: "Anikoto",
-  },
-  {
-    table_name: "anineko",
-    media_type: "Anime",
-    primary_key_field: "id",
-    display_name: "Anineko",
-  },
-  {
-    table_name: "weebcentral",
-    media_type: "Manga",
-    primary_key_field: "id",
-    display_name: "WeebCentral",
-  },
-  {
-    table_name: "asurascans",
-    media_type: "Manga",
-    primary_key_field: "id",
-    display_name: "AsuraScans",
-  },
-  {
-    table_name: "comix",
-    media_type: "Manga",
-    primary_key_field: "id",
-    display_name: "Comix",
-  },
-  {
-    table_name: "mangafire",
-    media_type: "Manga",
-    primary_key_field: "id",
-    display_name: "MangaFire",
-  },
-];
-
+/**
+ * Universal Provider Discovery:
+ * Dynamically aggregates providers from:
+ * 1. Live registered scraper extensions (global.Anime_providers, global.Manga_providers)
+ * 2. Mapping database provider_metadata table
+ * 3. Mapping database SQLite tables (discovering any table with an id & malid column)
+ */
 async function getMappingProviders(
   mediaType = null,
   { installedOnly = false } = {},
@@ -61,22 +23,80 @@ async function getMappingProviders(
   const now = Date.now();
   if (!cachedProviderMetadata || now - lastProviderMetadataFetch > 30000) {
     try {
-      if (global.mappingDb) {
-        const rows = await mappingQueryAll(
-          "SELECT table_name, media_type, primary_key_field, display_name FROM provider_metadata",
-        );
-        if (rows && rows.length > 0) {
-          cachedProviderMetadata = rows;
-          lastProviderMetadataFetch = now;
+      const providersMap = new Map();
+
+      // 1. Live registered scrapers
+      if (global.Anime_providers) {
+        for (const [key, scraper] of Object.entries(global.Anime_providers)) {
+          const cleanKey = key.toLowerCase().replace(/[^a-z0-9]/g, "");
+          providersMap.set(cleanKey, {
+            table_name: cleanKey,
+            media_type: "Anime",
+            display_name: scraper?.name || key,
+          });
         }
+      }
+      if (global.Manga_providers) {
+        for (const [key, scraper] of Object.entries(global.Manga_providers)) {
+          const cleanKey = key.toLowerCase().replace(/[^a-z0-9]/g, "");
+          providersMap.set(cleanKey, {
+            table_name: cleanKey,
+            media_type: "Manga",
+            display_name: scraper?.name || key,
+          });
+        }
+      }
+
+      // 2. Mapping DB metadata
+      if (global.mappingDb) {
+        try {
+          const rows = await mappingQueryAll(
+            "SELECT table_name, media_type, display_name FROM provider_metadata",
+          );
+          if (rows && rows.length > 0) {
+            for (const row of rows) {
+              const cleanKey = (row.table_name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+              if (providersMap.has(cleanKey)) {
+                Object.assign(providersMap.get(cleanKey), row);
+              } else {
+                providersMap.set(cleanKey, {
+                  table_name: row.table_name,
+                  media_type: row.media_type,
+                  display_name: row.display_name || row.table_name,
+                });
+              }
+            }
+          }
+        } catch (_) {}
+
+        // 3. Mapping DB tables from sqlite_master
+        try {
+          const tableRows = await mappingQueryAll(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ('unmapped_items', 'provider_metadata', 'anime', 'manga', 'anime_titles', 'manga_titles', 'version_history')",
+          );
+          if (tableRows && tableRows.length > 0) {
+            for (const t of tableRows) {
+              const cleanKey = t.name.toLowerCase().replace(/[^a-z0-9]/g, "");
+              if (!providersMap.has(cleanKey)) {
+                providersMap.set(cleanKey, {
+                  table_name: t.name,
+                  media_type: null,
+                  display_name: t.name,
+                });
+              }
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (providersMap.size > 0) {
+        cachedProviderMetadata = Array.from(providersMap.values());
+        lastProviderMetadataFetch = now;
       }
     } catch (_) {}
   }
 
-  let list =
-    cachedProviderMetadata && cachedProviderMetadata.length > 0
-      ? [...cachedProviderMetadata]
-      : [...DEFAULT_PROVIDERS];
+  let list = cachedProviderMetadata ? [...cachedProviderMetadata] : [];
 
   if (mediaType) {
     const targetType = String(mediaType).toLowerCase();
@@ -143,12 +163,14 @@ async function resolveMalIdFromMapping({
 
       if (matched) {
         const tbl = matched.table_name;
-        const keyField = matched.primary_key_field;
         const sql =
-          keyField === "uuid"
-            ? `SELECT malid FROM ${tbl} WHERE uuid = ? OR id = ? LIMIT 1`
+          tbl === "pahe"
+            ? `SELECT malid FROM ${tbl} WHERE id = ? OR uuid = ? LIMIT 1`
             : `SELECT malid FROM ${tbl} WHERE id = ? LIMIT 1`;
-        const params = keyField === "uuid" ? [cleanId, cleanId] : [cleanId];
+        const params =
+          tbl === "pahe"
+            ? [cleanId, cleanId]
+            : [cleanId];
         const row = await mappingQueryOne(sql, params);
         return row?.malid ? Number(row.malid) : null;
       }
@@ -157,11 +179,13 @@ async function resolveMalIdFromMapping({
     for (const p of providers) {
       try {
         const sql =
-          p.primary_key_field === "uuid"
-            ? `SELECT malid FROM ${p.table_name} WHERE uuid = ? OR id = ? LIMIT 1`
+          p.table_name === "pahe"
+            ? `SELECT malid FROM ${p.table_name} WHERE id = ? OR uuid = ? LIMIT 1`
             : `SELECT malid FROM ${p.table_name} WHERE id = ? LIMIT 1`;
         const params =
-          p.primary_key_field === "uuid" ? [cleanId, cleanId] : [cleanId];
+          p.table_name === "pahe"
+            ? [cleanId, cleanId]
+            : [cleanId];
         const row = await mappingQueryOne(sql, params);
         if (row?.malid) return Number(row.malid);
       } catch (_) {}
@@ -215,15 +239,14 @@ async function getLinkedProvidersForMalId(
       const pNameLower = p.table_name.toLowerCase();
       if (linkedMap[pNameLower]) continue;
 
-      const keyField = p.primary_key_field;
-      const selectCol = keyField === "uuid" ? "id, uuid" : "id";
+      const selectCol = p.table_name === "pahe" ? "id, uuid" : "id";
       const row = await mappingQueryOne(
         `SELECT ${selectCol} FROM ${p.table_name} WHERE malid = ? LIMIT 1`,
         [numMalId],
       );
 
       if (row) {
-        const resolvedId = keyField === "uuid" ? row.uuid || row.id : row.id;
+        const resolvedId = p.table_name === "pahe" ? (row.id || row.uuid) : row.id;
         if (resolvedId) {
           linkedMap[pNameLower] = {
             id: String(resolvedId),
@@ -272,14 +295,13 @@ async function getBestProviderForMalId(
         );
       });
       if (preferredMeta) {
-        const keyField = preferredMeta.primary_key_field;
-        const selectCol = keyField === "uuid" ? "id, uuid" : "id";
+        const selectCol = preferredMeta.table_name === "pahe" ? "id, uuid" : "id";
         const row = await mappingQueryOne(
           `SELECT ${selectCol} FROM ${preferredMeta.table_name} WHERE malid = ? LIMIT 1`,
           [numMalId],
         );
         if (row) {
-          const resolvedId = keyField === "uuid" ? row.uuid || row.id : row.id;
+          const resolvedId = preferredMeta.table_name === "pahe" ? (row.id || row.uuid) : row.id;
           if (resolvedId) {
             return {
               id: String(resolvedId),
@@ -291,14 +313,13 @@ async function getBestProviderForMalId(
     }
 
     for (const p of providers) {
-      const keyField = p.primary_key_field;
-      const selectCol = keyField === "uuid" ? "id, uuid" : "id";
+      const selectCol = p.table_name === "pahe" ? "id, uuid" : "id";
       const row = await mappingQueryOne(
         `SELECT ${selectCol} FROM ${p.table_name} WHERE malid = ? LIMIT 1`,
         [numMalId],
       );
       if (row) {
-        const resolvedId = keyField === "uuid" ? row.uuid || row.id : row.id;
+        const resolvedId = p.table_name === "pahe" ? (row.id || row.uuid) : row.id;
         if (resolvedId) {
           return { id: String(resolvedId), provider: p.table_name };
         }

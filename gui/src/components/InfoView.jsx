@@ -160,6 +160,10 @@ export default function InfoView({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ id: newId }),
         });
+        if (!response.ok)
+          throw new Error(
+            `HTTP ${response.status}: Failed to fetch media info`,
+          );
         const detailsData = await response.json();
         setDetails(detailsData);
         setLoading(false);
@@ -908,7 +912,19 @@ export default function InfoView({
   const getProviderIcon = (name) => {
     if (!name || !installedExtensions) return null;
     const list = installedExtensions[type];
-    const ext = list?.find((e) => e.name === name);
+    const cleanName = String(name).toLowerCase().replace(/^@/, "");
+    const ext = list?.find((e) => {
+      const eName = String(e.name || "").toLowerCase();
+      const eUnique = String(e.uniqueId || "")
+        .toLowerCase()
+        .replace(/^@/, "");
+      return (
+        eName === cleanName ||
+        eUnique === cleanName ||
+        cleanName.endsWith(`/${eName}`) ||
+        cleanName === `${(e.repoOwner || "").toLowerCase()}/${eName}`
+      );
+    });
     return ext?.icon || null;
   };
 
@@ -928,6 +944,8 @@ export default function InfoView({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id }),
       });
+      if (!response.ok)
+        throw new Error(`HTTP ${response.status}: Failed to fetch media info`);
       const data = await response.json();
       setDetails(data);
       if (data && data.id) {
@@ -2160,6 +2178,8 @@ export default function InfoView({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id }),
       });
+      if (!response.ok)
+        throw new Error(`HTTP ${response.status}: Failed to fetch media info`);
       const data = await response.json();
       setDetails(data);
       if (data?.malid) {
@@ -2201,6 +2221,17 @@ export default function InfoView({
 
   const selectMalTitle = async (selectedMalId) => {
     try {
+      const epCount = Array.isArray(details.episodes)
+        ? details.episodes.length
+        : details.total_episodes ||
+          details.totalEpisodes ||
+          (typeof details.episodes === "number" ? details.episodes : null);
+      const chapCount = Array.isArray(details.chapters)
+        ? details.chapters.length
+        : details.total_chapters ||
+          details.totalChapters ||
+          (typeof details.chapters === "number" ? details.chapters : null);
+
       const linkRes = await fetch("/api/mal/link", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2210,6 +2241,17 @@ export default function InfoView({
           provider: details.provider,
           MalID: selectedMalId,
           title: details.title,
+          image: details.image || details.image_url || details.cover || null,
+          episodes: epCount,
+          chapters: chapCount,
+          metadata: {
+            title: details.title,
+            image: details.image || details.image_url || details.cover || null,
+            type: details.type || type || null,
+            episodes: epCount,
+            chapters: chapCount,
+            status: details.status || null,
+          },
         }),
       });
       const linkData = await linkRes.json();
@@ -2928,18 +2970,20 @@ export default function InfoView({
                     >
                       None (Not in Library)
                     </div>
-                    {customTags.map((tag) => (
-                      <div
-                        key={tag}
-                        className={`custom-dropdown-item ${currentTags[0] === tag ? "selected" : ""}`}
-                        onClick={() => {
-                          handleSetSingleTag(tag);
-                          setIsDropdownOpen(false);
-                        }}
-                      >
-                        {tag}
-                      </div>
-                    ))}
+                    {customTags
+                      .filter((tag) => tag !== "Downloads")
+                      .map((tag) => (
+                        <div
+                          key={tag}
+                          className={`custom-dropdown-item ${currentTags[0] === tag ? "selected" : ""}`}
+                          onClick={() => {
+                            handleSetSingleTag(tag);
+                            setIsDropdownOpen(false);
+                          }}
+                        >
+                          {tag}
+                        </div>
+                      ))}
                     <div className="custom-dropdown-divider"></div>
                     <div
                       className="custom-dropdown-item create-new"

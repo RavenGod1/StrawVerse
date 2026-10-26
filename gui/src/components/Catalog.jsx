@@ -5,9 +5,17 @@ import {
   useLayoutEffect,
   useRef,
   useCallback,
+  useMemo,
 } from "react";
 import "./css/Catalog.css";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  ChevronDown,
+  SlidersHorizontal,
+  RotateCcw,
+  Clock,
+} from "lucide-react";
 import Swal from "sweetalert2";
 import { swalSuccess, swalError, swalConfirm } from "../utils/swal";
 import { apiPost, parseTags } from "../utils/common";
@@ -18,6 +26,243 @@ import RecentHistory from "./catalog/RecentHistory";
 import AiringCalendar from "./catalog/AiringCalendar";
 import CatalogGrid from "./catalog/CatalogGrid";
 import TagPickerModal from "./catalog/TagPickerModal";
+
+const UNIVERSAL_GENRES = [
+  "Action",
+  "Adventure",
+  "Comedy",
+  "Demons",
+  "Drama",
+  "Ecchi",
+  "Fantasy",
+  "Game",
+  "Harem",
+  "Historical",
+  "Horror",
+  "Isekai",
+  "Josei",
+  "Kids",
+  "Magic",
+  "Martial Arts",
+  "Mecha",
+  "Military",
+  "Music",
+  "Mystery",
+  "Parody",
+  "Psychological",
+  "Romance",
+  "Samurai",
+  "School",
+  "Sci-Fi",
+  "Seinen",
+  "Shoujo",
+  "Shounen",
+  "Slice of Life",
+  "Space",
+  "Sports",
+  "Supernatural",
+  "Suspense",
+  "Thriller",
+  "Vampire",
+];
+
+const SEASONS_LIST = ["Winter", "Spring", "Summer", "Fall"];
+
+const YEARS_LIST = [
+  2027,
+  2026,
+  2025,
+  2024,
+  2023,
+  2022,
+  2021,
+  2020,
+  2019,
+  2018,
+  2017,
+  2016,
+  2015,
+  2010,
+  "Older",
+];
+
+const MAPPING_OPTIONS = [
+  { label: "All", value: "" },
+  { label: "Mapped (MAL Linked)", value: "mapped" },
+  { label: "Unmapped (Unique to Extension)", value: "unmapped" },
+];
+
+const MAL_STATUS_OPTIONS = [
+  { label: "All", value: "" },
+  { label: "Watching / Reading", value: "watching" },
+  { label: "Completed", value: "completed" },
+  { label: "Plan to Watch / Read", value: "plan_to_watch" },
+  { label: "On Hold", value: "on_hold" },
+  { label: "Dropped", value: "dropped" },
+];
+
+const STATUS_OPTIONS = [
+  { label: "All", value: "" },
+  { label: "Currently Airing / Ongoing", value: "airing" },
+  { label: "Finished / Completed", value: "completed" },
+  { label: "Upcoming", value: "upcoming" },
+];
+
+const FORMAT_OPTIONS = [
+  { label: "All", value: "" },
+  { label: "TV", value: "TV" },
+  { label: "Movie", value: "Movie" },
+  { label: "OVA", value: "OVA" },
+  { label: "ONA", value: "ONA" },
+  { label: "Special", value: "Special" },
+  { label: "Manga", value: "Manga" },
+  { label: "Manhwa", value: "Manhwa" },
+  { label: "Manhua", value: "Manhua" },
+];
+
+function matchSeasonYearClient(airedStr, season, year) {
+  if (!airedStr && (season || year)) return false;
+  if (!season && !year) return true;
+  const s = String(airedStr).toLowerCase();
+
+  if (year && year !== "All" && year !== "") {
+    if (year === "Older") {
+      const match = s.match(/\b(19\d\d|200\d)\b/);
+      if (!match) return false;
+    } else if (!s.includes(String(year).toLowerCase())) {
+      return false;
+    }
+  }
+
+  if (season && season !== "All" && season !== "") {
+    const sLower = season.toLowerCase();
+    if (s.includes(sLower)) return true;
+
+    const winterMonths = ["jan", "feb", "mar", "-01-", "-02-", "-03-"];
+    const springMonths = ["apr", "may", "jun", "-04-", "-05-", "-06-"];
+    const summerMonths = ["jul", "aug", "sep", "-07-", "-08-", "-09-"];
+    const fallMonths = ["oct", "nov", "dec", "-10-", "-11-", "-12-"];
+
+    let months = [];
+    if (sLower === "winter") months = winterMonths;
+    else if (sLower === "spring") months = springMonths;
+    else if (sLower === "summer") months = summerMonths;
+    else if (sLower === "fall") months = fallMonths;
+
+    return months.some((m) => s.includes(m));
+  }
+
+  return true;
+}
+
+function matchItemFilters(item, filters) {
+  if (!item || !filters || Object.keys(filters).length === 0) return true;
+
+  // 1. Tag filter
+  if (filters.tag && filters.tag !== "All" && filters.tag !== "") {
+    if (!item.CustomTag) return false;
+    const tags = parseTags(item.CustomTag);
+    const targetTag = String(filters.tag).toLowerCase().trim();
+    if (targetTag === "downloads") {
+      if (item.Downloaded && item.Downloaded.length > 0) return true;
+    } else {
+      const hasTag = tags.some(
+        (t) => t && String(t).toLowerCase().trim() === targetTag,
+      );
+      if (!hasTag) return false;
+    }
+  }
+
+  // 2. Mapping filter (mapped vs unmapped aka unique to extension)
+  if (filters.mapping && filters.mapping !== "All" && filters.mapping !== "") {
+    const isMapped = Boolean(item.malid || item.MalID);
+    if (filters.mapping === "mapped" && !isMapped) return false;
+    if (filters.mapping === "unmapped" && isMapped) return false;
+  }
+
+  // 3. MAL Status filter
+  if (
+    filters.malStatus &&
+    filters.malStatus !== "All" &&
+    filters.malStatus !== ""
+  ) {
+    const targetStatus = String(filters.malStatus).toLowerCase();
+    const itemStatus = String(item.malStatus || "").toLowerCase();
+    if (targetStatus === "watching" || targetStatus === "reading") {
+      if (
+        itemStatus !== "watching" &&
+        itemStatus !== "reading" &&
+        Number(item.watched || 0) === 0
+      ) {
+        return false;
+      }
+    } else if (targetStatus === "completed") {
+      if (itemStatus !== "completed" && !item.isCompleted) return false;
+    } else if (itemStatus !== targetStatus) {
+      return false;
+    }
+  }
+
+  // 4. Genre filter
+  if (filters.genre && filters.genre !== "All" && filters.genre !== "") {
+    if (item.genres) {
+      const targetGenre = String(filters.genre).toLowerCase();
+      if (!String(item.genres).toLowerCase().includes(targetGenre))
+        return false;
+    }
+  }
+
+  // 5. Season & Year
+  if (filters.season || filters.year) {
+    if (item.aired) {
+      if (!matchSeasonYearClient(item.aired, filters.season, filters.year)) {
+        return false;
+      }
+    }
+  }
+
+  // 6. Source / Extension filter
+  if (filters.source && filters.source !== "All" && filters.source !== "") {
+    const targetSource = String(filters.source).toLowerCase();
+    const itemSource = String(item.provider || "").toLowerCase();
+    if (!itemSource.includes(targetSource)) return false;
+  }
+
+  // 7. Format / Type filter
+  if (filters.format && filters.format !== "All" && filters.format !== "") {
+    if (item.type) {
+      if (
+        String(item.type).toLowerCase() !== String(filters.format).toLowerCase()
+      ) {
+        return false;
+      }
+    }
+  }
+
+  // 8. Airing / Publishing Status filter
+  if (filters.status && filters.status !== "All" && filters.status !== "") {
+    if (item.status) {
+      const targetStatus = String(filters.status).toLowerCase();
+      const itemStatus = String(item.status).toLowerCase();
+      if (targetStatus === "airing" || targetStatus === "ongoing") {
+        if (!itemStatus.includes("airing") && !itemStatus.includes("ongoing")) {
+          return false;
+        }
+      } else if (targetStatus === "completed" || targetStatus === "finished") {
+        if (
+          !itemStatus.includes("completed") &&
+          !itemStatus.includes("finished")
+        ) {
+          return false;
+        }
+      } else if (!itemStatus.includes(targetStatus)) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
 
 export default function Catalog({
   type,
@@ -77,7 +322,106 @@ export default function Catalog({
   const [errorMsg, setErrorMsg] = useState(() => cache?.errorMsg || "");
   const [localTags, setLocalTags] = useState([]);
   const [tagModalMedia, setTagModalMedia] = useState(null);
+  const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(
+    () => provider === "mal",
+  );
+  const [installedProvidersList, setInstalledProvidersList] = useState([]);
+  const [providerMetadataList, setProviderMetadataList] = useState([]);
+  const [catalogSource, setCatalogSource] = useState(() => {
+    return sessionStorage.getItem(`catalog_source_${type}`) || "mal";
+  });
+  const [totalCount, setTotalCount] = useState(null);
   const tagChipsRef = useRef(null);
+
+  const filteredProviders = useMemo(() => {
+    return providerMetadataList.filter(
+      (p) => p.media_type === type && p.table_name !== "anineko",
+    );
+  }, [providerMetadataList, type]);
+
+  useEffect(() => {
+    const fetchProviderMetadata = async () => {
+      try {
+        const res = await fetch("/api/providers/metadata").then((r) =>
+          r.json(),
+        );
+        if (res?.providers && Array.isArray(res.providers)) {
+          setProviderMetadataList(res.providers);
+          if (catalogSource && catalogSource.startsWith("unique:")) {
+            const match = res.providers.find(
+              (p) =>
+                p.media_type === type &&
+                `unique:${p.table_name}` === catalogSource,
+            );
+            if (!match) {
+              setCatalogSource("mal");
+              sessionStorage.setItem(`catalog_source_${type}`, "mal");
+            }
+          }
+        }
+      } catch (_) {}
+    };
+    fetchProviderMetadata();
+  }, [type]);
+
+  useEffect(() => {
+    const fetchInstalledProviders = async () => {
+      try {
+        if (window.sharedStateAPI && window.sharedStateAPI.getSettings) {
+          const res = await window.sharedStateAPI.getSettings([
+            "providers",
+            "installedExtensions",
+          ]);
+          const pList = res?.settings?.providers?.[type] || [];
+          setInstalledProvidersList(pList);
+        }
+      } catch (_) {}
+    };
+    fetchInstalledProviders();
+  }, [type]);
+
+  const allAvailableProviders = useMemo(() => {
+    const set = new Set(installedProvidersList);
+    if (data?.results && Array.isArray(data.results)) {
+      data.results.forEach((i) => {
+        if (
+          i.provider &&
+          i.provider !== "local source" &&
+          i.provider !== "provider"
+        ) {
+          set.add(i.provider);
+        }
+      });
+    }
+    return Array.from(set).sort();
+  }, [installedProvidersList, data?.results]);
+
+  const activeFilterCount = useMemo(() => {
+    return Object.entries(activeFilters).filter(([k, v]) => {
+      if (k === "page") return false;
+      if (v === "" || v === "All" || v == null) return false;
+      return true;
+    }).length;
+  }, [activeFilters]);
+
+  const displayResults = useMemo(() => {
+    if (!data?.results || !Array.isArray(data.results)) return [];
+    return data.results.filter((item) => matchItemFilters(item, activeFilters));
+  }, [data?.results, activeFilters]);
+
+  const displayData = useMemo(
+    () => ({
+      ...data,
+      results: displayResults,
+    }),
+    [data, displayResults],
+  );
+
+  const handleResetFilters = () => {
+    setActiveFilters({});
+    setCurrentPage(1);
+    fetchData(1, {});
+  };
 
   const getItemTagInfo = useCallback((item) => {
     if (!item || !item.CustomTag) return null;
@@ -956,20 +1300,27 @@ export default function Catalog({
     },
   };
 
-  const getApiEndpoint = (currentTag = activeFilters.tag) => {
+  const getApiEndpoint = (
+    currentTag = activeFilters.tag,
+    source = catalogSource,
+  ) => {
     if (provider === "local") {
       return `/api/list/${type}/local`;
     }
-    if (provider === "mal") return `/api/list/${type}/mal`;
-    if (searchQuery.trim().length > 0)
-      return `/api/list/${type}/search?query=${encodeURIComponent(searchQuery)}`;
-    return `/api/list/${type}/provider`;
+    if (provider === "provider") {
+      return `/api/list/${type}/provider`;
+    }
+    if (source && source.startsWith("unique:")) {
+      const p = source.split(":")[1];
+      return `/api/list/${type}/unique_${p}`;
+    }
+    return `/api/list/${type}/mal`;
   };
 
   const preloadPagesAround = async (targetPage, currentFilters) => {
     const startP = Math.max(1, targetPage - 1);
     const endP = targetPage + 1;
-    const endpoint = getApiEndpoint(currentFilters.tag);
+    const endpoint = getApiEndpoint(currentFilters.tag, catalogSource);
 
     let updatedPages = {};
     setFetchedPages((prev) => {
@@ -1033,12 +1384,24 @@ export default function Catalog({
     didFetchRef.current = true;
   };
 
+  const handleCatalogSourceChange = (newSource) => {
+    setCatalogSource(newSource);
+    sessionStorage.setItem(`catalog_source_${type}`, newSource);
+    setCurrentPage(1);
+    setData(null);
+    setFetchedPages({});
+    setLoadedPageStart(1);
+    setLoadedPageEnd(1);
+    fetchData(1, activeFilters, null, undefined, false, newSource);
+  };
+
   const fetchData = async (
     page = 1,
     currentFilters = activeFilters,
     searchOverride = null,
     linkingOverride = undefined,
     isAppend = false,
+    sourceOverride = null,
   ) => {
     const currentRequestId = Math.random();
     lastRequestRef.current = currentRequestId;
@@ -1054,21 +1417,70 @@ export default function Catalog({
         searchOverride !== null ? searchOverride : searchQuery;
       const isLinking =
         linkingOverride !== undefined ? linkingOverride : linkingMalItem;
+      const activeSource = sourceOverride || catalogSource;
 
       let endpoint;
       if (isLinking) {
         endpoint = `/api/list/${type}/search?query=${encodeURIComponent(activeSearch)}`;
       } else {
-        endpoint = getApiEndpoint(currentFilters.tag);
+        endpoint = getApiEndpoint(currentFilters.tag, activeSource);
       }
+
+      if (provider === "mal" && !isAppend && page === 1) {
+        const countEndpoint = `/api/count/${type}/${activeSource || "mal"}`;
+        fetch(countEndpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            filters: currentFilters,
+            keyword: activeSearch,
+          }),
+        })
+          .then((r) => r.json())
+          .then((cRes) => {
+            if (cRes && typeof cRes.count === "number") {
+              setTotalCount(cRes.count);
+            }
+          })
+          .catch(() => {});
+      }
+
+      const mappedFilters = {
+        ...currentFilters,
+        page: page,
+      };
+      if (activeSearch) {
+        mappedFilters.keyword = activeSearch;
+      }
+      const activeSite = data?.site || provider;
+      if (siteFilterDefs[activeSite]) {
+        const defs = siteFilterDefs[activeSite];
+        if (
+          currentFilters.genre &&
+          defs.genre?.options?.[currentFilters.genre]
+        ) {
+          mappedFilters.genre = defs.genre.options[currentFilters.genre];
+        }
+        if (
+          currentFilters.status &&
+          defs.status?.options?.[currentFilters.status]
+        ) {
+          mappedFilters.status = defs.status.options[currentFilters.status];
+        }
+        if (currentFilters.type && defs.type?.options?.[currentFilters.type]) {
+          mappedFilters.type = defs.type.options[currentFilters.type];
+        }
+        if (currentFilters.sort && defs.sort?.options?.[currentFilters.sort]) {
+          mappedFilters.sort = defs.sort.options[currentFilters.sort];
+        }
+      }
+
       const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          filters: {
-            ...currentFilters,
-            page: page,
-          },
+          filters: mappedFilters,
+          keyword: activeSearch || undefined,
         }),
       });
 
@@ -1290,7 +1702,10 @@ export default function Catalog({
         });
         isRestoredRef.current = false;
         didFetchRef.current = true;
-      } else if (targetP > 1 && provider === "provider") {
+      } else if (
+        targetP > 1 &&
+        (provider === "provider" || provider === "mal")
+      ) {
         setFetchedPages(fp);
         isRestoredRef.current = false;
         preloadPagesAround(targetP, cache.activeFilters || {});
@@ -1303,7 +1718,7 @@ export default function Catalog({
         didFetchRef.current = true;
       }
     } else {
-      if (provider !== "provider" || type !== "Anime") {
+      if ((provider !== "provider" && provider !== "mal") || type !== "Anime") {
         setDiscoverTab("latest");
         sessionStorage.setItem("discover_tab", "latest");
       }
@@ -1399,7 +1814,7 @@ export default function Catalog({
 
   useEffect(() => {
     if (
-      provider === "provider" &&
+      (provider === "provider" || provider === "mal") &&
       type === "Anime" &&
       discoverTab === "calendar"
     ) {
@@ -1680,7 +2095,9 @@ export default function Catalog({
       return;
     }
 
-    const isMalActive = provider === "mal";
+    const isMalActive =
+      provider === "mal" ||
+      (!catalogSource?.startsWith("unique:") && provider !== "local");
     let backText = "Back to Collection";
     if (searchQuery.trim().length > 0) {
       backText = "Back to Search";
@@ -1690,46 +2107,25 @@ export default function Catalog({
       } else {
         backText = "Back to Collection";
       }
-    } else if (provider === "provider") {
-      backText = "Back to Recently Updated";
     } else if (provider === "mal") {
-      backText = "Back to MAL Library";
+      backText = "Back to Filters";
+    } else {
+      backText = "Back to Discover";
     }
 
-    if (isMalActive && (!item.allMatches || item.allMatches.length === 0)) {
-      triggerScrapeSearch(item.title);
+    const resolvedProv =
+      item.provider && item.provider !== "mal"
+        ? item.provider
+        : catalogSource?.startsWith("unique:")
+          ? catalogSource.replace(/^unique[:_]/, "")
+          : null;
+
+    if (resolvedProv) {
+      onSelectMedia(item.id, resolvedProv, backText);
       return;
     }
 
-    if (isMalActive && item.allMatches && item.allMatches.length > 1) {
-      const inputOptions = {};
-      item.allMatches.forEach((m) => {
-        inputOptions[m.id] = m.provider.toUpperCase();
-      });
-
-      Swal.fire({
-        title: "Select Provider",
-        text: `Choose which provider to open "${item.title}" with:`,
-        icon: "question",
-        input: "select",
-        inputOptions,
-        inputValue: item.id,
-        showCancelButton: true,
-        confirmButtonText: "Open",
-        cancelButtonText: "Cancel",
-        background: "var(--bg-secondary)",
-        color: "var(--text-main)",
-        confirmButtonColor: "var(--accent)",
-        cancelButtonColor: "var(--bg-tertiary)",
-      }).then((result) => {
-        if (result.isConfirmed && result.value) {
-          onSelectMedia(result.value, "mal", backText);
-        }
-      });
-      return;
-    }
-
-    onSelectMedia(item.id, isMalActive ? "mal" : provider, backText);
+    onSelectMedia(item.id, "mal", backText);
   };
 
   const handleSearchSubmit = (e) => {
@@ -1874,7 +2270,7 @@ export default function Catalog({
           !loading &&
           !infiniteLoading &&
           !isFetchingMoreRef.current &&
-          (data.hasNextPage || loadedPageEnd < (data.totalPages || 0))
+          (data?.hasNextPage || loadedPageEnd < (data?.totalPages || 0))
         ) {
           const nextPage = loadedPageEnd + 1;
           isFetchingMoreRef.current = true;
@@ -1892,8 +2288,8 @@ export default function Catalog({
     infiniteScroll,
     loading,
     infiniteLoading,
-    data.hasNextPage,
-    data.totalPages,
+    data?.hasNextPage,
+    data?.totalPages,
     loadedPageEnd,
     activeFilters,
     searchQuery,
@@ -1957,6 +2353,12 @@ export default function Catalog({
         onSearchQueryChange={setSearchQuery}
         onSearchSubmit={handleSearchSubmit}
         onTypeChange={onTypeChange}
+        isFilterOpen={isFilterPanelOpen}
+        onToggleFilter={() => setIsFilterPanelOpen((prev) => !prev)}
+        activeFilterCount={activeFilterCount}
+        catalogSource={catalogSource}
+        onCatalogSourceChange={handleCatalogSourceChange}
+        availableProviders={providerMetadataList}
       />
 
       <LibraryStats
@@ -1975,25 +2377,197 @@ export default function Catalog({
         onDismissHistory={handleDismissHistory}
       />
 
-      {/* Filter panel */}
-      {availableFilters && (
+      {/* Universal Filter panel */}
+      {provider === "mal" && (
         <div className="filter-panel">
-          {Object.entries(availableFilters).map(([key, filter]) => (
-            <div key={key} className="filter-group">
-              <label className="filter-label">{filter.label}</label>
-              <select
-                value={activeFilters[key] || ""}
-                onChange={(e) => handleFilterChange(key, e.target.value)}
-                className="filter-select"
+          <div className="filter-panel-header">
+            <div className="filter-panel-left">
+              <div className="filter-panel-title">
+                <SlidersHorizontal size={15} />
+                <span>Filters</span>
+                {activeFilterCount > 0 && (
+                  <span className="filter-count-label">
+                    ({activeFilterCount} active)
+                  </span>
+                )}
+              </div>
+              <div className="filter-source-wrapper">
+                <span className="filter-source-label">Source</span>
+                <div className="catalog-source-dropdown-wrapper">
+                  <select
+                    value={catalogSource || "mal"}
+                    onChange={(e) => handleCatalogSourceChange(e.target.value)}
+                    className="catalog-source-select"
+                    aria-label="Select Catalog Source"
+                  >
+                    <option value="mal">On MAL (Default)</option>
+                    {filteredProviders.map((p) => (
+                      <option
+                        key={p.table_name}
+                        value={`unique:${p.table_name}`}
+                      >
+                        Unique to {p.display_name}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown size={14} className="catalog-source-chevron" />
+                </div>
+              </div>
+            </div>
+            {activeFilterCount > 0 && (
+              <button
+                type="button"
+                onClick={handleResetFilters}
+                className="filter-reset-btn"
+                title="Clear all filters"
               >
-                {Object.entries(filter.options).map(([optLabel, optVal]) => (
-                  <option key={optLabel} value={optVal}>
-                    {optLabel}
+                <RotateCcw size={13} />
+                <span>Reset All</span>
+              </button>
+            )}
+          </div>
+
+          <div className="filter-grid">
+            {/* 1. User Tags */}
+            {localTags.length > 0 && (
+              <div className="filter-group">
+                <label className="filter-label">Tag</label>
+                <select
+                  value={activeFilters.tag || ""}
+                  onChange={(e) => handleFilterChange("tag", e.target.value)}
+                  className={`filter-select ${activeFilters.tag ? "is-active" : ""}`}
+                >
+                  <option value="">All Tags</option>
+                  {localTags.map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* 2. Genre */}
+            <div className="filter-group">
+              <label className="filter-label">Genre</label>
+              <select
+                value={activeFilters.genre || ""}
+                onChange={(e) => handleFilterChange("genre", e.target.value)}
+                className={`filter-select ${activeFilters.genre ? "is-active" : ""}`}
+              >
+                <option value="">All Genres</option>
+                {UNIVERSAL_GENRES.map((g) => (
+                  <option key={g} value={g}>
+                    {g}
                   </option>
                 ))}
               </select>
             </div>
-          ))}
+
+            {/* 3. Season */}
+            <div className="filter-group">
+              <label className="filter-label">Season</label>
+              <select
+                value={activeFilters.season || ""}
+                onChange={(e) => handleFilterChange("season", e.target.value)}
+                className={`filter-select ${activeFilters.season ? "is-active" : ""}`}
+              >
+                <option value="">All Seasons</option>
+                {SEASONS_LIST.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* 4. Year */}
+            <div className="filter-group">
+              <label className="filter-label">Year</label>
+              <select
+                value={activeFilters.year || ""}
+                onChange={(e) => handleFilterChange("year", e.target.value)}
+                className={`filter-select ${activeFilters.year ? "is-active" : ""}`}
+              >
+                <option value="">All Years</option>
+                {YEARS_LIST.map((y) => (
+                  <option key={y} value={y}>
+                    {y}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* MAL Watch Status */}
+            <div className="filter-group">
+              <label className="filter-label">MAL Status</label>
+              <select
+                value={activeFilters.malStatus || ""}
+                onChange={(e) =>
+                  handleFilterChange("malStatus", e.target.value)
+                }
+                className={`filter-select ${activeFilters.malStatus ? "is-active" : ""}`}
+              >
+                {MAL_STATUS_OPTIONS.map((opt) => (
+                  <option key={opt.label} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* 8. Format / Type */}
+            <div className="filter-group">
+              <label className="filter-label">Format</label>
+              <select
+                value={activeFilters.format || ""}
+                onChange={(e) => handleFilterChange("format", e.target.value)}
+                className={`filter-select ${activeFilters.format ? "is-active" : ""}`}
+              >
+                {FORMAT_OPTIONS.map((opt) => (
+                  <option key={opt.label} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* 9. Airing / Status */}
+            <div className="filter-group">
+              <label className="filter-label">Status</label>
+              <select
+                value={activeFilters.status || ""}
+                onChange={(e) => handleFilterChange("status", e.target.value)}
+                className={`filter-select ${activeFilters.status ? "is-active" : ""}`}
+              >
+                {STATUS_OPTIONS.map((opt) => (
+                  <option key={opt.label} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* 10. Provider-native Sort (e.g. Anikoto / MangaFire sort) */}
+            {availableFilters?.sort && (
+              <div className="filter-group">
+                <label className="filter-label">Sort</label>
+                <select
+                  value={activeFilters.sort || ""}
+                  onChange={(e) => handleFilterChange("sort", e.target.value)}
+                  className={`filter-select ${activeFilters.sort ? "is-active" : ""}`}
+                >
+                  {Object.entries(availableFilters.sort.options).map(
+                    ([optLabel, optVal]) => (
+                      <option key={optLabel} value={optVal}>
+                        {optLabel}
+                      </option>
+                    ),
+                  )}
+                </select>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -2065,36 +2639,65 @@ export default function Catalog({
           triggerScrapeSearch={triggerScrapeSearch}
         />
       ) : (
-        <CatalogGrid
-          loading={loading}
-          data={data}
-          type={type}
-          provider={provider}
-          activeFilters={activeFilters}
-          searchQuery={searchQuery}
-          canReorder={canReorder}
-          infiniteScroll={infiniteScroll}
-          infiniteLoading={infiniteLoading}
-          currentPage={currentPage}
-          loadedPageStart={loadedPageStart}
-          topSentinelRef={topSentinelRef}
-          sentinelRef={sentinelRef}
-          draggedIndex={draggedIndex}
-          dragOverIndex={dragOverIndex}
-          handleDragStart={handleDragStart}
-          handleDragOver={handleDragOver}
-          handleDragLeave={handleDragLeave}
-          handleDrop={handleDrop}
-          handleDragEnd={handleDragEnd}
-          handleTouchStart={handleTouchStart}
-          handleTouchMove={handleTouchMove}
-          handleTouchEnd={handleTouchEnd}
-          handleMediaClick={handleMediaClick}
-          handlePageChange={handlePageChange}
-          handleRemoveFromLibrary={handleRemoveFromLibrary}
-          getItemTagInfo={getItemTagInfo}
-          onOpenTagModal={handleOpenTagModal}
-        />
+        <>
+          {provider === "mal" && (
+            <div className="unique-provider-banner">
+              <div className="banner-left">
+                <Clock size={14} className="banner-icon" />
+                <span>
+                  Last updated on{" "}
+                  <strong>
+                    {data?.lastFetched
+                      ? new Date(data.lastFetched).toLocaleDateString(
+                          undefined,
+                          {
+                            year: "numeric",
+                            month: "short",
+                            day: "numeric",
+                          },
+                        )
+                      : "Recently"}
+                  </strong>
+                </span>
+              </div>
+              {totalCount != null && (
+                <div className="banner-right">
+                  <span>{totalCount.toLocaleString()} results found</span>
+                </div>
+              )}
+            </div>
+          )}
+          <CatalogGrid
+            loading={loading}
+            data={displayData}
+            type={type}
+            provider={provider}
+            activeFilters={activeFilters}
+            searchQuery={searchQuery}
+            canReorder={canReorder}
+            infiniteScroll={infiniteScroll}
+            infiniteLoading={infiniteLoading}
+            currentPage={currentPage}
+            loadedPageStart={loadedPageStart}
+            topSentinelRef={topSentinelRef}
+            sentinelRef={sentinelRef}
+            draggedIndex={draggedIndex}
+            dragOverIndex={dragOverIndex}
+            handleDragStart={handleDragStart}
+            handleDragOver={handleDragOver}
+            handleDragLeave={handleDragLeave}
+            handleDrop={handleDrop}
+            handleDragEnd={handleDragEnd}
+            handleTouchStart={handleTouchStart}
+            handleTouchMove={handleTouchMove}
+            handleTouchEnd={handleTouchEnd}
+            handleMediaClick={handleMediaClick}
+            handlePageChange={handlePageChange}
+            handleRemoveFromLibrary={handleRemoveFromLibrary}
+            getItemTagInfo={getItemTagInfo}
+            onOpenTagModal={handleOpenTagModal}
+          />
+        </>
       )}
 
       {tagModalMedia && (

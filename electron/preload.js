@@ -27,6 +27,7 @@ const ALLOWED_IPC_CHANNELS = new Set([
   "catalog-loading-status",
   "info-loading-status",
   "open-settings-tab",
+  "anime-id-updated",
 ]);
 
 contextBridge.exposeInMainWorld("sharedStateAPI", {

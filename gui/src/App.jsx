@@ -502,6 +502,26 @@ export default function App() {
             }
           />
         );
+
+      case "filters":
+        return (
+          <Catalog
+            key={`filters-${contentType}-${reloadCounter}`}
+            type={contentType}
+            provider="mal"
+            onTypeChange={setContentType}
+            initialSearchQuery={current.params?.searchQuery || ""}
+            onSelectMedia={(id, prov, backText, autoPlay) =>
+              navigateTo("info", {
+                id,
+                type: contentType,
+                provider: prov,
+                backText,
+                autoPlay,
+              })
+            }
+          />
+        );
       case "info":
         return (
           <InfoView
@@ -690,6 +710,9 @@ export default function App() {
             } else if (view === "discover") {
               delete window.catalogCache[`Anime_provider`];
               delete window.catalogCache[`Manga_provider`];
+            } else if (view === "filters") {
+              delete window.catalogCache[`Anime_mal`];
+              delete window.catalogCache[`Manga_mal`];
             }
           }
           if (view === current.view) {

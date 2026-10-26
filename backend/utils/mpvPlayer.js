@@ -347,7 +347,7 @@ const toProxyUrl = (url, customHeaders, prefQuality = "") => {
   if (url.includes(".m3u8")) {
     return `${base}/m3u8?url=${encodeURIComponent(url)}${refParam}${qualParam}`;
   }
-  return `${base}/segment?url=${encodeURIComponent(url)}${refParam}`;
+  return `${base}/segment.ts?url=${encodeURIComponent(url)}${refParam}`;
 };
 
 // mpv/ffmpeg wraps --http-header-fields values longer than ~78 chars into a
@@ -368,7 +368,10 @@ const sanitizeMpvHeaderFields = (headers) => {
     if (typeof hv !== "string") continue;
     const clean = hv.replace(/[\r\n]+/g, " ").trim();
     if (!clean) continue;
-    const line = `${hk}: ${clean}`;
+    // mpv parses --http-header-fields as a comma-separated list, so a comma
+    // inside a value splits the entry - escape it (upstream anikoto fix)
+    // before applying the length guard.
+    const line = `${hk}: ${clean.replace(/,/g, "%2C")}`;
     if (line.length > MAX_HEADER_LINE) continue;
     fields.push(line);
   }
@@ -1037,7 +1040,7 @@ async function playInMpv(window, options) {
     "--demuxer-lavf-probesize=1000000",
     "--demuxer-max-bytes=100M",
     "--demuxer-max-back-bytes=30M",
-    "--demuxer-lavf-o=timeout=10000000",
+    "--demuxer-lavf-o=timeout=10000000,allowed_extensions=ALL,allowed_segment_extensions=ALL",
     "--osd-on-seek=msg",
     `--volume=${options.volume !== undefined ? Math.floor(options.volume) : 100}`,
     `--speed=${options.speed || 1.0}`,
@@ -1551,11 +1554,13 @@ async function playInMpv(window, options) {
         }) + "\n",
       );
       const headerFields = sanitizeMpvHeaderFields(activeSources[0]?.headers);
-      client.write(
-        JSON.stringify({
-          command: ["set_property", "http-header-fields", headerFields],
-        }) + "\n",
-      );
+      if (headerFields.length > 0) {
+        client.write(
+          JSON.stringify({
+            command: ["set_property", "http-header-fields", headerFields],
+          }) + "\n",
+        );
+      }
 
       client.write(
         JSON.stringify({ command: ["loadfile", playUrl, "replace"] }) + "\n",
@@ -1654,12 +1659,7 @@ async function playInMpv(window, options) {
         m.includes("parametric stereo")
       )
         return true;
-      if (
-        m.includes("ffmpeg/audio") ||
-        m.includes("ffmpeg/video") ||
-        m.includes("[ffmpeg]")
-      )
-        return true;
+      if (m.includes("ffmpeg/audio") || m.includes("ffmpeg/video")) return true;
       if (
         m.includes("aac:") ||
         m.includes("h264:") ||

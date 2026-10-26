@@ -7,6 +7,10 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.app.DownloadManager;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import androidx.core.app.NotificationCompat;
 import android.provider.DocumentsContract;
 import android.provider.Settings;
 import android.webkit.CookieManager;
@@ -514,6 +518,124 @@ public class CloudflareBypassPlugin extends Plugin {
         });
     }
 
+    private static final String APK_DOWNLOAD_CHANNEL_ID = "strawverse_apk_updates";
+    private static final String APK_DOWNLOAD_CHANNEL_NAME = "StrawVerse App Updates";
+    private static final int APK_NOTIFICATION_ID = 4005;
+
+    private void ensureApkNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationManager nm = (NotificationManager) getContext().getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm != null) {
+                NotificationChannel channel = new NotificationChannel(
+                    APK_DOWNLOAD_CHANNEL_ID,
+                    APK_DOWNLOAD_CHANNEL_NAME,
+                    NotificationManager.IMPORTANCE_LOW
+                );
+                channel.setDescription("Shows download progress and install notifications for app updates");
+                channel.setSound(null, null);
+                channel.enableVibration(false);
+                nm.createNotificationChannel(channel);
+            }
+        }
+    }
+
+    @PluginMethod
+    public void updateApkDownloadProgress(PluginCall call) {
+        int percent = call.getInt("percent", 0);
+        String version = call.getString("version", "");
+        String apkName = call.getString("apkName", "StrawVerse.apk");
+
+        try {
+            ensureApkNotificationChannel();
+            Context context = getContext();
+            NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm == null) {
+                call.resolve();
+                return;
+            }
+
+            Intent openAppIntent = new Intent(context, MainActivity.class);
+            openAppIntent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            PendingIntent pendingIntent = PendingIntent.getActivity(
+                context,
+                4005,
+                openAppIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0)
+            );
+
+            NotificationCompat.Builder builder = new NotificationCompat.Builder(context, APK_DOWNLOAD_CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.stat_sys_download)
+                .setContentTitle(version != null && !version.isEmpty() ? "Downloading StrawVerse v" + version + "..." : "Downloading StrawVerse update...")
+                .setContentText(percent + "% downloaded")
+                .setSubText(percent + "%")
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setContentIntent(pendingIntent)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setProgress(100, Math.min(100, Math.max(0, percent)), false);
+
+            nm.notify(APK_NOTIFICATION_ID, builder.build());
+            call.resolve();
+        } catch (Exception e) {
+            call.reject("Failed to show APK download notification: " + e.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void showApkDownloadedNotification(PluginCall call) {
+        String filePath = call.getString("path");
+        String version = call.getString("version", "");
+        if (filePath == null) {
+            call.reject("File path is required");
+            return;
+        }
+
+        try {
+            ensureApkNotificationChannel();
+            Context context = getContext();
+            NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm == null) {
+                call.resolve();
+                return;
+            }
+
+            File file = new File(filePath);
+            Uri fileUri = FileProvider.getUriForFile(
+                context,
+                context.getPackageName() + ".fileprovider",
+                file
+            );
+
+            Intent installIntent = new Intent(Intent.ACTION_VIEW);
+            installIntent.setDataAndType(fileUri, "application/vnd.android.package-archive");
+            installIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+
+            Intent chooserIntent = Intent.createChooser(installIntent, "Update StrawVerse with");
+            chooserIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+
+            PendingIntent installPendingIntent = PendingIntent.getActivity(
+                context,
+                4006,
+                chooserIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0)
+            );
+
+            NotificationCompat.Builder builder = new NotificationCompat.Builder(context, APK_DOWNLOAD_CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.stat_sys_download_done)
+                .setContentTitle("StrawVerse Update Ready")
+                .setContentText(version != null && !version.isEmpty() ? "StrawVerse v" + version + " downloaded. Tap to install." : "Download complete. Tap to install update.")
+                .setOngoing(false)
+                .setAutoCancel(true)
+                .setContentIntent(installPendingIntent)
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT);
+
+            nm.notify(APK_NOTIFICATION_ID, builder.build());
+            call.resolve();
+        } catch (Exception e) {
+            call.reject("Failed to show APK downloaded notification: " + e.getMessage());
+        }
+    }
+
     private Intent pendingInstallIntent = null;
 
     @PluginMethod
@@ -551,12 +673,19 @@ public class CloudflareBypassPlugin extends Plugin {
                         Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
                         Uri.parse("package:" + context.getPackageName())
                     );
+                    settingsIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                     startActivityForResult(call, settingsIntent, "installSettingsResult");
                     return;
                 }
             }
 
-            context.startActivity(intent);
+            try {
+                Intent chooser = Intent.createChooser(intent, "Update StrawVerse with");
+                chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                context.startActivity(chooser);
+            } catch (Exception e) {
+                context.startActivity(intent);
+            }
             call.resolve();
         } catch (Exception e) {
             call.reject("Failed to install APK: " + e.getMessage());
@@ -570,10 +699,17 @@ public class CloudflareBypassPlugin extends Plugin {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 if (context.getPackageManager().canRequestPackageInstalls()) {
                     try {
-                        context.startActivity(pendingInstallIntent);
+                        Intent chooser = Intent.createChooser(pendingInstallIntent, "Update StrawVerse with");
+                        chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                        context.startActivity(chooser);
                         call.resolve();
                     } catch (Exception e) {
-                        call.reject("Failed to install APK: " + e.getMessage());
+                        try {
+                            context.startActivity(pendingInstallIntent);
+                            call.resolve();
+                        } catch (Exception ex) {
+                            call.reject("Failed to install APK: " + ex.getMessage());
+                        }
                     }
                 } else {
                     call.reject("Permission to install unknown apps was denied");

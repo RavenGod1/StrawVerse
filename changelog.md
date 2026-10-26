@@ -1,5 +1,49 @@
 # Changelog
 
+# [11.1.2] - 2026-10-26
+
+### Discover & Extensions
+
+- **Universal Dynamic Provider Discovery:** Extensions and their filter definitions are now discovered dynamically at runtime, with animepahe IDs standardized across discovery, catalog, and mapping lookups.
+- **Capacitor Peer-Dependency Fix:** `@capacitor/android` and the Capacitor CLI are restored to v6 so Android installs resolve their peer dependencies cleanly.
+- **Dependency Refresh:** Electron and GUI build dependencies updated to their latest stable releases.
+
+# [11.1.1] - 2026-10-26
+
+### Android Updates & Notifications
+
+- **Tap to Install from Notification Bar:** When an app update finishes downloading, you can now tap the notification directly in your Android notification shade to open the installer immediately
+
+### Mobile & Marketplace
+
+- **Fixed Broken Mobile Marketplace Layout:** extension cards were cut off on the left with blank space on the right on mobile screens. The header buttons and tabs now wrap neatly to fit your phone.
+
+### Database & Mapping Stability
+
+- **Fixed Mapping Sync Errors:** Fixed an issue where mapping database updates would fail on mobile due to missing unmapped tables and schema differences, ensuring updates apply smoothly.
+
+# [11.1.0] - 2026-10-25
+
+### Discover, Filters & Browsing
+
+- **New Dedicated Filters Page:** Added a full-featured Filters page allowing you to easily browse and discover anime and manga by Genre (Action, Romance, Isekai, etc.), Release Season, Year, Format (TV, Movie, OVA, Manga, Manhwa), Airing Status, and your MyAnimeList watch status.
+- **Filter by Extension / Mapped Status:** You can now filter specifically for titles linked to MyAnimeList or browse unmapped titles unique to your installed community extensions.
+- **Better Discover Covers:** Fixed an issue where new episode releases on the Discover tab would display wide video screenshots instead of vertical poster covers ( pahe ).
+
+### Library & Organization
+
+- **Added "Completed" Status:** You can now mark your anime and manga as "Completed" directly from the library tags dropdown, matching the rest of your watching and reading lists.
+- **Cleaner Library Menu:** Streamlined the library tags list so internal download labels no longer clutter your status selection.
+
+### Extensions & Sources
+
+- **Fixed Extension Icons:** Fixed community extension icons (.ico) not displaying in Settings and player source dropdowns so they show up everywhere consistently just like in the Marketplace.
+- **Smarter Source Linking:** AnimePahe links now lock onto the anime's title so your library and watch history stay connected even when provider links or IDs change behind the scenes.
+- **Synced Custom Mappings:** When linking an anime or manga manually, detailed titles, episode counts, and poster art now link seamlessly across providers and your library.
+- **Scoped Extension Mapping & Instant Cleanup:** Installing an extension now only fetches mapping and unmapped metadata for that specific provider instead of transferring unnecessary database records. Deleting an extension immediately purges its mapping tables, unmapped items, and settings from your device.
+- **Compacted Delta Sync & Auto-Reconciliation:** Delta mapping updates are squashed to transmit only the latest net state for installed extensions. Local manual links and unmapped entries are automatically reconciled and pruned when server mappings arrive, eliminating duplicate metadata.
+- **Dynamic Catalog Filters & Clean Metadata:** The Catalog source dropdown now strictly shows installed extensions that have unmapped results.
+
 # [11.0.6] - 2026-10-23
 
 ### Dependencies & Security
@@ -32,6 +76,33 @@
 ### Build
 
 - **Cross-Platform CI:** GitHub Actions now builds Windows, Linux (AppImage/deb/snap) and Android artifacts on every push, and publishes a release on version tags.
+
+# [11.0.4] - 2026-10-25
+
+### Android Extensions & Marketplace
+
+- **Fixed Extension Downloads on Android:** Fixed a bug where installing or updating anime and manga extensions on Android would show a false "App Update Required" error or refuse to download.
+- **Custom Repositories on Android:** You can now add and remove community extension repositories directly in the mobile app.
+- **Smoother & Faster Mobile Downloads:** Extension files, icons, and marketplace updates on Android now download through your phone's native network connection, making them much faster and more reliable.
+
+### Video Player & Streaming Improvements
+
+- **Fixed Anime Playback Issues:** Resolved stream failures on sources like Anikoto where episodes would get stuck on a loading screen or fail to play.
+- **Instant Video Loading:** Fixed internal player communication so that video streams, quality options, and subtitles load immediately without errors.
+
+# [11.0.3] - 2026-10-24
+
+### Video Player & Streaming Fixes
+
+- **Anikoto & HLS Streaming Fix:** Resolved an issue where HLS streams (e.g., from Anikoto) failed to buffer or load in MPV due to demuxer segment restrictions and proxy URL routing.
+- **Enhanced Segment Streaming & Byte-Range Support:** Added `.ts` extension support and partial content byte-range handling (`206 Partial Content`) to the local stream proxy, enabling smooth segment buffering and seeking in MPV.
+- **MPV Demuxer & Header Hardening:** Configured MPV's libavformat demuxer (`allowed_extensions=ALL,allowed_segment_extensions=ALL`) and fixed comma escaping in HTTP header fields so providers with complex tokens or custom headers load without misparsing.
+- **Stream Clearance Retries:** Added automatic Cloudflare clearance retry handling to video segment proxy requests to reliably recover from transient 403/503 errors during playback.
+
+### Security & Dependency Updates
+
+- **Security Hardening:** Updated `@electron/get` to mitigate transitive `sprintf-js` prototype pollution vulnerabilities.
+- **Dependencies Bump:** Updated `vite` and frontend dependencies to their latest stable releases.
 
 # [11.0.2] - 2026-10-16
 

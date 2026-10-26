@@ -1,6 +1,7 @@
 @import "./components/css/Dropdown.css";
 
 :root {
+  color-scheme: dark;
   --bg-primary: #0e0f12;
   --bg-secondary: #16181f;
   --bg-tertiary: #1f222d;
