@@ -1298,6 +1298,46 @@ export default function Catalog({
         },
       },
     },
+    mangakatana: {
+      genre: {
+        label: "Genre",
+        options: {
+          All: "",
+          Action: "action",
+          Adventure: "adventure",
+          Comedy: "comedy",
+          Drama: "drama",
+          Ecchi: "ecchi",
+          Fantasy: "fantasy",
+          Harem: "harem",
+          Historical: "historical",
+          Horror: "horror",
+          Isekai: "isekai",
+          Josei: "josei",
+          "Martial Arts": "martial-arts",
+          Mecha: "mecha",
+          Music: "music",
+          Mystery: "mystery",
+          Psychological: "psychological",
+          Romance: "romance",
+          School: "school-life",
+          "Sci-Fi": "sci-fi",
+          Seinen: "seinen",
+          Shoujo: "shoujo",
+          Shounen: "shounen",
+          "Slice of Life": "slice-of-life",
+          Sports: "sports",
+          Supernatural: "supernatural",
+        },
+      },
+      status: {
+        label: "Status",
+        options: {
+          airing: "ongoing",
+          completed: "completed",
+        },
+      },
+    },
   };
 
   const getApiEndpoint = (
