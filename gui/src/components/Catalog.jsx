@@ -1298,6 +1298,50 @@ export default function Catalog({
         },
       },
     },
+
+    // MangaKatana: genre browses the site's /genre/{slug} listing; status
+    // is filtered per-item from div.status (ongoing|completed only). The
+    // extension also normalizes raw GUI labels itself, so unmapped values
+    // degrade gracefully.
+    mangakatana: {
+      genre: {
+        label: "Genre",
+        options: {
+          Action: "action",
+          Adventure: "adventure",
+          Comedy: "comedy",
+          Drama: "drama",
+          Ecchi: "ecchi",
+          Fantasy: "fantasy",
+          Harem: "harem",
+          Historical: "historical",
+          Horror: "horror",
+          Isekai: "isekai",
+          Josei: "josei",
+          "Martial Arts": "martial-arts",
+          Mecha: "mecha",
+          Music: "music",
+          Mystery: "mystery",
+          Psychological: "psychological",
+          Romance: "romance",
+          School: "school-life",
+          "Sci-Fi": "sci-fi",
+          Seinen: "seinen",
+          Shoujo: "shoujo",
+          Shounen: "shounen",
+          "Slice of Life": "slice-of-life",
+          Sports: "sports",
+          Supernatural: "supernatural",
+        },
+      },
+      status: {
+        label: "Status",
+        options: {
+          Ongoing: "ongoing",
+          Completed: "completed",
+        },
+      },
+    },
   };
 
   const getApiEndpoint = (
@@ -2560,6 +2604,99 @@ export default function Catalog({
                   {Object.entries(availableFilters.sort.options).map(
                     ([optLabel, optVal]) => (
                       <option key={optLabel} value={optVal}>
+                        {optLabel}
+                      </option>
+                    ),
+                  )}
+                </select>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Provider-native filter panel (Discover): forwards filters to the
+          active provider extension (e.g. MangaKatana genre/status). */}
+      {provider === "provider" && availableFilters && (
+        <div className="filter-panel">
+          <div className="filter-panel-header">
+            <div className="filter-panel-left">
+              <div className="filter-panel-title">
+                <SlidersHorizontal size={15} />
+                <span>Filters</span>
+                {activeFilterCount > 0 && (
+                  <span className="filter-count-label">
+                    ({activeFilterCount} active)
+                  </span>
+                )}
+              </div>
+            </div>
+            {activeFilterCount > 0 && (
+              <button
+                type="button"
+                onClick={handleResetFilters}
+                className="filter-reset-btn"
+                title="Clear all filters"
+              >
+                <RotateCcw size={13} />
+                <span>Reset All</span>
+              </button>
+            )}
+          </div>
+
+          <div className="filter-grid">
+            {availableFilters.genre && (
+              <div className="filter-group">
+                <label className="filter-label">Genre</label>
+                <select
+                  value={activeFilters.genre || ""}
+                  onChange={(e) => handleFilterChange("genre", e.target.value)}
+                  className={`filter-select ${activeFilters.genre ? "is-active" : ""}`}
+                >
+                  <option value="">All Genres</option>
+                  {Object.entries(availableFilters.genre.options).map(
+                    ([optLabel, optVal]) => (
+                      <option key={optVal} value={optVal}>
+                        {optLabel}
+                      </option>
+                    ),
+                  )}
+                </select>
+              </div>
+            )}
+
+            {availableFilters.status && (
+              <div className="filter-group">
+                <label className="filter-label">Status</label>
+                <select
+                  value={activeFilters.status || ""}
+                  onChange={(e) => handleFilterChange("status", e.target.value)}
+                  className={`filter-select ${activeFilters.status ? "is-active" : ""}`}
+                >
+                  <option value="">All Statuses</option>
+                  {Object.entries(availableFilters.status.options).map(
+                    ([optLabel, optVal]) => (
+                      <option key={optVal} value={optVal}>
+                        {optLabel}
+                      </option>
+                    ),
+                  )}
+                </select>
+              </div>
+            )}
+
+            {availableFilters.sort && (
+              <div className="filter-group">
+                <label className="filter-label">Sort</label>
+                <select
+                  value={activeFilters.sort || ""}
+                  onChange={(e) => handleFilterChange("sort", e.target.value)}
+                  className={`filter-select ${activeFilters.sort ? "is-active" : ""}`}
+                >
+                  <option value="">Default</option>
+                  {Object.entries(availableFilters.sort.options).map(
+                    ([optLabel, optVal]) => (
+                      <option key={optVal} value={optVal}>
                         {optLabel}
                       </option>
                     ),
