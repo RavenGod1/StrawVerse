@@ -1,5 +1,11 @@
 # Changelog
 
+# [11.1.4] - 2026-10-29
+
+### Discover & Extensions
+
+- **MangaKatana Discover Filters:** New Genre + Status filter panel on Discover for provider extensions (MangaKatana v1.1.0: 25 genres including School Life & Slice of Life, plus Ongoing/Completed status), forwarded straight to the extension.
+
 # [11.1.1] - 2026-10-26
 
 ### Discover & Extensions
