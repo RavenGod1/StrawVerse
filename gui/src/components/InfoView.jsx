@@ -81,6 +81,7 @@ export default function InfoView({
   localMalProvider: propLocalMalProvider,
   backText,
   autoPlay,
+  targetNum: propTargetNum,
   sortOrder,
   setSortOrder,
   onBack,
@@ -94,6 +95,47 @@ export default function InfoView({
   const [localMalProvider, setLocalMalProvider] =
     useState(propLocalMalProvider);
   const [details, setDetails] = useState(null);
+
+  // Media-server naming: season + show folder this show downloads into,
+  // picked by the user and remembered per show (null = setting off)
+  const [msShow, setMsShow] = useState(null);
+  const msShowKey = String(id || "");
+  useEffect(() => {
+    setMsShow(null);
+    if (type !== "Anime" || !msShowKey || !window.sharedStateAPI?.getSettings)
+      return;
+    let cancelled = false;
+    window.sharedStateAPI
+      .getSettings(["mediaServerNaming", "mediaServerShows"])
+      .then((res) => {
+        if (cancelled || !res?.settings?.mediaServerNaming) return;
+        const saved = res.settings.mediaServerShows?.[msShowKey] || {};
+        setMsShow({
+          season: Number.isInteger(saved.season) ? saved.season : 1,
+          series: saved.series || details?.title || "",
+        });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [type, msShowKey, details?.title]);
+
+  const saveMsShow = async (next) => {
+    const merged = { ...msShow, ...next };
+    setMsShow(merged);
+    try {
+      const res = await window.sharedStateAPI.getSettings(["mediaServerShows"]);
+      const shows = { ...(res?.settings?.mediaServerShows || {}) };
+      shows[msShowKey] = {
+        season: merged.season,
+        series: String(merged.series || "").trim(),
+      };
+      await window.sharedStateAPI.updateSetting("mediaServerShows", shows);
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   const [mappingSearchQuery, setMappingSearchQuery] = useState(
     propTitle || propId || "",
@@ -1430,6 +1472,7 @@ export default function InfoView({
   }, [details, type]);
 
   const localNext =
+    (propTargetNum ? Number(propTargetNum) : 0) ||
     historyProgress?.suggestedNumber ||
     historyProgress?.lastProgress?.number ||
     0;
@@ -1846,6 +1889,17 @@ export default function InfoView({
                     .join("")}
                 </div>
               </div>
+              ${
+                msShow
+                  ? `<div style="margin-top: 14px; font-size: 12px; color: var(--text-muted); line-height: 1.5; text-align: center;">
+                Jellyfin/Plex naming: saves to <strong>${String(msShow.series || details?.title || "")
+                  .replace(/&/g, "&amp;")
+                  .replace(/</g, "&lt;")
+                  .replace(/>/g, "&gt;")}\\${msShow.season === 0 ? "Season 00 (Specials)" : `Season ${String(msShow.season).padStart(2, "0")}`}</strong>.<br>
+                To change this, cancel and set <strong>Season</strong> and <strong>Show folder</strong> above the episode list.
+              </div>`
+                  : ""
+              }
             `,
             showCancelButton: true,
             confirmButtonText: "Confirm",
@@ -1998,6 +2052,17 @@ export default function InfoView({
     }
   };
 
+  const invalidateAllCatalogCaches = () => {
+    if (window.catalogCache) {
+      delete window.catalogCache.Anime_mal;
+      delete window.catalogCache.Manga_mal;
+      delete window.catalogCache.Anime_local;
+      delete window.catalogCache.Manga_local;
+      delete window.catalogCache.Anime_provider;
+      delete window.catalogCache.Manga_provider;
+    }
+  };
+
   // MAL Status sync
   const handleMalSync = async () => {
     if (!details?.malid) return;
@@ -2016,6 +2081,7 @@ export default function InfoView({
         status: malStatus,
         type: type,
       });
+      invalidateAllCatalogCaches();
       swalSuccess(
         "MAL Synced",
         data.text || data.title || "Updated MyAnimeList successfully!",
@@ -2048,6 +2114,7 @@ export default function InfoView({
 
       if (data.icon === "success") {
         setMalStatus("not_in_list");
+        invalidateAllCatalogCaches();
         swalSuccess(
           "Removed",
           data.title || "Successfully removed from MyAnimeList!",
@@ -2111,10 +2178,7 @@ export default function InfoView({
       });
       const data = await response.json();
       if (!data.error) {
-        if (window.catalogCache) {
-          delete window.catalogCache[`Anime_local`];
-          delete window.catalogCache[`Manga_local`];
-        }
+        invalidateAllCatalogCaches();
         setCurrentTags(updatedTag ? [updatedTag] : []);
 
         // Refresh custom tag list
@@ -3433,6 +3497,44 @@ export default function InfoView({
                     Select
                   </button>
                 </div>
+                {msShow && (
+                  <>
+                    <Dropdown
+                      label="Season:"
+                      value={String(msShow.season)}
+                      onChange={(v) => saveMsShow({ season: parseInt(v, 10) })}
+                      options={[
+                        { value: "0", label: "Specials" },
+                        ...Array.from({ length: 30 }, (_, i) => ({
+                          value: String(i + 1),
+                          label: String(i + 1),
+                        })),
+                      ]}
+                      className="u-style-46"
+                      triggerClassName="u-style-44"
+                      menuClassName="u-style-45"
+                    />
+                    <input
+                      type="text"
+                      title="Show folder: give every season of a show the same name so Jellyfin/Plex group them"
+                      placeholder="Show folder"
+                      value={msShow.series}
+                      onChange={(e) =>
+                        setMsShow({ ...msShow, series: e.target.value })
+                      }
+                      onBlur={() =>
+                        saveMsShow({
+                          series: msShow.series.trim() || details?.title || "",
+                        })
+                      }
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") e.currentTarget.blur();
+                      }}
+                      className="input-val"
+                      style={{ width: "220px", height: "38px", boxSizing: "border-box" }}
+                    />
+                  </>
+                )}
                 {numToDownload > 0 && (
                   <button
                     onClick={() => handleDownload()}

@@ -15,7 +15,11 @@ const {
   addMultipleToQueue,
 } = require("./utils/queue");
 const { MetadataAdd, FindMapping } = require("./utils/Metadata");
-const { hasLocalMediaFiles } = require("./utils/constants");
+const path = require("path");
+const {
+  hasLocalMediaFiles,
+  SEASON_FOLDER_RE,
+} = require("./utils/constants");
 
 // Shared runner for multiple episodes/chapters download
 async function downloadMediaMulti({
@@ -73,7 +77,9 @@ async function downloadMediaMulti({
 
   const unresolved = items.filter((it) => !it || !it.id);
   if (unresolved.length > 0) {
-    logger.warn(`[queueWorker] Dropping ${unresolved.length} ${unitName.toLowerCase()} with unresolvable IDs (numbers: ${unresolved.map((u) => u?.number ?? "?").join(", ")}).`);
+    logger.warn(
+      `[queueWorker] Dropping ${unresolved.length} ${unitName.toLowerCase()} with unresolvable IDs (numbers: ${unresolved.map((u) => u?.number ?? "?").join(", ")}).`,
+    );
     items = items.filter((it) => it && it.id);
     if (items.length === 0) {
       return {
@@ -159,7 +165,8 @@ async function downloadAnimeSingle(
   if (!episodeid) {
     return {
       error: true,
-      message: "Missing episode ID — cannot queue download. Re-add it from the episode list.",
+      message:
+        "Missing episode ID — cannot queue download. Re-add it from the episode list.",
     };
   }
   try {
@@ -254,6 +261,7 @@ async function downloadAnimeSingle(
         mergeSubtitles: config?.mergeSubtitles,
         subtitleFormat: config?.subtitleFormat,
         CustomDownloadLocation: config?.CustomDownloadLocation,
+        jellyfinCompatibility: config?.jellyfinCompatibility,
       },
       epid: episodeid,
       totalSegments: 0,
@@ -380,7 +388,8 @@ async function downloadMangaSingle(
   if (!chapterid) {
     return {
       error: true,
-      message: "Missing chapter ID — cannot queue download. Re-add it from the chapter list.",
+      message:
+        "Missing chapter ID — cannot queue download. Re-add it from the chapter list.",
     };
   }
   try {
@@ -511,9 +520,14 @@ async function getBaseDownloadDir() {
 async function cleanupEmptyDownloadFolder(folderPath, type, id) {
   try {
     if (fs.existsSync(folderPath)) {
-      if (!hasLocalMediaFiles(folderPath, type)) {
+      if (!hasLocalMediaFiles(folderPath, type, true)) {
         await fs.promises.rm(folderPath, { recursive: true, force: true });
         logger.info(`Removed empty download folder: ${folderPath}`);
+        // Last season of a media-server show folder gone: drop the empty
+        // show folder too (rmdir refuses if anything is left in it)
+        if (SEASON_FOLDER_RE.test(path.basename(folderPath))) {
+          await fs.promises.rmdir(path.dirname(folderPath)).catch(() => {});
+        }
         if (id) {
           if (type === "Anime") {
             try {

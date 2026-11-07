@@ -1,6 +1,10 @@
 const path = require("path");
 const fs = require("fs");
 
+if (!global.PORT) {
+  global.PORT = 9545;
+}
+
 const VIDEO_EXTENSIONS = Object.freeze([".mp4", ".ts"]);
 const SUBTITLE_EXTENSIONS = Object.freeze([".srt", ".vtt"]);
 const MANGA_EXTENSIONS = Object.freeze([".cbz"]);
@@ -45,13 +49,25 @@ function isMediaFile(fileNameOrPath, type = "Anime") {
     : isMangaFile(fileNameOrPath);
 }
 
-function hasLocalMediaFiles(dirPath, type = "Anime") {
+// "Season 02" subfolders used by media-server naming (Show/Season 02/...)
+const SEASON_FOLDER_RE = /^Season \d+$/i;
+
+// includeSeasons: also count media inside "Season NN" subfolders, so a show
+// folder that only holds season folders is never treated as empty.
+function hasLocalMediaFiles(dirPath, type = "Anime", includeSeasons = false) {
   if (!dirPath || !fs.existsSync(dirPath)) return false;
   try {
-    const files = fs.readdirSync(dirPath);
-    return files.some((file) => {
-      if (file.startsWith(".")) return false;
-      return isMediaFile(file, type);
+    const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+    return entries.some((e) => {
+      if (e.name.startsWith(".")) return false;
+      if (e.isDirectory()) {
+        return (
+          includeSeasons &&
+          SEASON_FOLDER_RE.test(e.name) &&
+          hasLocalMediaFiles(path.join(dirPath, e.name), type, false)
+        );
+      }
+      return isMediaFile(e.name, type);
     });
   } catch (_) {
     return false;
@@ -109,26 +125,65 @@ function isUuid(str) {
 function getEpisodeNumberFromFilename(filename) {
   if (!filename || !isVideoFile(filename)) return null;
 
-  let match = filename.match(/^(\d+(\.\d+)?)/);
+  // 1. Media-server naming: "Show - S01E05 [1080p].mp4", "S1EP05.mp4", "S01E12.5.mp4"
+  let match = filename.match(/\bS\d{1,3}E(?:p)?(\d+(?:\.\d+)?)/i);
   if (match) return parseFloat(match[1]);
 
-  match = filename.match(/(?:ep|episode|ch|chapter)\s*(\d+(\.\d+)?)/i);
+  // 2. Compact / leading prefix: "5Ep.mp4", "1052Ep.mp4", "01.mp4"
+  match = filename.match(/^(\d+(?:\.\d+)?)(?:ep|\b)/i);
   if (match) return parseFloat(match[1]);
 
-  match = filename.match(/\d+(\.\d+)?/);
-  return match ? parseFloat(match[0]) : null;
+  // 3. Keyword followed by episode number: "Episode 01", "Ep 1052"
+  match = filename.match(/(?:ep|episode)\s*(\d+(?:\.\d+)?)/i);
+  if (match) return parseFloat(match[1]);
+
+  // 4. Trailing episode number before extension: "One Piece - 1052.mp4"
+  match = filename.match(/[-_ ](\d+(?:\.\d+)?)\.[a-z0-9]+$/i);
+  if (match) return parseFloat(match[1]);
+
+  // 5. Fallback: match first standalone number
+  match = filename.match(/\b(\d+(?:\.\d+)?)\b/);
+  return match ? parseFloat(match[1]) : null;
+}
+
+// "Show - S02E05 [1080p]" (no extension), the Jellyfin/Plex episode scheme.
+// Series and season come from the "<Show>/Season NN" folder the file goes in.
+function mediaServerFileBase(directory, episode, quality) {
+  const pad = (n, len = 2) => String(n).padStart(len, "0");
+  const dirName = path.basename(directory);
+  const m = dirName.match(/^Season (\d+)$/i);
+  const series = m ? path.basename(path.dirname(directory)) : dirName;
+  const season = m ? parseInt(m[1], 10) : 1;
+  const q = quality ? ` [${quality}]` : "";
+
+  const epNum = parseFloat(episode);
+  let epStr;
+  if (isNaN(epNum)) {
+    epStr = pad(episode);
+  } else if (Number.isInteger(epNum)) {
+    epStr = epNum < 100 ? pad(epNum, 2) : String(epNum);
+  } else {
+    const [intPart, decPart] = String(epNum).split(".");
+    epStr = `${pad(intPart, 2)}.${decPart}`;
+  }
+
+  return `${series} - S${pad(season, 2)}E${epStr}${q}`;
 }
 
 function getChapterNumberFromFilename(filename) {
   if (!filename || !isMangaFile(filename)) return null;
-  const match = filename.match(
-    /(?:chapter|chp|ch|ep)?\s*[-_]?\s*(\d+(?:\.\d+)?)/i,
-  );
-  if (match) {
-    const num = parseFloat(match[1]);
-    return !isNaN(num) ? num : null;
-  }
-  return null;
+
+  // 1. "Chapter 1052", "Ch. 1052", "One Piece - Chapter 1052"
+  let match = filename.match(/(?:chapter|chp|ch)\.?\s*(\d+(?:\.\d+)?)/i);
+  if (match) return parseFloat(match[1]);
+
+  // 2. Prefix number: "1052.cbz", "1052 Chapter.cbz"
+  match = filename.match(/^(\d+(?:\.\d+)?)/);
+  if (match) return parseFloat(match[1]);
+
+  // 3. Fallback: match number
+  match = filename.match(/(\d+(?:\.\d+)?)/);
+  return match ? parseFloat(match[1]) : null;
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -300,7 +355,103 @@ function sortSourcesByPreferredQuality(sources, preferredQuality = "highest") {
   return copy;
 }
 
+function formatEpisodeFilename(
+  optsOrTitle = {},
+  epNumArg,
+  namingSchemeArg,
+  extArg,
+  totalEpisodesArg,
+  seasonArg,
+) {
+  let title = "";
+  let epNum = 1;
+  let season = 1;
+  let totalEpisodes = null;
+  let namingScheme = "default";
+  let ext = ".mp4";
+
+  if (typeof optsOrTitle === "object" && optsOrTitle !== null) {
+    title = optsOrTitle.title || "";
+    epNum = optsOrTitle.epNum !== undefined ? optsOrTitle.epNum : 1;
+    season = optsOrTitle.season !== undefined ? optsOrTitle.season : 1;
+    totalEpisodes =
+      optsOrTitle.totalEpisodes !== undefined
+        ? optsOrTitle.totalEpisodes
+        : null;
+    namingScheme = optsOrTitle.namingScheme || "default";
+    ext = optsOrTitle.ext || ".mp4";
+  } else {
+    title = optsOrTitle || "";
+    epNum = epNumArg !== undefined ? epNumArg : 1;
+    namingScheme = namingSchemeArg || "default";
+    ext = extArg || ".mp4";
+    totalEpisodes = totalEpisodesArg !== undefined ? totalEpisodesArg : null;
+    season = seasonArg !== undefined ? seasonArg : 1;
+  }
+
+  const num = parseFloat(epNum) || 0;
+  const maxEp = Math.max(Number(totalEpisodes) || 0, num);
+  const padLen = maxEp >= 1000 ? 4 : maxEp >= 100 ? 3 : 2;
+  const paddedEp = String(num).padStart(padLen, "0");
+  const paddedSeason = String(season).padStart(2, "0");
+  const cleanTitle = sanitizeFolderName(title || "Anime");
+
+  let baseName = "";
+  if (namingScheme === "plex_jellyfin") {
+    baseName = `${cleanTitle} - S${paddedSeason}E${paddedEp}`;
+  } else if (namingScheme === "series_s_ep") {
+    baseName = `${cleanTitle} S${season}EP${num}`;
+  } else if (namingScheme === "episode_only") {
+    baseName = `Episode ${paddedEp}`;
+  } else {
+    baseName = `${num}Ep`;
+  }
+
+  return `${baseName}${ext.startsWith(".") ? ext : `.${ext}`}`;
+}
+
+function formatChapterFilename(
+  optsOrTitle = {},
+  chapterNumArg,
+  namingSchemeArg,
+  extArg,
+) {
+  let title = "";
+  let chapterNum = 1;
+  let namingScheme = "default";
+  let ext = ".cbz";
+
+  if (typeof optsOrTitle === "object" && optsOrTitle !== null) {
+    title = optsOrTitle.title || "";
+    chapterNum =
+      optsOrTitle.chapterNum !== undefined ? optsOrTitle.chapterNum : 1;
+    namingScheme = optsOrTitle.namingScheme || "default";
+    ext = optsOrTitle.ext || ".cbz";
+  } else {
+    title = optsOrTitle || "";
+    chapterNum = chapterNumArg !== undefined ? chapterNumArg : 1;
+    namingScheme = namingSchemeArg || "default";
+    ext = extArg || ".cbz";
+  }
+
+  const num = chapterNum;
+  const cleanTitle = sanitizeFolderName(title || "Manga");
+  let baseName = "";
+
+  if (namingScheme === "series_chapter") {
+    baseName = `${cleanTitle} - Chapter ${num}`;
+  } else if (namingScheme === "short") {
+    baseName = `Ch. ${num}`;
+  } else {
+    baseName = `Chapter ${num}`;
+  }
+
+  return `${baseName}${ext.startsWith(".") ? ext : `.${ext}`}`;
+}
+
 module.exports = {
+  formatEpisodeFilename,
+  formatChapterFilename,
   VIDEO_EXTENSIONS,
   SUBTITLE_EXTENSIONS,
   MANGA_EXTENSIONS,
@@ -320,6 +471,8 @@ module.exports = {
   isUuid,
   getEpisodeNumberFromFilename,
   getChapterNumberFromFilename,
+  mediaServerFileBase,
+  SEASON_FOLDER_RE,
   sleep,
   parseTags,
   SYSTEM_TAGS,

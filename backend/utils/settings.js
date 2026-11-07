@@ -75,6 +75,7 @@ async function reconcileActiveProvider(Type) {
 
 // update the settings
 async function settingupdate(newSettings = {}) {
+  const wasMediaServerEnabled = Boolean(config.mediaServerNaming);
   if (newSettings && typeof newSettings === "object") {
     if (process.env.NODEJS_MOBILE_DATA_DIR) {
       delete newSettings.CustomDownloadLocation;
@@ -84,6 +85,17 @@ async function settingupdate(newSettings = {}) {
         config[k] = v;
       }
     }
+  }
+
+  if (config.mediaServerNaming === true && !wasMediaServerEnabled) {
+    try {
+      const { generateAllNfosAndPosters } = require("./mediaServer");
+      generateAllNfosAndPosters().catch((err) => {
+        logger.error(
+          `[MediaServer] Background NFO generation error: ${err.message}`,
+        );
+      });
+    } catch (_) {}
   }
 
   if (process.env.NODEJS_MOBILE_DATA_DIR) {
@@ -299,6 +311,7 @@ async function SettingsLoad() {
             Pagination: false,
             enableDiscordRPC: false,
             mergeSubtitles: false,
+            mediaServerNaming: false,
             subtitleFormat: "vtt",
             malDiscordProfile: false,
             imageCacheSizeLimit: 5,
@@ -315,6 +328,9 @@ async function SettingsLoad() {
             upscalePreset: "off",
             forceHighPerformanceGpu: false,
             preferredSubtitleLanguages: ["English"],
+            jellyfinCompatibility: false,
+            animeNamingScheme: "default",
+            mangaNamingScheme: "default",
           };
 
     if (config && !config.hasOwnProperty("subFontSize")) {
@@ -370,6 +386,18 @@ async function SettingsLoad() {
 
     if (config && !config.hasOwnProperty("preferredSubtitleLanguages")) {
       config.preferredSubtitleLanguages = ["English"];
+    }
+
+    if (config && !config.hasOwnProperty("mediaServerNaming")) {
+      config.mediaServerNaming = false;
+    }
+
+    if (config && !config.hasOwnProperty("animeNamingScheme")) {
+      config.animeNamingScheme = "default";
+    }
+
+    if (config && !config.hasOwnProperty("mangaNamingScheme")) {
+      config.mangaNamingScheme = "default";
     }
 
     let currentVersion = "1.0.0";
@@ -1197,7 +1225,7 @@ async function loadSingleScraper(
 
     if (!fs.existsSync(scopedPath)) {
       logger.error(`Scraper file not found: ${scopedPath}`);
-      return;
+      return { success: false, error: "Scraper file not found" };
     }
     const fullPath = scopedPath;
 
@@ -1207,7 +1235,7 @@ async function loadSingleScraper(
       logger.warn(
         `[Security] Blocked unsafe scraper ${fullPath}: ${safety.reason}`,
       );
-      return;
+      return { success: false, error: `Security check failed: ${safety.reason}` };
     }
 
     try {
@@ -1223,7 +1251,10 @@ async function loadSingleScraper(
         logger.warn(
           `[Compatibility] Skipping scraper ${AnimeManga}/${RepoOwner}/${scraper.name}: requires StrawVerse v${requiredAppVer}+ (current: v${currentAppVer})`,
         );
-        return;
+        return {
+          success: false,
+          error: `Requires StrawVerse v${requiredAppVer}+ (current: v${currentAppVer})`,
+        };
       }
 
       const isOfficial = RepoOwner.toLowerCase() === "theyogmehta";
@@ -1253,13 +1284,16 @@ async function loadSingleScraper(
       );
       notifyScrapersUpdated();
       await reconcileActiveProvider(AnimeManga);
+      return { success: true, scraper };
     } else {
       logger.warn(`Scraper missing 'name' export: ${fullPath}`);
+      return { success: false, error: "Scraper missing 'name' export" };
     }
   } catch (err) {
     logger.error(
       `Failed to load/reload scraper ${ExtensionName}: ${err.message}`,
     );
+    return { success: false, error: err.message };
   }
 }
 
@@ -1414,7 +1448,25 @@ async function HandleExtensions(
         }
       } catch (iconErr) {}
 
-      await loadSingleScraper(AnimeManga, ExtensionName, RepoOwner);
+      const loadResult = await loadSingleScraper(
+        AnimeManga,
+        ExtensionName,
+        RepoOwner,
+      );
+      if (!loadResult?.success) {
+        // Roll back the broken file so it doesn't leave orphan/corrupt scrapers on disk
+        try {
+          if (fs.existsSync(extensionPath)) fs.unlinkSync(extensionPath);
+          if (fs.existsSync(iconDest)) fs.unlinkSync(iconDest);
+        } catch (_) {}
+        return {
+          type: "error",
+          title: `Failed to Load ${AnimeManga} Extension!`,
+          message:
+            loadResult?.error ||
+            `Scraper ${ExtensionName} failed to initialize`,
+        };
+      }
 
       try {
         const { syncExtensionMapping } = require("./mappingUpdater");

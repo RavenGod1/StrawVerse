@@ -25,6 +25,7 @@ const {
   getEpisodeNumberFromFilename,
   getChapterNumberFromFilename,
   parseTags,
+  SEASON_FOLDER_RE,
 } = require("./constants");
 const { resolveMalIdFromMapping } = require("./mappingResolver");
 
@@ -411,6 +412,16 @@ async function getAllMetadata(
           if (hasLocalMediaFiles(subDirPath, type)) {
             folders.push(dir.name);
           }
+          // Media-server layout: each "<Show>/Season NN" is its own entry
+          for (const sub of fs.readdirSync(subDirPath, { withFileTypes: true })) {
+            if (
+              sub.isDirectory() &&
+              SEASON_FOLDER_RE.test(sub.name) &&
+              hasLocalMediaFiles(path.join(subDirPath, sub.name), type)
+            ) {
+              folders.push(`${dir.name}/${sub.name}`);
+            }
+          }
         }
       }
     }
@@ -678,25 +689,35 @@ async function getAllMetadata(
     if (type === "Anime") {
       try {
         const watchRows = await queryAll(`
-          SELECT anime_id, COUNT(DISTINCT episode_number) as count 
+          SELECT anime_id, MAX(episode_number) as max_ep 
           FROM WatchHistory 
-          WHERE is_completed = 1 
           GROUP BY anime_id
         `);
         watchRows.forEach((r) => {
-          watchMap[r.anime_id] = (watchMap[r.anime_id] || 0) + r.count;
+          if (r.max_ep != null) {
+            const num = Number(r.max_ep);
+            watchMap[r.anime_id] = Math.max(
+              watchMap[r.anime_id] || 0,
+              isNaN(num) ? 0 : num,
+            );
+          }
         });
       } catch (e) {}
     } else if (type === "Manga") {
       try {
         const readRows = await queryAll(`
-          SELECT manga_id, COUNT(DISTINCT chapter_number) as count 
+          SELECT manga_id, MAX(chapter_number) as max_ch 
           FROM ReadHistory 
-          WHERE is_completed = 1 
           GROUP BY manga_id
         `);
         readRows.forEach((r) => {
-          watchMap[r.manga_id] = (watchMap[r.manga_id] || 0) + r.count;
+          if (r.max_ch != null) {
+            const num = Number(r.max_ch);
+            watchMap[r.manga_id] = Math.max(
+              watchMap[r.manga_id] || 0,
+              isNaN(num) ? 0 : num,
+            );
+          }
         });
       } catch (e) {}
     }
@@ -1297,8 +1318,15 @@ async function getSourceById(type, baseDir, id, number, subdub) {
         });
         return match ? path.join(fPath, match) : null;
       } else if (type === "Manga") {
-        const filePath = path.join(fPath, `Chapter ${number}.cbz`);
-        return fs.existsSync(filePath) ? filePath : null;
+        const files = fs.readdirSync(fPath);
+        const match = files.find((f) => {
+          if (!isMangaFile(f)) return false;
+          const num = getChapterNumberFromFilename(f);
+          return num !== null && num === parseFloat(number);
+        });
+        if (match) return path.join(fPath, match);
+        const fallbackPath = path.join(fPath, `Chapter ${number}.cbz`);
+        return fs.existsSync(fallbackPath) ? fallbackPath : null;
       }
       return null;
     };
@@ -1379,6 +1407,40 @@ async function getSourceById(type, baseDir, id, number, subdub) {
             lang: lang,
           };
         });
+    }
+
+    if (fs.existsSync(parentDir)) {
+      const videoBaseName = path.parse(finalPath).name;
+      try {
+        const siblingSubs = fs
+          .readdirSync(parentDir)
+          .filter((file) => {
+            if (!isSubtitleFile(file)) return false;
+            return file.startsWith(videoBaseName);
+          })
+          .map((subtitle) => {
+            const parts = subtitle.split(".");
+            let lang = "English";
+            if (parts.length >= 3) {
+              const rawLang = parts[parts.length - 2];
+              if (rawLang && rawLang.length <= 4) {
+                lang = rawLang;
+              }
+            }
+            return {
+              url: `/subtitles?file=${encodeURIComponent(
+                path.join(parentDir, subtitle),
+              )}`,
+              lang: lang,
+            };
+          });
+
+        for (const s of siblingSubs) {
+          if (!subtitleFiles.some((existing) => existing.url === s.url)) {
+            subtitleFiles.push(s);
+          }
+        }
+      } catch (e) {}
     }
 
     if (
