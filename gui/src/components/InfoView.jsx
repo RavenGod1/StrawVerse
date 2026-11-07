@@ -96,6 +96,10 @@ export default function InfoView({
     useState(propLocalMalProvider);
   const [details, setDetails] = useState(null);
 
+  // Anime extras: Seasons (sequel/prequel chain) + Recommendations, from AniList
+  const [extras, setExtras] = useState(null);
+  const extrasKeyRef = useRef(null);
+
   // Media-server naming: season + show folder this show downloads into,
   // picked by the user and remembered per show (null = setting off)
   const [msShow, setMsShow] = useState(null);
@@ -994,7 +998,7 @@ export default function InfoView({
         if (data.id !== id) {
           const oldId = id;
           setId(data.id);
-          if (onIdChange) onIdChange(oldId, data.id);
+          if (onIdChange) onIdChange(oldId, data.id, data.provider || null);
         }
       }
       if (data && data.provider && data.provider !== localMalProvider) {
@@ -1308,6 +1312,81 @@ export default function InfoView({
     }
     fetchDetails(true);
   }, [id, type, localMalProvider]);
+
+  // Seasons + Recommendations for this title (anime only, one fetch per title)
+  useEffect(() => {
+    const reset = () => {
+      extrasKeyRef.current = null;
+      setExtras(null);
+    };
+    if (
+      type !== "Anime" ||
+      !details ||
+      (details.id != null && String(details.id) !== String(id))
+    ) {
+      reset();
+      return;
+    }
+    const malid = details.malid || details.MalID || null;
+    const title = details.title || null;
+    if (!malid && !title) {
+      reset();
+      return;
+    }
+    const key = `${id}_extras_${malid || `t:${String(title).toLowerCase()}`}`;
+    if (extrasKeyRef.current === key) return;
+    extrasKeyRef.current = key;
+    setExtras(null);
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const response = await fetch("/api/info/extras", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ malid, title, type }),
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+        if (cancelled || extrasKeyRef.current !== key) return;
+        setExtras({
+          seasons: Array.isArray(data?.seasons) ? data.seasons : [],
+          recommendations: Array.isArray(data?.recommendations)
+            ? data.recommendations
+            : [],
+        });
+      } catch (err) {
+        console.error("Failed to load seasons/recommendations:", err);
+        if (!cancelled && extrasKeyRef.current === key) setExtras(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [id, type, details]);
+
+  // Open another title in-place from a season or recommendation card
+  const openExtrasMedia = (item) => {
+    if (!item || item.current) return;
+    if (item.idMal) {
+      setId(String(item.idMal));
+      setLocalMalProvider("mal");
+    } else if (item.title && onSearchFallback) {
+      onSearchFallback(item.title);
+      return;
+    } else {
+      return;
+    }
+    // The page keeps its scroll position on an in-place swap: jump back up
+    let node = document.querySelector(".info-wrapper");
+    while (node && node !== document.body) {
+      if (node.scrollHeight > node.clientHeight + 4) {
+        node.scrollTo({ top: 0, behavior: "smooth" });
+        break;
+      }
+      node = node.parentElement;
+    }
+  };
 
   useEffect(() => {
     if (window.sharedStateAPI && window.sharedStateAPI.on) {
@@ -3320,6 +3399,117 @@ export default function InfoView({
           </div>
         </div>
       </div>
+
+      {/* Anime Seasons + Recommendations (AniList) */}
+      {type === "Anime" && extras && (
+        <>
+          {(extras.seasons?.length || 0) > 1 && (
+            <div className="extras-section">
+              <div className="section-header">
+                <h2>Seasons</h2>
+              </div>
+              <div className="extras-grid">
+                {extras.seasons.map((season) => (
+                  <button
+                    key={season.id}
+                    type="button"
+                    className={`extras-card${
+                      season.current ? " extras-card-current" : ""
+                    }`}
+                    onClick={() => openExtrasMedia(season)}
+                    disabled={season.current}
+                    title={
+                      season.current
+                        ? "Currently open"
+                        : `Open ${season.title}`
+                    }
+                  >
+                    <span className="extras-poster">
+                      <img
+                        src={
+                          season.image
+                            ? `/api/image?url=${encodeURIComponent(season.image)}`
+                            : "/images/image-404.png"
+                        }
+                        alt=""
+                        loading="lazy"
+                        onError={(e) => {
+                          e.currentTarget.onerror = null;
+                          e.currentTarget.src = "/images/image-404.png";
+                        }}
+                      />
+                    </span>
+                    <span className="extras-body">
+                      <span className="extras-title">{season.title}</span>
+                      <span className="extras-meta">
+                        {[
+                          season.format,
+                          season.year ? `(${season.year})` : null,
+                          season.episodes ? `${season.episodes} eps` : null,
+                          season.score != null ? `${season.score}%` : null,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </span>
+                    </span>
+                    {season.current && (
+                      <span className="extras-badge">Current</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {(extras.recommendations?.length || 0) > 0 && (
+            <div className="extras-section">
+              <div className="section-header">
+                <h2>Recommendations</h2>
+              </div>
+              <div className="extras-grid">
+                {extras.recommendations.map((rec) => (
+                  <button
+                    key={rec.id}
+                    type="button"
+                    className="extras-card"
+                    onClick={() => openExtrasMedia(rec)}
+                    title={`Open ${rec.title}`}
+                  >
+                    <span className="extras-poster">
+                      <img
+                        src={
+                          rec.image
+                            ? `/api/image?url=${encodeURIComponent(rec.image)}`
+                            : "/images/image-404.png"
+                        }
+                        alt=""
+                        loading="lazy"
+                        onError={(e) => {
+                          e.currentTarget.onerror = null;
+                          e.currentTarget.src = "/images/image-404.png";
+                        }}
+                      />
+                    </span>
+                    <span className="extras-body">
+                      <span className="extras-title">{rec.title}</span>
+                      <span className="extras-meta">
+                        {[
+                          rec.format,
+                          rec.year ? `(${rec.year})` : null,
+                          rec.episodes ? `${rec.episodes} eps` : null,
+                          rec.score != null ? `${rec.score}%` : null,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
 
       {/* Episodes / Chapters List */}
       <div className="items-section">

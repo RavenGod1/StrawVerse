@@ -544,7 +544,7 @@ export default function App() {
                 { view: "discover", params: { searchQuery: title } },
               ]);
             }}
-            onIdChange={(oldId, newId) => {
+            onIdChange={(oldId, newId, newProvider) => {
               if (!oldId || !newId) return;
               setHistory((prev) =>
                 prev.map((item) => {
@@ -554,6 +554,11 @@ export default function App() {
                       params: {
                         ...item.params,
                         id: newId,
+                        // Keep the info page's provider in step with the id it
+                        // was resolved to (e.g. opening a MAL id in-place)
+                        ...(newProvider && item.view === "info"
+                          ? { provider: newProvider }
+                          : {}),
                       },
                     };
                   }

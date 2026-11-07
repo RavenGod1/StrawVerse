@@ -38,6 +38,7 @@ const {
 } = require("../utils/mappingResolver");
 const { sanitizeFolderName, getUserDataPath } = require("../utils/constants");
 const { getDownloadsFolder } = require("../utils/DirectoryMaker");
+const { buildExtras } = require("../utils/anilistExtras");
 
 const router = express.Router();
 
@@ -3057,6 +3058,26 @@ router.post(
     }
   },
 );
+
+// ---------------------------------------------------------------------------
+// InfoView extras: Anime "Seasons" (sequel/prequel chain) + Recommendations.
+// Source: AniList GraphQL (no auth, no key). See utils/anilistExtras.js.
+// ---------------------------------------------------------------------------
+
+// POST /api/info/extras  { malid?, title, type }
+router.post("/api/info/extras", async (req, res) => {
+  const { malid, title, type } = req.body || {};
+  if ((!malid && !title) || (type !== "Anime" && type !== "Manga")) {
+    return res.json({ seasons: [], recommendations: [] });
+  }
+  try {
+    const payload = await buildExtras({ malid, title, type });
+    res.json(payload);
+  } catch (err) {
+    logger.warn(`[info/extras] Failed to load extras: ${err.message}`);
+    res.json({ seasons: [], recommendations: [] });
+  }
+});
 
 // Fetches Anime Episodes or Manga Chapters
 router.post("/api/info/items", async (req, res) => {
