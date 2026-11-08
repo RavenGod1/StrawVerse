@@ -1,5 +1,20 @@
 # Changelog
 
+# [11.1.5] - 2026-11-08
+
+### Discover & Info Badges
+
+- **Airing Status Badge:** Every card on Discover and every title page now shows **Currently Airing** or **Complete** (plus Upcoming / Hiatus / Cancelled when known), sourced from AniList with local fallbacks.
+- **Sub / Dub Badge:** Cards and title pages now show **SUB**, **SUB & DUB**, or **DUB** based on what the provider actually offers — never guessed; unknown titles simply show no badge.
+- **Badge Placement:** Status + audio badges sit along the poster bottom on Discover catalog cards, in the tag row on the title page, and over Seasons/Recommendations posters.
+- **Faster Badge Loading:** Catalog badge lookups are split into a fast status pass and a background audio pass, so status appears immediately and slow episode scans never delay it.
+- **Reliable Status Lookups:** A single unmappable or manga-only id in a batch no longer blanks every status — bad ids are isolated and cached while good titles keep their badges.
+
+### Anime Seasons & Recommendations
+
+- **Seasons Section:** The title page now lists every season of a show above the Episodes List, each with poster, episode count, and its own badges.
+- **Recommendations Section:** Personalized "If you liked this..." recommendations appear above the Episodes List with the same card badges.
+
 # [11.1.4] - 2026-10-29
 
 ### Discover & Extensions
