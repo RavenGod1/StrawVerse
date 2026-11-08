@@ -481,6 +481,38 @@
   gap: 15px;
 }
 
+/* Recommendations render as one horizontal-only row: cards keep a fixed width
+   and the row scrolls sideways instead of wrapping into a grid. */
+.extras-row {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 15px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  padding-bottom: 8px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.extras-row .extras-card {
+  flex: 0 0 150px;
+  scroll-snap-align: start;
+}
+
+.extras-row::-webkit-scrollbar {
+  height: 6px;
+}
+
+.extras-row::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.22);
+  border-radius: 6px;
+}
+
+.extras-row::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+}
+
 .extras-card {
   position: relative;
   display: flex;

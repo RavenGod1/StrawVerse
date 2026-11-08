@@ -269,6 +269,21 @@ async function settingfetch() {
       changes = true;
     }
 
+    if (!config?.hasOwnProperty("infoRecCount")) {
+      config.infoRecCount = 4;
+      changes = true;
+    } else {
+      // Recommendations shown on the info page: 1-10, default 4.
+      const parsedRecCount = parseInt(config.infoRecCount, 10);
+      const clampedRecCount = Number.isInteger(parsedRecCount)
+        ? Math.min(10, Math.max(1, parsedRecCount))
+        : 4;
+      if (clampedRecCount !== config.infoRecCount) {
+        config.infoRecCount = clampedRecCount;
+        changes = true;
+      }
+    }
+
     if (changes) {
       await settingSave();
     }
@@ -325,6 +340,7 @@ async function SettingsLoad() {
             subBgColor: "transparent",
             playerSpeed: 1.0,
             infoSortOrder: null,
+            infoRecCount: 4,
             upscalePreset: "off",
             forceHighPerformanceGpu: false,
             preferredSubtitleLanguages: ["English"],
@@ -350,6 +366,10 @@ async function SettingsLoad() {
     }
     if (config && !config.hasOwnProperty("playerSpeed")) {
       config.playerSpeed = 1.0;
+    }
+
+    if (config && !config.hasOwnProperty("infoRecCount")) {
+      config.infoRecCount = 4;
     }
 
     if (config && !config.hasOwnProperty("imageCacheSizeLimit")) {

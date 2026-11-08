@@ -167,6 +167,7 @@ export default function SettingsView({
   const [maxLogFiles, setMaxLogFiles] = useState(5);
   const [logDirectory, setLogDirectory] = useState("");
   const [autoSkipIntro, setAutoSkipIntro] = useState(true);
+  const [infoRecCount, setInfoRecCount] = useState(4);
   const [subFontSize, setSubFontSize] = useState(46);
   const [subColor, setSubColor] = useState("#FFFFFF");
   const [subBorderColor, setSubBorderColor] = useState("#000000");
@@ -731,6 +732,16 @@ export default function SettingsView({
           s.maxLogFiles !== undefined ? parseInt(s.maxLogFiles, 10) || 5 : 5,
         );
         setAutoSkipIntro(s.autoSkipIntro);
+        {
+          const recCountVal = parseInt(s.infoRecCount, 10);
+          setInfoRecCount(
+            Number.isInteger(recCountVal) &&
+              recCountVal >= 1 &&
+              recCountVal <= 10
+              ? recCountVal
+              : 4,
+          );
+        }
         const layoutVal = s.mangaReaderLayout || "long-strip";
         setMangaReaderLayout(layoutVal);
 
@@ -983,6 +994,13 @@ export default function SettingsView({
     }
     if (autoSkipIntro !== settings.autoSkipIntro)
       dirty.autoSkipIntro = autoSkipIntro;
+    if (
+      infoRecCount !==
+      (settings.infoRecCount !== undefined
+        ? parseInt(settings.infoRecCount, 10)
+        : 4)
+    )
+      dirty.infoRecCount = infoRecCount;
     if (mangaReaderLayout !== (settings.mangaReaderLayout || "long-strip"))
       dirty.mangaReaderLayout = mangaReaderLayout;
     if (mangaReaderWidth !== (parseInt(settings.mangaReaderWidth, 10) || 800))
@@ -1121,6 +1139,9 @@ export default function SettingsView({
           : true) ||
       (parseInt(maxLogFiles, 10) || 5) !== (settings.maxLogFiles || 5) ||
       autoSkipIntro !== settings.autoSkipIntro ||
+      (settings.infoRecCount !== undefined
+        ? parseInt(settings.infoRecCount, 10)
+        : 4) !== infoRecCount ||
       mangaReaderLayout !== (settings.mangaReaderLayout || "long-strip") ||
       mangaReaderWidth !== (parseInt(settings.mangaReaderWidth, 10) || 800) ||
       catalogTitleFontSize !==
@@ -1176,6 +1197,7 @@ export default function SettingsView({
     externalLogEnabled,
     maxLogFiles,
     autoSkipIntro,
+    infoRecCount,
     mangaReaderLayout,
     mangaReaderWidth,
     catalogTitleFontSize,
@@ -1977,6 +1999,27 @@ export default function SettingsView({
                     />
                   </div>
                 </div>
+
+                <SettingsRow
+                  label={`Recommendations Shown (${infoRecCount} ${infoRecCount === 1 ? "title" : "titles"})`}
+                  desc="How many recommendation cards appear on a title page. Rendered as a single horizontal row (1-10, default 4)."
+                >
+                  <div
+                    className="catalog-columns-picker"
+                    style={{ flexWrap: "wrap", gap: "6px" }}
+                  >
+                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
+                      <button
+                        key={n}
+                        type="button"
+                        className={`catalog-col-btn ${infoRecCount === n ? "active" : ""}`}
+                        onClick={() => setInfoRecCount(n)}
+                      >
+                        {n}
+                      </button>
+                    ))}
+                  </div>
+                </SettingsRow>
 
                 <SettingsRow
                   label="Anime Download Naming"

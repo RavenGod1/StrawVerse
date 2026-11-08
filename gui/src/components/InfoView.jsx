@@ -111,6 +111,7 @@ export default function InfoView({
   title: propTitle,
   onSearchFallback,
   onIdChange,
+  onOpenExtra,
 }) {
   const [id, setId] = useState(propId);
   const [localMalProvider, setLocalMalProvider] =
@@ -120,6 +121,9 @@ export default function InfoView({
   // Anime extras: Seasons (sequel/prequel chain) + Recommendations, from AniList
   const [extras, setExtras] = useState(null);
   const extrasKeyRef = useRef(null);
+
+  // How many recommendations to render (Settings → Anime Settings, 1-10)
+  const [recCount, setRecCount] = useState(4);
 
   // Media-server naming: season + show folder this show downloads into,
   // picked by the user and remembered per show (null = setting off)
@@ -976,6 +980,21 @@ export default function InfoView({
     }
   }, []);
 
+  // How many recommendations to show (Settings → Anime Settings, 1-10, default 4)
+  useEffect(() => {
+    if (window.sharedStateAPI && window.sharedStateAPI.getSettings) {
+      window.sharedStateAPI
+        .getSettings(["infoRecCount"])
+        .then((settingsData) => {
+          const raw = parseInt(settingsData?.settings?.infoRecCount, 10);
+          setRecCount(
+            Number.isInteger(raw) && raw >= 1 && raw <= 10 ? raw : 4,
+          );
+        })
+        .catch(() => {});
+    }
+  }, []);
+
   const getProviderIcon = (name) => {
     if (!name || !installedExtensions) return null;
     const list = installedExtensions[type];
@@ -1334,7 +1353,11 @@ export default function InfoView({
     fetchDetails(true);
   }, [id, type, localMalProvider]);
 
-  // Seasons + Recommendations for this title (anime only, one fetch per title)
+  // Seasons + Recommendations for this title (anime only, one fetch per title).
+  // The payload is validated against the stored key rather than an
+  // effect-lifetime flag: a re-render with the same key must not cancel the
+  // in-flight request, otherwise the second details fetch that follows an
+  // in-place id heal dropped the response and the sections never rendered.
   useEffect(() => {
     const reset = () => {
       extrasKeyRef.current = null;
@@ -1348,7 +1371,14 @@ export default function InfoView({
       reset();
       return;
     }
-    const malid = details.malid || details.MalID || null;
+    // With provider "mal" the id itself is the MAL id, even when the info
+    // payload doesn't repeat it as a malid field.
+    const malid =
+      details.malid ||
+      details.MalID ||
+      (localMalProvider === "mal" && /^\d+$/.test(String(id))
+        ? Number(id)
+        : null);
     const title = details.title || null;
     if (!malid && !title) {
       reset();
@@ -1359,7 +1389,6 @@ export default function InfoView({
     extrasKeyRef.current = key;
     setExtras(null);
 
-    let cancelled = false;
     (async () => {
       try {
         const response = await fetch("/api/info/extras", {
@@ -1369,8 +1398,11 @@ export default function InfoView({
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json();
-        if (cancelled || extrasKeyRef.current !== key) return;
+        if (extrasKeyRef.current !== key) return;
         setExtras({
+          // Airing/publishing status of this title (AniList) — drives the
+          // status pill in the title row.
+          status: data?.status || null,
           seasons: Array.isArray(data?.seasons) ? data.seasons : [],
           recommendations: Array.isArray(data?.recommendations)
             ? data.recommendations
@@ -1378,27 +1410,17 @@ export default function InfoView({
         });
       } catch (err) {
         console.error("Failed to load seasons/recommendations:", err);
-        if (!cancelled && extrasKeyRef.current === key) setExtras(null);
+        if (extrasKeyRef.current === key) {
+          extrasKeyRef.current = null;
+          setExtras(null);
+        }
       }
     })();
-    return () => {
-      cancelled = true;
-    };
-  }, [id, type, details]);
+  }, [id, type, details, localMalProvider]);
 
-  // Open another title in-place from a season or recommendation card
-  const openExtrasMedia = (item) => {
-    if (!item || item.current) return;
-    if (item.idMal) {
-      setId(String(item.idMal));
-      setLocalMalProvider("mal");
-    } else if (item.title && onSearchFallback) {
-      onSearchFallback(item.title);
-      return;
-    } else {
-      return;
-    }
-    // The page keeps its scroll position on an in-place swap: jump back up
+  // Scroll the info page back to the top (the Seasons/Recommendations rows sit
+  // above the episode list, so a jump from a card would land mid-page).
+  const scrollInfoToTop = () => {
     let node = document.querySelector(".info-wrapper");
     while (node && node !== document.body) {
       if (node.scrollHeight > node.clientHeight + 4) {
@@ -1406,6 +1428,27 @@ export default function InfoView({
         break;
       }
       node = node.parentElement;
+    }
+  };
+
+  // Open another title from a season or recommendation card.
+  // Preferred path pushes a real history entry (onOpenExtra) so Back returns to
+  // the title we came from instead of falling straight through to Discover; the
+  // in-place id swap is only a fallback when no navigator is provided.
+  const openExtrasMedia = (item) => {
+    if (!item || item.current) return;
+    scrollInfoToTop();
+    if (item.idMal) {
+      if (onOpenExtra) {
+        onOpenExtra(item, details?.title || null);
+        return;
+      }
+      setId(String(item.idMal));
+      setLocalMalProvider("mal");
+      return;
+    }
+    if (item.title && onSearchFallback) {
+      onSearchFallback(item.title);
     }
   };
 
@@ -1446,11 +1489,15 @@ export default function InfoView({
     }
     const key = unique.join(",");
     if (extrasLangsKeyRef.current === key) return;
-    extrasLangsKeyRef.current = key;
     setExtrasLangs({});
 
-    let cancelled = false;
+    // The key is claimed when the request actually starts, not when the timer
+    // is scheduled: an effect re-run with the same targets clears the pending
+    // timer, so claiming early would leave the languages never fetched. A stale
+    // response can never land either — the key is re-checked before applying.
     const timer = setTimeout(async () => {
+      if (extrasLangsKeyRef.current === key) return;
+      extrasLangsKeyRef.current = key;
       try {
         const response = await fetch("/api/info/bulk-meta", {
           method: "POST",
@@ -1465,14 +1512,14 @@ export default function InfoView({
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json();
-        if (cancelled || extrasLangsKeyRef.current !== key) return;
+        if (extrasLangsKeyRef.current !== key) return;
         setExtrasLangs(data?.meta || {});
       } catch (err) {
         console.error("Failed to load card languages:", err);
+        if (extrasLangsKeyRef.current === key) extrasLangsKeyRef.current = null;
       }
     }, 500);
     return () => {
-      cancelled = true;
       clearTimeout(timer);
     };
   }, [extras]);
@@ -3588,8 +3635,10 @@ export default function InfoView({
               <div className="section-header">
                 <h2>Recommendations</h2>
               </div>
-              <div className="extras-grid">
-                {extras.recommendations.map((rec) => (
+              {/* One horizontal row (no wrapping grid); the count comes from
+                  Settings → Anime Settings (1-10, default 4). */}
+              <div className="extras-grid extras-row">
+                {extras.recommendations.slice(0, recCount).map((rec) => (
                   <button
                     key={rec.id}
                     type="button"

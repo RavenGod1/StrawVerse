@@ -539,10 +539,24 @@ export default function App() {
             setSortOrder={setInfoSortOrder}
             onBack={navigateBack}
             title={current.params.title}
-            onSearchFallback={(title) => {
-              setHistory([
-                { view: "discover", params: { searchQuery: title } },
-              ]);
+            onSearchFallback={(title) =>
+              // Pushed (not replaced) so Back still returns to this title
+              // instead of the stack collapsing to a single Discover entry.
+              navigateTo("discover", { searchQuery: title })
+            }
+            onOpenExtra={(media, fromTitle) => {
+              // A real history entry per season/recommendation jump: Back now
+              // returns to the title we came from, and the new entry re-mounts
+              // the info page so its Seasons/Recommendations load fresh.
+              const label = fromTitle
+                ? `Back to ${fromTitle}`
+                : current.params.backText || "Back to Discover";
+              navigateTo("info", {
+                id: String(media.idMal),
+                type: current.params.type || contentType,
+                provider: "mal",
+                backText: label.length > 40 ? `${label.slice(0, 39)}…` : label,
+              });
             }}
             onIdChange={(oldId, newId, newProvider) => {
               if (!oldId || !newId) return;

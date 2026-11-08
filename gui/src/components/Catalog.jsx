@@ -454,11 +454,24 @@ export default function Catalog({
     return Number.isInteger(num) && num > 0 ? num : null;
   };
 
+  // Cache key for a card's badge metadata. Cards with a MAL id use it; cards
+  // without one fall back to the provider + provider id they came from so the
+  // extension-side lookups (status from the mapping DB, languages from the
+  // provider's own episode list) still have somewhere to land.
+  const getItemMetaKey = (item) => {
+    const malid = getMalIdForItem(item);
+    if (malid != null) return `${type}:${malid}`;
+    if (item?.provider && item?.id !== undefined && item?.id !== null) {
+      return `${type}:p:${item.provider}:${item.id}`;
+    }
+    return null;
+  };
+
   // Status + sub/dub badges for catalog cards, fetched as two passes so the
   // fast AniList status lookup paints without waiting on the slow provider
   // episode-list lookup (langs). Both passes fire on the same 500ms defer and
   // run concurrently; each merges its own field, so a slow langs response
-  // never delays a status badge. Requests are capped at 24 malids (the
+  // never delays a status badge. Requests are capped at 24 cards (the
   // endpoint's own limit) and a response re-runs this effect, cascading
   // through any remaining items. Keys stay marked after a success (no
   // refetch of a known-null) and are unmarked on failure so a later render
@@ -469,26 +482,40 @@ export default function Catalog({
     const needLangs = [];
     const seen = new Set();
     for (const item of items) {
-      const malid = getMalIdForItem(item);
-      if (malid == null) continue;
-      const key = `${type}:${malid}`;
-      if (seen.has(key)) continue;
+      const key = getItemMetaKey(item);
+      if (!key || seen.has(key)) continue;
       seen.add(key);
+      const malid = getMalIdForItem(item);
+      // A card the backend can be asked about (a MAL id, or the provider +
+      // provider id it came from for the extension-side lookups) always goes
+      // through the batched lookup — AniList wins over the card's own status.
+      // Status/languages carried on the item itself only satisfy cards that
+      // nothing can be fetched for.
+      const fetchable =
+        malid != null ||
+        !!(item.provider && item.id !== undefined && item.id !== null);
       const fetched = cardMeta[key];
       const hasStatus =
-        !!normalizeStatus(item.status, type) ||
         !!normalizeStatus(fetched?.status, type) ||
-        cardMetaStatusReqRef.current.has(key);
+        cardMetaStatusReqRef.current.has(key) ||
+        (!fetchable && !!normalizeStatus(item.status, type));
       const hasLangs =
         type !== "Anime" ||
-        !!formatAudioLangs(item.langs) ||
         !!formatAudioLangs(fetched?.langs) ||
-        cardMetaLangsReqRef.current.has(key);
+        cardMetaLangsReqRef.current.has(key) ||
+        (!fetchable && !!formatAudioLangs(item.langs));
+      const lookup = {
+        key,
+        malid,
+        provider: item.provider || null,
+        id: item.id !== undefined ? item.id : null,
+        title: item.title || null,
+      };
       if (!hasStatus && needStatus.length < 24) {
-        needStatus.push({ key, malid });
+        needStatus.push(lookup);
       }
       if (!hasLangs && needLangs.length < 24) {
-        needLangs.push({ key, malid });
+        needLangs.push(lookup);
       }
       if (
         needStatus.length >= 24 &&
@@ -509,7 +536,13 @@ export default function Catalog({
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               type,
-              items: batch.map(({ malid }) => ({ malid })),
+              items: batch.map(({ key, malid, provider, id, title }) => ({
+                key,
+                malid,
+                provider,
+                id,
+                title,
+              })),
               ...extraBody,
             }),
           });
@@ -517,8 +550,8 @@ export default function Catalog({
           const payload = await response.json();
           setCardMeta((prev) => {
             const next = { ...prev };
-            for (const { key, malid } of batch) {
-              const got = payload?.meta?.[malid];
+            for (const { key } of batch) {
+              const got = payload?.meta?.[key];
               const existing = prev[key] || { status: null, langs: null };
               next[key] = {
                 status: field === "status" ? got?.status ?? null : existing.status,
@@ -562,8 +595,8 @@ export default function Catalog({
   const getCardMeta = useCallback(
     (item) => {
       if (!item) return null;
-      const malid = getMalIdForItem(item);
-      const fetched = malid != null ? cardMeta[`${type}:${malid}`] : null;
+      const key = getItemMetaKey(item);
+      const fetched = key ? cardMeta[key] : null;
       const status =
         normalizeStatus(fetched?.status, type) ||
         normalizeStatus(item.status, type);
