@@ -25,6 +25,7 @@ const ANILIST_MEDIA_FIELDS = `
   startDate { year month day }
   episodes
   averageScore
+  status
   coverImage { large medium }
 `;
 
@@ -102,6 +103,7 @@ function shapeAnilistMedia(node, currentId) {
     format: node.format || null,
     episodes: node.episodes || null,
     score: node.averageScore ?? null,
+    status: node.status || null,
     image: node.coverImage?.large || node.coverImage?.medium || null,
     current: currentId != null && String(node.id) === String(currentId),
   };
@@ -213,7 +215,11 @@ async function buildExtras({ malid, title, type }) {
     .slice(0, 12);
 
   const seasons = await buildSeasons(seed, seed.relations?.edges);
-  const payload = { seasons, recommendations };
+  const payload = {
+    status: seed.status || null,
+    seasons,
+    recommendations,
+  };
   extrasCacheSet(cacheKey, payload);
   logger.info(
     `[anilistExtras] ${cacheKey}: ${seasons.length} season(s), ${recommendations.length} recommendation(s)`,
@@ -221,4 +227,102 @@ async function buildExtras({ malid, title, type }) {
   return payload;
 }
 
-module.exports = { buildExtras };
+// ---------------------------------------------------------------------------
+// Batched airing-status lookup (Discover cards): one AniList request per call.
+//
+// AniList 404s the WHOLE query when any single id isn't found (a manga-only
+// or unknown MAL id in an Anime batch) and nulls every field, so one bad id
+// would otherwise strip statuses from every card in the batch. On a 404 we
+// bisect to isolate the bad id, cache it as null (negative cache) so it stops
+// poisoning later batches, and keep the good ids' statuses.
+// ---------------------------------------------------------------------------
+const statusCache = new Map();
+const STATUS_BISECT_BUDGET = 12; // extra AniList requests per top-level call
+
+function isAniListNotFound(err) {
+  return (
+    err?.response?.status === 404 || /\bnot found\b/i.test(String(err?.message || ""))
+  );
+}
+
+function cacheStatus(mediaType, id, value) {
+  if (statusCache.size > 1000) {
+    const oldest = statusCache.keys().next().value;
+    if (oldest !== undefined) statusCache.delete(oldest);
+  }
+  statusCache.set(`${mediaType}:${id}`, {
+    expires: Date.now() + EXTRAS_CACHE_TTL,
+    value,
+  });
+}
+
+async function queryStatusBatch(ids, mediaType) {
+  const parts = ids.map(
+    (id, i) =>
+      `m${i}: Media(idMal: ${id}, type: ${mediaType}) { status }`,
+  );
+  const data = await anilistPost(`query { ${parts.join("\n")} }`, {});
+  const out = {};
+  ids.forEach((id, i) => {
+    out[id] = data?.[`m${i}`]?.status || null;
+    cacheStatus(mediaType, id, out[id]);
+  });
+  return out;
+}
+
+async function fetchStatuses(malIds, mediaType = "ANIME", budget = { left: STATUS_BISECT_BUDGET }) {
+  const ids = [
+    ...new Set(
+      (malIds || []).map(Number).filter((n) => Number.isInteger(n) && n > 0),
+    ),
+  ];
+  const out = {};
+  if (!ids.length) return out;
+
+  const now = Date.now();
+  const pending = [];
+  for (const id of ids) {
+    const hit = statusCache.get(`${mediaType}:${id}`);
+    if (hit && hit.expires > now) {
+      out[id] = hit.value;
+      continue;
+    }
+    pending.push(id);
+  }
+  if (!pending.length) return out;
+
+  if (budget.left <= 0) {
+    // Ran out of requests isolating bad ids: report unknown WITHOUT caching,
+    // so a later call can try again instead of locking the ids in as null.
+    pending.forEach((id) => {
+      out[id] = null;
+    });
+    return out;
+  }
+  budget.left -= 1;
+
+  try {
+    Object.assign(out, await queryStatusBatch(pending, mediaType));
+    return out;
+  } catch (err) {
+    // Only a "not found" means a bad id; outages/rate limits must bubble up
+    // so they aren't mistaken for permanently-missing titles.
+    if (!isAniListNotFound(err)) throw err;
+    if (pending.length === 1) {
+      out[pending[0]] = null;
+      cacheStatus(mediaType, pending[0], null);
+      return out;
+    }
+    const mid = Math.ceil(pending.length / 2);
+    const results = await Promise.allSettled([
+      fetchStatuses(pending.slice(0, mid), mediaType, budget),
+      fetchStatuses(pending.slice(mid), mediaType, budget),
+    ]);
+    const failure = results.find((r) => r.status === "rejected");
+    if (failure) throw failure.reason;
+    for (const r of results) Object.assign(out, r.value);
+    return out;
+  }
+}
+
+module.exports = { buildExtras, fetchStatuses };

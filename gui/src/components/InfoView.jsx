@@ -14,6 +14,8 @@ import {
   Plus,
   FolderOpen,
   Folder,
+  Captions,
+  Mic,
 } from "lucide-react";
 import Swal from "sweetalert2";
 import { swalSuccess, swalError, swalConfirm } from "../utils/swal";
@@ -23,6 +25,7 @@ import {
   getMalStatusOptions,
   getMalStatusLabel,
 } from "../utils/common";
+import { normalizeStatus, formatAudioLangs } from "../utils/mediaBadges";
 import Dropdown from "./common/Dropdown";
 import "./css/InfoView.css";
 
@@ -73,6 +76,24 @@ const getItemLangs = (item, details, dubSelect) => {
     }
   }
   return [...new Set(langs)];
+};
+
+// Status + sub/dub pills drawn over the bottom of a Seasons/Recommendations
+// poster (same idea as the badge strip on catalog cards).
+const ExtrasCardBadges = ({ media, langs }) => {
+  const status = normalizeStatus(media?.status, "Anime");
+  const audio = formatAudioLangs(langs);
+  if (!status && !audio) return null;
+  return (
+    <span className="extras-foot-badges">
+      {status && (
+        <span className={`extras-pill status-${status.kind}`}>
+          {status.label}
+        </span>
+      )}
+      {audio && <span className="extras-pill langs-pill">{audio}</span>}
+    </span>
+  );
 };
 
 export default function InfoView({
@@ -1387,6 +1408,74 @@ export default function InfoView({
       node = node.parentElement;
     }
   };
+
+  // Airing status for the title row (AniList first, provider info as fallback)
+  const statusBadge = useMemo(
+    () =>
+      normalizeStatus(extras?.status, type) ||
+      normalizeStatus(details?.status, type),
+    [extras?.status, details?.status, type],
+  );
+
+  // "SUB" / "SUB & DUB" from the languages of the loaded episode list
+  const audioLangsLabel = useMemo(() => {
+    if (type !== "Anime") return null;
+    const merged = new Set();
+    for (const item of episodesOrChapters) {
+      getItemLangs(item, details, dubSelect).forEach((l) => merged.add(l));
+    }
+    return formatAudioLangs([...merged]) || "SUB";
+  }, [type, episodesOrChapters, details, dubSelect]);
+
+  // Audio languages for the Seasons/Recommendations cards (one bulk lookup)
+  const [extrasLangs, setExtrasLangs] = useState({});
+  const extrasLangsKeyRef = useRef(null);
+
+  useEffect(() => {
+    const targets = [
+      ...((extras?.seasons || []).map((s) => s.idMal)),
+      ...((extras?.recommendations || []).map((r) => r.idMal)),
+    ]
+      .map(Number)
+      .filter((n) => Number.isInteger(n) && n > 0);
+    const unique = [...new Set(targets)].slice(0, 24);
+    if (!unique.length) {
+      extrasLangsKeyRef.current = null;
+      setExtrasLangs({});
+      return;
+    }
+    const key = unique.join(",");
+    if (extrasLangsKeyRef.current === key) return;
+    extrasLangsKeyRef.current = key;
+    setExtrasLangs({});
+
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        const response = await fetch("/api/info/bulk-meta", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: "Anime",
+            items: unique.map((malid) => ({ malid })),
+            // Status comes straight from the AniList-shaped extras payload;
+            // only the provider episode languages need fetching here.
+            includeStatus: false,
+          }),
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+        if (cancelled || extrasLangsKeyRef.current !== key) return;
+        setExtrasLangs(data?.meta || {});
+      } catch (err) {
+        console.error("Failed to load card languages:", err);
+      }
+    }, 500);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [extras]);
 
   useEffect(() => {
     if (window.sharedStateAPI && window.sharedStateAPI.on) {
@@ -2995,6 +3084,35 @@ export default function InfoView({
                 {details.type.toUpperCase()}
               </span>
             )}
+            {statusBadge && (
+              <span
+                className={`info-tag-status status-${statusBadge.kind}`}
+                title="Airing status"
+              >
+                <span className="status-dot" />
+                {statusBadge.label}
+              </span>
+            )}
+            {audioLangsLabel && (
+              <span
+                className="info-tag-langs"
+                title={
+                  audioLangsLabel === "SUB & DUB"
+                    ? "Subtitled and dubbed"
+                    : audioLangsLabel === "DUB"
+                      ? "Dubbed only"
+                      : "Subtitled only"
+                }
+              >
+                {audioLangsLabel === "DUB" ? (
+                  <Mic size={12} />
+                ) : (
+                  <Captions size={12} />
+                )}
+                {audioLangsLabel === "SUB & DUB" && <Mic size={12} />}
+                {audioLangsLabel}
+              </span>
+            )}
             {details?.nextEpisodeIn && (
               <span
                 className="info-tag-schedule"
@@ -3438,6 +3556,10 @@ export default function InfoView({
                           e.currentTarget.src = "/images/image-404.png";
                         }}
                       />
+                      <ExtrasCardBadges
+                        media={season}
+                        langs={extrasLangs[String(season.idMal)]?.langs}
+                      />
                     </span>
                     <span className="extras-body">
                       <span className="extras-title">{season.title}</span>
@@ -3488,6 +3610,10 @@ export default function InfoView({
                           e.currentTarget.onerror = null;
                           e.currentTarget.src = "/images/image-404.png";
                         }}
+                      />
+                      <ExtrasCardBadges
+                        media={rec}
+                        langs={extrasLangs[String(rec.idMal)]?.langs}
                       />
                     </span>
                     <span className="extras-body">

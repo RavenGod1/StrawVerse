@@ -20,6 +20,7 @@ import {
 import Swal from "sweetalert2";
 import { swalSuccess, swalError, swalConfirm } from "../utils/swal";
 import { apiPost, parseTags } from "../utils/common";
+import { normalizeStatus, formatAudioLangs } from "../utils/mediaBadges";
 
 import CatalogHeader from "./catalog/CatalogHeader";
 import LibraryStats from "./catalog/LibraryStats";
@@ -355,6 +356,9 @@ export default function Catalog({
     return sessionStorage.getItem(`catalog_source_${type}`) || "mal";
   });
   const [totalCount, setTotalCount] = useState(null);
+  const [cardMeta, setCardMeta] = useState({});
+  const cardMetaStatusReqRef = useRef(new Set());
+  const cardMetaLangsReqRef = useRef(new Set());
   const tagChipsRef = useRef(null);
 
   const filteredProviders = useMemo(() => {
@@ -439,6 +443,138 @@ export default function Catalog({
       results: displayResults,
     }),
     [data, displayResults],
+  );
+
+  // MAL id for badge lookups: only trust a real malid, never a provider id.
+  // (Unique/unmapped provider lists carry provider ids in `id` — using that
+  // as a malid would query the wrong title's status.)
+  const getMalIdForItem = (item) => {
+    const raw = item?.malid || item?.MalID || null;
+    const num = Number(raw);
+    return Number.isInteger(num) && num > 0 ? num : null;
+  };
+
+  // Status + sub/dub badges for catalog cards, fetched as two passes so the
+  // fast AniList status lookup paints without waiting on the slow provider
+  // episode-list lookup (langs). Both passes fire on the same 500ms defer and
+  // run concurrently; each merges its own field, so a slow langs response
+  // never delays a status badge. Requests are capped at 24 malids (the
+  // endpoint's own limit) and a response re-runs this effect, cascading
+  // through any remaining items. Keys stay marked after a success (no
+  // refetch of a known-null) and are unmarked on failure so a later render
+  // retries.
+  useEffect(() => {
+    const items = Array.isArray(displayResults) ? displayResults : [];
+    const needStatus = [];
+    const needLangs = [];
+    const seen = new Set();
+    for (const item of items) {
+      const malid = getMalIdForItem(item);
+      if (malid == null) continue;
+      const key = `${type}:${malid}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const fetched = cardMeta[key];
+      const hasStatus =
+        !!normalizeStatus(item.status, type) ||
+        !!normalizeStatus(fetched?.status, type) ||
+        cardMetaStatusReqRef.current.has(key);
+      const hasLangs =
+        type !== "Anime" ||
+        !!formatAudioLangs(item.langs) ||
+        !!formatAudioLangs(fetched?.langs) ||
+        cardMetaLangsReqRef.current.has(key);
+      if (!hasStatus && needStatus.length < 24) {
+        needStatus.push({ key, malid });
+      }
+      if (!hasLangs && needLangs.length < 24) {
+        needLangs.push({ key, malid });
+      }
+      if (
+        needStatus.length >= 24 &&
+        (type !== "Anime" || needLangs.length >= 24)
+      ) {
+        break;
+      }
+    }
+    const langsBatch = type === "Anime" ? needLangs : [];
+    if (!needStatus.length && !langsBatch.length) return;
+
+    const timer = setTimeout(async () => {
+      const runPass = async (batch, extraBody, field, ref) => {
+        batch.forEach(({ key }) => ref.current.add(key));
+        try {
+          const response = await fetch("/api/info/bulk-meta", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              type,
+              items: batch.map(({ malid }) => ({ malid })),
+              ...extraBody,
+            }),
+          });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const payload = await response.json();
+          setCardMeta((prev) => {
+            const next = { ...prev };
+            for (const { key, malid } of batch) {
+              const got = payload?.meta?.[malid];
+              const existing = prev[key] || { status: null, langs: null };
+              next[key] = {
+                status: field === "status" ? got?.status ?? null : existing.status,
+                langs: field === "langs" ? got?.langs ?? null : existing.langs,
+              };
+            }
+            return next;
+          });
+        } catch (err) {
+          console.error(`Failed to load card ${field}:`, err);
+          batch.forEach(({ key }) => ref.current.delete(key));
+        }
+      };
+
+      await Promise.all([
+        ...(needStatus.length
+          ? [
+              runPass(
+                needStatus,
+                { includeLangs: false },
+                "status",
+                cardMetaStatusReqRef,
+              ),
+            ]
+          : []),
+        ...(langsBatch.length
+          ? [
+              runPass(
+                langsBatch,
+                { includeStatus: false },
+                "langs",
+                cardMetaLangsReqRef,
+              ),
+            ]
+          : []),
+      ]);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [displayResults, type, provider, cardMeta]);
+
+  const getCardMeta = useCallback(
+    (item) => {
+      if (!item) return null;
+      const malid = getMalIdForItem(item);
+      const fetched = malid != null ? cardMeta[`${type}:${malid}`] : null;
+      const status =
+        normalizeStatus(fetched?.status, type) ||
+        normalizeStatus(item.status, type);
+      const langs =
+        type === "Anime"
+          ? formatAudioLangs(item.langs) || formatAudioLangs(fetched?.langs)
+          : null;
+      if (!status && !langs) return null;
+      return { status, langs };
+    },
+    [cardMeta, type, provider],
   );
 
   const handleResetFilters = () => {
@@ -2895,6 +3031,7 @@ export default function Catalog({
               handlePageChange={handlePageChange}
               handleRemoveFromLibrary={handleRemoveFromLibrary}
               getItemTagInfo={getItemTagInfo}
+              getCardMeta={getCardMeta}
               onOpenTagModal={handleOpenTagModal}
             />
           )}

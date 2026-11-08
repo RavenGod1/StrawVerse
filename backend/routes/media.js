@@ -38,7 +38,7 @@ const {
 } = require("../utils/mappingResolver");
 const { sanitizeFolderName, getUserDataPath } = require("../utils/constants");
 const { getDownloadsFolder } = require("../utils/DirectoryMaker");
-const { buildExtras } = require("../utils/anilistExtras");
+const { buildExtras, fetchStatuses } = require("../utils/anilistExtras");
 
 const router = express.Router();
 
@@ -3077,6 +3077,117 @@ router.post("/api/info/extras", async (req, res) => {
     logger.warn(`[info/extras] Failed to load extras: ${err.message}`);
     res.json({ seasons: [], recommendations: [] });
   }
+});
+
+// ---------------------------------------------------------------------------
+// Bulk card metadata for Discover / Seasons / Recommendations cards:
+//   { [malid]: { status, langs } }
+// status comes from AniList (one batched request), langs from the provider's
+// episode list (anime only, small worker pool, cached so cards stay cheap).
+// The two lookups can be requested separately (includeStatus / includeLangs:
+// false) so the GUI can paint status badges without waiting on the slow
+// provider episode fetches.
+// ---------------------------------------------------------------------------
+const bulkLangsCache = new Map();
+const BULK_META_TTL = 15 * 60 * 1000;
+const BULK_META_MAX_ITEMS = 24;
+const BULK_META_CONCURRENCY = 2;
+
+async function runPool(items, limit, worker) {
+  const queue = [...items];
+  const size = Math.max(1, Math.min(limit, queue.length));
+  await Promise.all(
+    Array.from({ length: size }, async () => {
+      while (queue.length) {
+        const item = queue.shift();
+        try {
+          await worker(item);
+        } catch (_) {}
+      }
+    }),
+  );
+}
+
+async function resolveBulkLangs(malid) {
+  const key = `Anime:${malid}`;
+  const hit = bulkLangsCache.get(key);
+  if (hit && hit.expires > Date.now()) return hit.langs;
+
+  let langs = null;
+  try {
+    const setting = await settingfetch();
+    const preferred = (setting?.Animeprovider || "pahe").toLowerCase();
+    const best = await getBestProviderForMalId(malid, "Anime", preferred);
+    if (best?.id && best?.provider) {
+      const providerObj = await providerFetch("Anime", best.provider);
+      const data = await fetchEpisode(providerObj, best.id, 1);
+      const found = new Set();
+      for (const ep of data?.episodes || []) {
+        if (Array.isArray(ep?.langs)) {
+          ep.langs.forEach((l) => found.add(String(l).toLowerCase()));
+        } else if (ep?.lang) {
+          found.add(String(ep.lang).toLowerCase());
+        } else {
+          const suffix = String(ep?.id || "").match(/-(sub|dub|hsub|both)$/);
+          if (suffix) found.add(suffix[1]);
+        }
+      }
+      if (found.size) langs = [...found];
+    }
+  } catch (_) {
+    langs = null;
+  }
+
+  if (bulkLangsCache.size > 500) {
+    const oldest = bulkLangsCache.keys().next().value;
+    if (oldest !== undefined) bulkLangsCache.delete(oldest);
+  }
+  bulkLangsCache.set(key, { expires: Date.now() + BULK_META_TTL, langs });
+  return langs;
+}
+
+// POST /api/info/bulk-meta  { type, items: [{ malid }], includeStatus?, includeLangs? }
+// Defaults: both true. Pass includeLangs:false for a fast status-only pass
+// (one batched AniList call) or includeStatus:false for the slow provider
+// episode-language pass, so status badges aren't held up by episode fetches.
+router.post("/api/info/bulk-meta", async (req, res) => {
+  const { type, items } = req.body || {};
+  const isManga = type === "Manga";
+  const wantLangs = !isManga && req.body.includeLangs !== false;
+  const wantStatus = req.body.includeStatus !== false;
+  const malids = [
+    ...new Set(
+      (Array.isArray(items) ? items : [])
+        .map((it) => Number(it?.malid))
+        .filter((n) => Number.isInteger(n) && n > 0),
+    ),
+  ].slice(0, BULK_META_MAX_ITEMS);
+
+  if (!malids.length || (!wantLangs && !wantStatus)) {
+    return res.json({ meta: {} });
+  }
+
+  const meta = {};
+  for (const id of malids) meta[id] = { status: null, langs: null };
+
+  if (wantStatus) {
+    try {
+      const statuses = await fetchStatuses(malids, isManga ? "MANGA" : "ANIME");
+      for (const [id, status] of Object.entries(statuses)) {
+        if (meta[id]) meta[id].status = status;
+      }
+    } catch (err) {
+      logger.warn(`[bulk-meta] status lookup failed: ${err.message}`);
+    }
+  }
+
+  if (wantLangs) {
+    await runPool(malids, BULK_META_CONCURRENCY, async (id) => {
+      meta[id].langs = await resolveBulkLangs(id);
+    });
+  }
+
+  res.json({ meta });
 });
 
 // Fetches Anime Episodes or Manga Chapters
