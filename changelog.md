@@ -1,5 +1,24 @@
 # Changelog
 
+# [11.1.6] - 2026-11-08
+
+### Discover & Info Badges
+
+- **Badges From the Extension Side:** Airing status and SUB/DUB badges now fall back to the provider + mapping databases, so titles with no MAL id or no AniList match are no longer left blank on Discover cards.
+- **Provider Episode Languages:** Cards without a MAL id now read their SUB/DUB straight from the extension's own episode list instead of being skipped entirely.
+- **Title-Page Status Restored:** The status pill on a title page now receives the AniList status that was already being fetched — it was discarded before reaching the UI.
+
+### Seasons & Recommendations
+
+- **Sections Load Again:** Seasons and Recommendations were being wiped when the title page resolved its id a second time — the in-flight response is no longer cancelled, so the sections (and their badges) render reliably.
+- **Back Returns to the Previous Title:** Clicking a Season or Recommendation card now opens a real history entry, so the back button returns to the title you came from instead of jumping straight to Discover.
+- **Search Fallback Keeps History:** Recommendations with no MAL id open a Discover search as a new entry, so Back still returns to the previous title.
+
+### Settings
+
+- **Recommendation Count:** New **Settings → Anime Settings → Recommendations Shown** picker controls how many recommendations appear (1-10, default 4).
+- **Horizontal-Only Row:** Recommendations now render as a single sideways-scrolling row that never wraps into a grid.
+
 # [11.1.5] - 2026-11-08
 
 ### Discover & Info Badges
