@@ -6,6 +6,7 @@ Api/
 electron/scratch/
 electron/mpv/linux
 electron/mpv/win32
+electron/mpv/darwin
 electron/ffmpeg/
 capacitor/android/app/src/main/jniLibs/arm64-v8a/libffmpeg.so
 capacitor/www/nodejs/gui/dist/
@@ -35,3 +36,5 @@ app.log
 *.db-wal
 *.db-shm
 **/libffmpeg.so
+.DS_Store
+**/.DS_Store
