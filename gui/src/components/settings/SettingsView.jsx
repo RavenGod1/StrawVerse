@@ -16,6 +16,7 @@ import {
   FolderOpen,
   RotateCcw,
 } from "lucide-react";
+import Swal from "sweetalert2";
 import { swalSuccess, swalError, swalConfirm } from "../../utils/swal";
 import { isMobileApp } from "../../utils/nativeBridge";
 import {

@@ -24,10 +24,13 @@ export default function CatalogHeader({
   if (activeProvider && !providerChoices.includes(activeProvider)) {
     providerChoices.unshift(activeProvider);
   }
+  // Show whenever at least one provider exists — with a single provider the
+  // picker still shows the active extension (it becomes a switcher as soon as
+  // more are installed), which is how Android surfaces it too.
   const showProviderPicker =
     provider === "provider" &&
     typeof onProviderChange === "function" &&
-    providerChoices.length > 1;
+    providerChoices.length >= 1;
 
   const providerLabel = (value) => {
     const clean = String(value).replace(/^@/, "");

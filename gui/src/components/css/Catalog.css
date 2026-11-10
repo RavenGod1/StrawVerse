@@ -167,6 +167,17 @@
   .search-form {
     width: 100%;
   }
+  .header-right-section {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  /* On mobile the Anime/Manga toggle flex-grows (mobile.css), so let the
+     provider picker share the row instead of being squeezed out. */
+  .discover-provider-select {
+    flex: 1 1 150px;
+    max-width: none;
+    min-width: 0;
+  }
 }
 
 .search-and-filter-wrapper {
