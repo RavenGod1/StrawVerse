@@ -478,8 +478,54 @@ export default function InfoView({
 
   // Title copy & long-press hold state
   const [copiedTitle, setCopiedTitle] = useState(false);
+  const [copiedDesc, setCopiedDesc] = useState(false);
   const titleHoldTimerRef = useRef(null);
   const touchStartPosRef = useRef({ x: 0, y: 0 });
+
+  // Clipboard helper with a textarea fallback for non-secure contexts.
+  const copyTextToClipboard = async (text) => {
+    if (!text) return false;
+    if (navigator?.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch (_) {
+        // fall through to the execCommand fallback
+      }
+    }
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return ok;
+    } catch (err) {
+      console.error("Failed to copy text", err);
+      return false;
+    }
+  };
+
+  const handleCopyDesc = useCallback(async () => {
+    const text = (details?.description || "")
+      .replace(/\s*\[\s*more\s*\]\s*$/i, "")
+      .trim();
+    if (!text) return;
+    const success = await copyTextToClipboard(text);
+    if (success) {
+      setCopiedDesc(true);
+      if (typeof navigator !== "undefined" && navigator.vibrate) {
+        try {
+          navigator.vibrate(50);
+        } catch (_) {}
+      }
+      setTimeout(() => setCopiedDesc(false), 2200);
+    }
+  }, [details?.description]);
 
   const handleCopyTitle = useCallback(
     (e) => {
@@ -3356,29 +3402,47 @@ export default function InfoView({
                 ? rawDescription.slice(0, 200) + "..."
                 : rawDescription || "No description available for this title.";
             return (
-              <p className="info-description">
-                {displayDesc}
-                {isLongDesc && (
+              <div className="info-desc-wrap">
+                <p className="info-description">
+                  {displayDesc}
+                  {isLongDesc && (
+                    <button
+                      type="button"
+                      onClick={() => setIsDescExpanded(!isDescExpanded)}
+                      style={{
+                        background: "none",
+                        border: "none",
+                        color: "var(--accent-blue, #60a5fa)",
+                        cursor: "pointer",
+                        fontWeight: 600,
+                        marginLeft: "6px",
+                        padding: 0,
+                        fontSize: "13px",
+                        userSelect: "none",
+                        WebkitUserSelect: "none",
+                      }}
+                    >
+                      {isDescExpanded ? "Show Less" : "Show More"}
+                    </button>
+                  )}
+                </p>
+                {rawDescription && (
                   <button
                     type="button"
-                    onClick={() => setIsDescExpanded(!isDescExpanded)}
-                    style={{
-                      background: "none",
-                      border: "none",
-                      color: "var(--accent-blue, #60a5fa)",
-                      cursor: "pointer",
-                      fontWeight: 600,
-                      marginLeft: "6px",
-                      padding: 0,
-                      fontSize: "13px",
-                      userSelect: "none",
-                      WebkitUserSelect: "none",
-                    }}
+                    className={`btn-copy-desc ${copiedDesc ? "copied" : ""}`}
+                    onClick={handleCopyDesc}
+                    title={copiedDesc ? "Copied!" : "Copy description"}
+                    aria-label="Copy description"
                   >
-                    {isDescExpanded ? "Show Less" : "Show More"}
+                    {copiedDesc ? <Check size={14} /> : <Copy size={14} />}
+                    <span
+                      className={`copy-badge ${copiedDesc ? "visible" : ""}`}
+                    >
+                      Copied!
+                    </span>
                   </button>
                 )}
-              </p>
+              </div>
             );
           })()}
 

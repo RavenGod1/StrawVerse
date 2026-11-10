@@ -18,6 +18,20 @@
 
 - **Recommendation Count:** New **Settings → Anime Settings → Recommendations Shown** picker controls how many recommendations appear (1-10, default 4).
 - **Horizontal-Only Row:** Recommendations now render as a single sideways-scrolling row that never wraps into a grid.
+- **Dedicated Plex & Jellyfin Section:** Anime Settings now groups **Anime Download Naming**, **Jellyfin & Plex Compatibility** and **Media Server Integration** into their own "Plex & Jellyfin" section right before Subtitle Customization & Appearance; the old combined section is now titled "Downloads".
+
+### Extensions & Marketplace
+
+- **Repository Enable/Disable:** The Extension Repositories dialog now has an on/off switch for every repository (official included). Disabling a repository hides its extensions from the Extensions list, while extensions already installed from it stay visible so they can still be updated or removed — re-enabling brings the full list back.
+- **Disabled State Persists:** The choice is saved with your settings, so a disabled repository stays disabled across restarts.
+
+### Discover
+
+- **Provider Switcher:** A provider picker now sits directly left of the Anime/Manga toggle on the Discover page, listing every extension installed for the current type. Switching updates the active provider (the same setting Extensions' "Use Provider" writes), clears the stale catalog caches and reloads from page 1.
+
+### Title Page
+
+- **Copy Description:** The description block now has its own copy button beside the existing title copy — one tap copies the full, untruncated text (trailing "[more]" marker stripped) with a "Copied!" confirmation.
 
 # [11.2.1] - 2026-11-09
 

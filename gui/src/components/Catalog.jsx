@@ -366,6 +366,7 @@ export default function Catalog({
   );
   const [installedProvidersList, setInstalledProvidersList] = useState([]);
   const [providerMetadataList, setProviderMetadataList] = useState([]);
+  const [activeProviderName, setActiveProviderName] = useState("");
   const [catalogSource, setCatalogSource] = useState(() => {
     return sessionStorage.getItem(`catalog_source_${type}`) || "mal";
   });
@@ -408,14 +409,27 @@ export default function Catalog({
 
   useEffect(() => {
     const fetchInstalledProviders = async () => {
+      const settingKey = type === "Manga" ? "Mangaprovider" : "Animeprovider";
       try {
         if (window.sharedStateAPI && window.sharedStateAPI.getSettings) {
           const res = await window.sharedStateAPI.getSettings([
             "providers",
             "installedExtensions",
+            "Animeprovider",
+            "Mangaprovider",
           ]);
           const pList = res?.settings?.providers?.[type] || [];
           setInstalledProvidersList(pList);
+          setActiveProviderName(res?.settings?.[settingKey] || "");
+          return;
+        }
+        // Web fallback: active provider comes from settings; installed list
+        // is only exposed through the shared-state bridge.
+        const resp = await fetch("/api/settings");
+        if (resp.ok) {
+          const data = await resp.json();
+          const s = data?.settings || data || {};
+          setActiveProviderName(s[settingKey] || "");
         }
       } catch (_) {}
     };
@@ -1654,6 +1668,45 @@ export default function Catalog({
     fetchData(1, activeFilters, null, undefined, false, newSource);
   };
 
+  // Switch the active extension provider used by Discover (the same setting
+  // the Extensions page's "Use Provider" action writes), then reload the
+  // catalog from page 1 with the new provider.
+  const handleProviderChange = async (newProvider) => {
+    if (!newProvider || newProvider === activeProviderName) return;
+
+    setActiveProviderName(newProvider);
+    const settingKey = type === "Manga" ? "Mangaprovider" : "Animeprovider";
+
+    try {
+      if (window.sharedStateAPI && window.sharedStateAPI.updateSetting) {
+        await window.sharedStateAPI.updateSetting(settingKey, newProvider);
+      } else {
+        await fetch("/api/settings/update", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ [settingKey]: newProvider }),
+        });
+      }
+    } catch (err) {
+      console.error("Failed to switch provider:", err);
+    }
+
+    // Drop every cached view that was built from the previous provider.
+    if (window.catalogCache) {
+      delete window.catalogCache[`${type}_provider`];
+      delete window.catalogCache[`${type}_trending`];
+      delete window.catalogCache[`${type}_latest`];
+      delete window.catalogCache[`${type}_${provider}`];
+    }
+
+    setCurrentPage(1);
+    setData(null);
+    setFetchedPages({});
+    setLoadedPageStart(1);
+    setLoadedPageEnd(1);
+    fetchData(1, activeFilters);
+  };
+
   const fetchData = async (
     page = 1,
     currentFilters = activeFilters,
@@ -2632,6 +2685,9 @@ export default function Catalog({
         catalogSource={catalogSource}
         onCatalogSourceChange={handleCatalogSourceChange}
         availableProviders={providerMetadataList}
+        installedProviders={installedProvidersList}
+        activeProvider={activeProviderName}
+        onProviderChange={handleProviderChange}
       />
 
       <LibraryStats

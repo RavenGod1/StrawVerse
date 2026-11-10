@@ -167,6 +167,50 @@
   transform: translateX(-50%) translateY(0);
 }
 
+/* Description block with its copy button */
+.info-desc-wrap {
+  position: relative;
+}
+
+.info-desc-wrap .info-description {
+  padding-right: 34px;
+}
+
+.btn-copy-desc {
+  position: absolute;
+  top: 0;
+  right: 0;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text-muted, #9ca3af);
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.btn-copy-desc:hover {
+  background: rgba(124, 58, 237, 0.18);
+  border-color: rgba(124, 58, 237, 0.45);
+  color: #c084fc;
+  transform: scale(1.08);
+}
+
+.btn-copy-desc.copied {
+  background: rgba(16, 185, 129, 0.2);
+  border-color: rgba(16, 185, 129, 0.5);
+  color: #34d399;
+}
+
+.btn-copy-desc .copy-badge {
+  top: -26px;
+}
+
 .tag-list {
   display: flex;
   flex-wrap: wrap;

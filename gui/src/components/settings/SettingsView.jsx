@@ -2183,9 +2183,7 @@ export default function SettingsView({
 
               {/* Downloads & Media Server */}
               <div className="settings-section glass-panel">
-                <h2 className="settings-section-title">
-                  Downloads & Media Server
-                </h2>
+                <h2 className="settings-section-title">Downloads</h2>
 
                 <SettingsRow
                   label="Anime Download Location"
@@ -2231,86 +2229,6 @@ export default function SettingsView({
                     )}
                   </div>
                 </SettingsRow>
-
-                <SettingsRow
-                  label="Anime Download Naming"
-                  desc="Format for downloaded anime video files. Plex / Jellyfin standard includes dynamic episode zero-padding (e.g. S01E0001 for 1000+ episode anime, S01E01 for standard series)."
-                >
-                  <Dropdown
-                    value={animeNamingScheme}
-                    onChange={setAnimeNamingScheme}
-                    options={[
-                      {
-                        value: "plex_jellyfin",
-                        label: "Plex / Jellyfin Standard (Auto-padded)",
-                      },
-                      {
-                        value: "default",
-                        label: "Default / Compact (1Ep.mp4)",
-                      },
-                      {
-                        value: "series_s_ep",
-                        label: "Series S#EP# (One Piece S1EP1.mp4)",
-                      },
-                      {
-                        value: "episode_only",
-                        label: "Episode Only (Episode 01.mp4)",
-                      },
-                    ]}
-                    minWidth={220}
-                  />
-                </SettingsRow>
-
-                {!isMobileApp() && (
-                  <SettingsRow
-                    label="Jellyfin & Plex Compatibility"
-                    desc="Automatically updates anime download file naming to Plex/Jellyfin format and generates .nfo metadata and poster.jpg for existing and new downloads. Disabling keeps existing NFO files."
-                  >
-                    <Dropdown
-                      value={String(jellyfinCompatibility)}
-                      onChange={(val) => {
-                        const isEnabled = val === "true";
-                        setJellyfinCompatibility(isEnabled);
-                        if (isEnabled) {
-                          setAnimeNamingScheme("plex_jellyfin");
-                        } else {
-                          setAnimeNamingScheme("default");
-                        }
-                      }}
-                      options={[
-                        { value: "true", label: "Enabled" },
-                        { value: "false", label: "Disabled" },
-                      ]}
-                      minWidth={200}
-                    />
-                  </SettingsRow>
-                )}
-
-                <div className="settings-row-item">
-                  <div className="settings-row-info">
-                    <div className="settings-row-label">
-                      Media Server Integration (Jellyfin / Plex)
-                    </div>
-                    <div className="settings-row-hint">
-                      Save episodes as "Show/Season 02/Show - S02E05
-                      [1080p].mp4", align external subtitles, and automatically
-                      generate .nfo metadata and poster artwork for Jellyfin and
-                      Plex. Pick the season and show folder on each show's page
-                      next to the download buttons.
-                    </div>
-                  </div>
-                  <div className="settings-row-control">
-                    <Dropdown
-                      value={String(mediaServerNaming)}
-                      onChange={(val) => setMediaServerNaming(val === "true")}
-                      options={[
-                        { value: "true", label: "On (Show - S01E05 [1080p])" },
-                        { value: "false", label: "Off (5Ep.mp4)" },
-                      ]}
-                      minWidth={200}
-                    />
-                  </div>
-                </div>
               </div>
 
               {/* Subtitles & Audio */}
@@ -2494,6 +2412,91 @@ export default function SettingsView({
                           value: "false",
                           label: "No (Download subtitles in subfolder)",
                         },
+                      ]}
+                      minWidth={200}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Plex & Jellyfin */}
+              <div className="settings-section glass-panel">
+                <h2 className="settings-section-title">Plex & Jellyfin</h2>
+
+                <SettingsRow
+                  label="Anime Download Naming"
+                  desc="Format for downloaded anime video files. Plex / Jellyfin standard includes dynamic episode zero-padding (e.g. S01E0001 for 1000+ episode anime, S01E01 for standard series)."
+                >
+                  <Dropdown
+                    value={animeNamingScheme}
+                    onChange={setAnimeNamingScheme}
+                    options={[
+                      {
+                        value: "plex_jellyfin",
+                        label: "Plex / Jellyfin Standard (Auto-padded)",
+                      },
+                      {
+                        value: "default",
+                        label: "Default / Compact (1Ep.mp4)",
+                      },
+                      {
+                        value: "series_s_ep",
+                        label: "Series S#EP# (One Piece S1EP1.mp4)",
+                      },
+                      {
+                        value: "episode_only",
+                        label: "Episode Only (Episode 01.mp4)",
+                      },
+                    ]}
+                    minWidth={220}
+                  />
+                </SettingsRow>
+
+                {!isMobileApp() && (
+                  <SettingsRow
+                    label="Jellyfin & Plex Compatibility"
+                    desc="Automatically updates anime download file naming to Plex/Jellyfin format and generates .nfo metadata and poster.jpg for existing and new downloads. Disabling keeps existing NFO files."
+                  >
+                    <Dropdown
+                      value={String(jellyfinCompatibility)}
+                      onChange={(val) => {
+                        const isEnabled = val === "true";
+                        setJellyfinCompatibility(isEnabled);
+                        if (isEnabled) {
+                          setAnimeNamingScheme("plex_jellyfin");
+                        } else {
+                          setAnimeNamingScheme("default");
+                        }
+                      }}
+                      options={[
+                        { value: "true", label: "Enabled" },
+                        { value: "false", label: "Disabled" },
+                      ]}
+                      minWidth={200}
+                    />
+                  </SettingsRow>
+                )}
+
+                <div className="settings-row-item">
+                  <div className="settings-row-info">
+                    <div className="settings-row-label">
+                      Media Server Integration (Jellyfin / Plex)
+                    </div>
+                    <div className="settings-row-hint">
+                      Save episodes as "Show/Season 02/Show - S02E05
+                      [1080p].mp4", align external subtitles, and automatically
+                      generate .nfo metadata and poster artwork for Jellyfin and
+                      Plex. Pick the season and show folder on each show's page
+                      next to the download buttons.
+                    </div>
+                  </div>
+                  <div className="settings-row-control">
+                    <Dropdown
+                      value={String(mediaServerNaming)}
+                      onChange={(val) => setMediaServerNaming(val === "true")}
+                      options={[
+                        { value: "true", label: "On (Show - S01E05 [1080p])" },
+                        { value: "false", label: "Off (5Ep.mp4)" },
                       ]}
                       minWidth={200}
                     />
