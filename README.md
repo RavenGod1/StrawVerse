@@ -93,22 +93,17 @@ Full history: [changelog.md](changelog.md) • upstream releases: [TheYogMehta/S
 
 **Desktop**
 
-<p align="center">
-  <img src="assets/screenshots/pc-discover-anime.jpg" alt="Discover page with anime filters" width="49%">
-  <img src="assets/screenshots/pc-discover-manga.jpg" alt="Discover page with manga grid" width="49%">
-  <img src="assets/screenshots/pc-title-page.jpg" alt="Anime title page with MyAnimeList integration" width="49%">
-  <img src="assets/screenshots/pc-manga-title-page.jpg" alt="Manga title page with chapters list" width="49%">
-  <img src="assets/screenshots/pc-extensions.png" alt="Extensions and repositories manager" width="49%">
-</p>
+| | | |
+| :---: | :---: | :---: |
+| <img src="assets/screenshots/pc-discover-anime.jpg" alt="Discover page with anime filters" width="100%"> | <img src="assets/screenshots/pc-title-page.jpg" alt="Anime title page with MyAnimeList integration" width="100%"> | <img src="assets/screenshots/pc-extensions.png" alt="Extensions and repositories manager" width="100%"> |
+
+<p align="center">━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</p>
 
 **Android**
 
-<p align="center">
-  <img src="assets/screenshots/android-discover-anime.jpg" alt="Discover page with anime filters on Android" width="32%">
-  <img src="assets/screenshots/android-discover-manga.jpg" alt="Discover page with manga grid on Android" width="32%">
-  <img src="assets/screenshots/android-title-page.jpg" alt="Title page on Android" width="32%">
-  <img src="assets/screenshots/android-seasons.jpg" alt="Seasons and recommendations on Android" width="32%">
-</p>
+| | | |
+| :---: | :---: | :---: |
+| <img src="assets/screenshots/android-discover-anime.jpg" alt="Discover page with anime filters on Android" width="100%"> | <img src="assets/screenshots/android-title-page.jpg" alt="Title page on Android" width="100%"> | <img src="assets/screenshots/android-seasons.jpg" alt="Seasons and recommendations on Android" width="100%"> |
 
 ---
 
