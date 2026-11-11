@@ -37,7 +37,7 @@ Whether you want high-speed **anime download** queues in 1080p, full Sub and Dub
 
 ---
 
-## Quick Download
+## 📥 Quick Download
 
 All fork builds are published on the [Releases page](https://github.com/RavenGod1/StrawVerse/releases) of this repository:
 
@@ -58,7 +58,7 @@ All fork builds are published on the [Releases page](https://github.com/RavenGod
 
 ---
 
-## What's New in This Fork (v11.2.2)
+## 🎉 What's New in This Fork (v11.2.2)
 
 - **Mapping sync no longer aborted by one bad table:** a single provider table returning HTTP 500 (currently the server-side `animesalt` table) used to block *all* mapping tables from syncing. The sync now falls back to core tables first (`anime`, `manga`, `next_episodes` + unmapped), then each provider individually — only the broken table is skipped.
 - **Faster startup:** the auto-update check is deferred by 8 seconds, image-cache cleanup batches its deletes, and snapshot apply drops 80k+ per-row queries.
@@ -74,7 +74,7 @@ Full history: [changelog.md](changelog.md) • upstream releases: [TheYogMehta/S
 
 ---
 
-## Features
+## ✨ Features
 
 - **Batch Anime Episode Downloads:** Download complete anime series, seasons, or selected episodes in bulk with parallel queue processing.
 - **Manga Chapter Downloads:** Download manga volumes and chapters into CBZ format or structured image directories for offline reading.
@@ -104,9 +104,8 @@ Full history: [changelog.md](changelog.md) • upstream releases: [TheYogMehta/S
 - [Uninstalling the Application](#uninstalling-the-application)
 - [Build the Application](#build-the-application)
   - [Prerequisites](#prerequisites)
-  - [Run from Source](#run-from-source)
+  - [Steps to Build](#steps-to-build)
   - [Desktop — Windows](#desktop--windows)
-  - [Desktop — Linux & macOS via Docker](#desktop--linux--macos-via-docker)
   - [Release Artifacts](#release-artifacts)
 - [Build and Run the Android Application](#build-and-run-the-android-application)
 
@@ -244,8 +243,6 @@ Then, run `Uninstall StrawVerse.exe`.
    - During the Node.js installation on Windows, make sure you check the box that says **"Automatically install the necessary tools"** (this installs Python and the necessary VS Build Tools via Chocolatey automatically).
    - Alternatively, you can manually download and install **[Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)** (be sure to select the **Desktop development with C++** workload during setup).
 
-5. **Docker Desktop (only for building the Linux and macOS packages from Windows)** — must be running on the **Linux** engine.
-
 ## Steps to Build
 
 1. Clone this repository:
@@ -286,41 +283,14 @@ Output: `electron\dist\StrawVerse.Setup.<version>.exe`
 > [!WARNING]
 > `npm run package` (and `package:mac` / `package:all`) **delete the entire `electron\dist` folder first**, and their Linux targets cannot run on Windows. Prefer the direct `npx electron-builder --win` command above when other artifacts in `dist` must survive.
 
-## Desktop — Linux & macOS via Docker
-
-Linux targets need Linux-only tools (`mksquashfs` for AppImage, `fpm` for deb), and electron-builder refuses `--mac` when run on Windows — so both are built inside a Docker/Linux container. From **PowerShell**, set your clone path once:
-
-```powershell
-$REPO = "C:\path\to\StrawVerse"   # <- your clone location
-```
-
-**Linux (.deb + .AppImage):**
-
-```powershell
-docker run --rm -e XDG_CACHE_HOME=/root/.cache -v "${REPO}:/project" -w /project/electron -v strawverse-eb-cache:/root/.cache electronuserland/builder bash -c "npx electron-builder --linux --x64 --publish never 2>&1"
-```
-
-**macOS (Apple Silicon .zip):**
-
-```powershell
-docker run --rm -e XDG_CACHE_HOME=/root/.cache -v "${REPO}:/project" -w /project/electron -v strawverse-eb-cache:/root/.cache electronuserland/builder bash -c "npx electron-builder --mac --arm64 --publish never 2>&1"
-```
-
-Notes:
-
-- **Run both commands at the same time** (two terminals) — they write to disjoint outputs and share the cache volume safely.
-- The `strawverse-eb-cache` volume (~320 MB) persists Electron zips and builder tools between runs. **First run** downloads everything (~30 min for both platforms); **every run after** logs `using cached artifact` and takes **~7 minutes for both platforms** (measured: Linux 6.5 min, macOS 4.0 min).
-- The macOS build is an **unsigned zip for Apple Silicon only** — see the Gatekeeper note in the Installation section. (Code signing is skipped automatically on non-macOS hosts; that log line is expected.)
-- On a **native** Linux or macOS host, `npm run package` / `npm run package:mac` work directly instead of Docker.
-
 ## Release Artifacts
 
 | Artifact                              | Built by                       | Output directory                                   |
 | :------------------------------------ | :----------------------------- | :------------------------------------------------- |
 | `StrawVerse.Setup.<v>.exe`            | `npx electron-builder --win`   | `electron\dist\`                                   |
-| `strawverse-<v>.AppImage`             | Docker `--linux --x64`         | `electron\dist\`                                   |
-| `strawverse_<v>_amd64.deb`            | Docker `--linux --x64`         | `electron\dist\`                                   |
-| `StrawVerse-<v>-mac-arm64.zip`        | Docker `--mac --arm64`         | `electron\dist\`                                   |
+| `strawverse-<v>.AppImage`             | `electron-builder --linux --x64` | `electron\dist\`                                 |
+| `strawverse_<v>_amd64.deb`            | `electron-builder --linux --x64` | `electron\dist\`                                 |
+| `StrawVerse-<v>-mac-arm64.zip`        | `electron-builder --mac --arm64` | `electron\dist\`                                 |
 | `app-release.apk`                     | `npm run build:android`        | `capacitor\android\app\build\outputs\apk\release\` |
 
 The release manifest [`latest.yml`](latest.yml) in the repository root records the exact **size + SHA512** of every published artifact — update it after any rebuild.
