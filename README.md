@@ -8,26 +8,29 @@
 > **A fast, open-source anime and manga downloader for Windows, Linux, macOS, and Android with batch downloads, subtitles, multiple sources, quality selection, and MyAnimeList integration.**
 
 <p align="center">
+  <a href="https://github.com/RavenGod1/StrawVerse/releases">
+    <img src="https://img.shields.io/github/v/release/RavenGod1/StrawVerse?style=for-the-badge&logo=github&color=blue" alt="Latest Release">
+  </a>
   <a href="https://github.com/TheYogMehta/StrawVerse/stargazers">
-    <img src="https://img.shields.io/github/stars/TheYogMehta/StrawVerse?style=for-the-badge&logo=github&color=gold" alt="GitHub Stars">
+    <img src="https://img.shields.io/github/stars/TheYogMehta/StrawVerse?style=for-the-badge&logo=github&color=gold" alt="Upstream GitHub Stars">
   </a>
-  <a href="https://github.com/TheYogMehta/StrawVerse/releases">
-    <img src="https://img.shields.io/github/v/release/TheYogMehta/StrawVerse?style=for-the-badge&logo=github&color=blue" alt="Latest Release">
-  </a>
-  <a href="https://github.com/TheYogMehta/StrawVerse/blob/main/LICENSE">
-    <img src="https://img.shields.io/github/license/TheYogMehta/StrawVerse?style=for-the-badge&color=green" alt="License">
+  <a href="https://github.com/RavenGod1/StrawVerse/blob/main/LICENSE">
+    <img src="https://img.shields.io/github/license/RavenGod1/StrawVerse?style=for-the-badge&color=green" alt="License">
   </a>
   <a href="https://discord.gg/PzfUBgQ2gt">
     <img src="https://img.shields.io/discord/1514335663875555470?color=7289da&label=Discord&logo=discord&style=for-the-badge" alt="Discord">
   </a>
 </p>
 
+> [!NOTE]
+> **This repository is a community fork** of [TheYogMehta/StrawVerse](https://github.com/TheYogMehta/StrawVerse), continuing development as **v11.2.2** (upstream is at v11.2.1). Releases and issue tracking for this build live here; the original project is linked throughout for credit.
+
 StrawVerse is a fast, open-source **anime downloader** and **manga downloader** designed for Windows, Linux, macOS, and Android. Built for speed, versatility, and offline media management, StrawVerse enables you to search, stream, read, and perform **batch anime downloads** and manga chapter downloads across multiple high-speed sources.
 
 Whether you want high-speed **anime download** queues in 1080p, full Sub and Dub subtitle extraction, or automatic MyAnimeList synchronization, StrawVerse brings your entire **anime & manga** library together under one powerful open-source platform.
 
 <p align="center">
-  <a href="https://github.com/TheYogMehta/StrawVerse/releases"><b>Download StrawVerse</b></a> • 
+  <a href="https://github.com/RavenGod1/StrawVerse/releases"><b>Download StrawVerse</b></a> • 
   <a href="https://strawverse.theyogmehta.online"><b>Official Website</b></a> • 
   <a href="https://discord.gg/PzfUBgQ2gt"><b>Join Community Discord</b></a>
 </p>
@@ -36,19 +39,38 @@ Whether you want high-speed **anime download** queues in 1080p, full Sub and Dub
 
 ## Quick Download
 
-| Platform    | Download Link                                                                  | Format                                    | OS Compatibility                      |
-| :---------- | :----------------------------------------------------------------------------- | :---------------------------------------- | :------------------------------------ |
-| **macOS**   | [StrawVerse-mac-arm64.zip](https://github.com/TheYogMehta/StrawVerse/releases) | Application (`.zip` / `.dmg`)             | macOS 12+ (Apple Silicon M1/M2/M3/M4) |
-| **Windows** | [StrawVerse.Setup.exe](https://github.com/TheYogMehta/StrawVerse/releases)     | Installer (`.exe`)                        | Windows 10, 11 (64-bit)               |
-| **Linux**   | [StrawVerse.AppImage](https://github.com/TheYogMehta/StrawVerse/releases)      | Portable & Package (`.AppImage` / `.deb`) | Ubuntu, Debian, Arch, Fedora          |
-| **Android** | [StrawVerse.apk](https://github.com/TheYogMehta/StrawVerse/releases)           | Mobile APK (`.apk`)                       | Android 7.0+                          |
+All fork builds are published on the [Releases page](https://github.com/RavenGod1/StrawVerse/releases) of this repository:
+
+| Platform    | File                                        | Format                          | OS Compatibility                      |
+| :---------- | :------------------------------------------ | :------------------------------ | :------------------------------------ |
+| **Windows** | `StrawVerse.Setup.<version>.exe`            | Installer (`.exe`)              | Windows 10, 11 (64-bit)               |
+| **Android** | `app-release.apk`                           | Mobile APK (`.apk`)             | Android 7.0+                          |
+| **Linux**   | `strawverse-<version>.AppImage`             | Portable (`.AppImage`)          | Ubuntu, Debian, Arch, Fedora          |
+| **Linux**   | `strawverse_<version>_amd64.deb`            | Debian/Ubuntu package (`.deb`)  | Debian, Ubuntu and derivatives        |
+| **macOS**   | `StrawVerse-<version>-mac-arm64.zip`        | Application (`.zip`)            | macOS 12+ (Apple Silicon M1–M4)       |
 
 > [!NOTE]
-> **macOS (Apple Silicon) First Launch:** Because StrawVerse is an open-source, ad-hoc signed community release, macOS Gatekeeper may ask you to confirm opening the app on first launch. Right-click `StrawVerse.app` in `/Applications` and select **Open**, or run:
+> **macOS (Apple Silicon) First Launch:** this build is unsigned (ad-hoc community release), so Gatekeeper may ask you to confirm opening the app on first launch. Right-click `StrawVerse.app` in `/Applications` and select **Open**, or run:
 >
 > ```bash
 > xattr -cr /Applications/StrawVerse.app
 > ```
+
+---
+
+## What's New in This Fork (v11.2.2)
+
+- **Mapping sync no longer aborted by one bad table:** a single provider table returning HTTP 500 (currently the server-side `animesalt` table) used to block *all* mapping tables from syncing. The sync now falls back to core tables first (`anime`, `manga`, `next_episodes` + unmapped), then each provider individually — only the broken table is skipped.
+- **Faster startup:** the auto-update check is deferred by 8 seconds, image-cache cleanup batches its deletes, and snapshot apply drops 80k+ per-row queries.
+- **Info page Seasons now include `OVA`, `MOVIE`, and `SPECIAL`** — not just TV series.
+- **Repository enable/disable:** toggle extension repositories on/off; disabled repos hide while installed items stay.
+- **Discover provider switcher:** provider picker next to the Anime/Manga toggle; clears caches and reloads page 1.
+- **Description copy button** on title pages (copies the full raw text).
+- **Plex & Jellyfin** settings section before Subtitle Customization & Appearance.
+- **Android fixes:** dead Browse button (missing `Swal` import) and hidden provider picker (gate relaxed to `>= 1`).
+- Merged upstream **v11.2.1 / v11.2.0** work (manga reader overhaul, mapping/Manga schema fixes, Cloudflare cookie fixes).
+
+Full history: [changelog.md](changelog.md) • upstream releases: [TheYogMehta/StrawVerse](https://github.com/TheYogMehta/StrawVerse/releases)
 
 ---
 
@@ -82,7 +104,11 @@ Whether you want high-speed **anime download** queues in 1080p, full Sub and Dub
 - [Uninstalling the Application](#uninstalling-the-application)
 - [Build the Application](#build-the-application)
   - [Prerequisites](#prerequisites)
-  - [Steps to Build](#steps-to-build)
+  - [Run from Source](#run-from-source)
+  - [Desktop — Windows](#desktop--windows)
+  - [Desktop — Linux & macOS via Docker](#desktop--linux--macos-via-docker)
+  - [Release Artifacts](#release-artifacts)
+- [Build and Run the Android Application](#build-and-run-the-android-application)
 
 ---
 
@@ -112,10 +138,10 @@ Beyond standard downloading, StrawVerse includes real-time playback synchronizat
 
 ### For macOS (Apple Silicon M1/M2/M3/M4)
 
-1. Go to [StrawVerse Releases](https://github.com/TheYogMehta/StrawVerse/releases).
-2. Download `StrawVerse-<version>-mac-arm64.zip` (or `.dmg`).
+1. Go to [StrawVerse Releases](https://github.com/RavenGod1/StrawVerse/releases).
+2. Download `StrawVerse-<version>-mac-arm64.zip`.
 3. Unzip the downloaded archive and drag `StrawVerse.app` into your `/Applications` folder.
-4. **First Launch (Gatekeeper bypass):** Because StrawVerse is an open-source, ad-hoc signed community release, macOS may show a developer verification notice on first launch:
+4. **First Launch (Gatekeeper bypass):** because this build is unsigned, macOS may show a developer verification notice on first launch:
    - **Option 1 (Right-click):** Right-click (or Control-click) `StrawVerse.app` in `/Applications`, select **Open**, and then click **Open** on the confirmation prompt.
    - **Option 2 (Terminal):** Clear the quarantine attribute by running:
      ```bash
@@ -124,25 +150,26 @@ Beyond standard downloading, StrawVerse includes real-time playback synchronizat
 
 ### For Windows
 
-1. Go to [StrawVerse Releases](https://github.com/TheYogMehta/StrawVerse/releases).
+1. Go to [StrawVerse Releases](https://github.com/RavenGod1/StrawVerse/releases).
 2. Download the setup file `StrawVerse.Setup.<version>.exe`.
 3. Run the installer to install the application, and enjoy!
 
 ### For Linux
 
-1. Go to [StrawVerse Releases](https://github.com/TheYogMehta/StrawVerse/releases).
-2. Download the AppImage `StrawVerse-<version>.AppImage` or the deb / zip package.
-3. For AppImage: Make it executable using `chmod +x StrawVerse-<version>.AppImage` and run it.
+1. Go to [StrawVerse Releases](https://github.com/RavenGod1/StrawVerse/releases).
+2. Download the AppImage `strawverse-<version>.AppImage` or the deb package `strawverse_<version>_amd64.deb`.
+3. For AppImage: make it executable using `chmod +x strawverse-<version>.AppImage` and run it.
+4. For deb: install it with `sudo apt install ./strawverse_<version>_amd64.deb`.
 
 ### For Android
 
-1. Go to [StrawVerse Releases](https://github.com/TheYogMehta/StrawVerse/releases).
-2. Download the APK file `StrawVerse-<version>.apk`.
+1. Go to [StrawVerse Releases](https://github.com/RavenGod1/StrawVerse/releases).
+2. Download the APK file `app-release.apk`.
 3. Open and install the APK on your Android device!
 
 ## Usage
 
-1. Run the application (`StrawVerse.exe` on Windows, `StrawVerse.app` on macOS, or `StrawVerse.AppImage` on Linux).
+1. Run the application (`StrawVerse.exe` on Windows, `StrawVerse.app` on macOS, or `strawverse-<version>.AppImage` on Linux).
 2. **Search and Discover:** Use the unified Discover page to search across anime or manga, switching search modes with the header toggle slider.
 3. **Stream or Read:** Select a title to watch instantly in the custom HTML5 video player, or read chapters in the built-in manga reader.
 4. **Synchronized Playback:** Jump to the **Watch Together** tab to host or join a synced watch room with friends.
@@ -151,8 +178,6 @@ Beyond standard downloading, StrawVerse includes real-time playback synchronizat
 ## Videos
 
 ### How to download and use `StrawVerse.exe`?
-
-[Download Guide Video]
 
 [![Watch the YT demo](https://img.youtube.com/vi/ZmcE-LrofgQ/0.jpg)](https://www.youtube.com/watch?v=ZmcE-LrofgQ)
 
@@ -204,8 +229,6 @@ Then, run `Uninstall StrawVerse.exe`.
 
 # Build the Application
 
-Follow these steps to build application:
-
 ## Prerequisites
 
 1. **Download and install Node.js**:
@@ -221,49 +244,90 @@ Follow these steps to build application:
    - During the Node.js installation on Windows, make sure you check the box that says **"Automatically install the necessary tools"** (this installs Python and the necessary VS Build Tools via Chocolatey automatically).
    - Alternatively, you can manually download and install **[Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)** (be sure to select the **Desktop development with C++** workload during setup).
 
+5. **Docker Desktop (only for building the Linux and macOS packages from Windows)** — must be running on the **Linux** engine.
+
 ## Steps to Build
 
-1. Clone the repository:
+1. Clone this repository:
 
    ```bash
-   git clone https://github.com/TheYogMehta/StrawVerse.git
+   git clone https://github.com/RavenGod1/StrawVerse.git
    ```
 
-2. Navigate to the project directory:
+2. Navigate to the Electron project and install dependencies (this also fetches the mpv/ffmpeg binaries and builds native modules):
 
    ```bash
    cd StrawVerse/electron
-   ```
-
-3. Install dependencies:
-
-   ```bash
    npm install
    ```
 
-4. For Building the application:
+3. Build the GUI bundle (Vite production build):
 
    ```bash
-   npm run package
+   npm run build
    ```
 
-5. Run the application for testing:
+4. Run the application for testing:
+
    ```bash
-   npm run start
+   npm start
    ```
 
-## Notes
+## Desktop — Windows
 
-- Build (package): Creates installer/executable files for Windows (`.exe`), Linux (`.AppImage`, `.deb`), and macOS (`.zip`, `.dmg`) in the `dist` directory.
-- Start: Runs the app locally in the Electron environment without building an executable.
-- Ensure that your system has the latest versions of Node.js and Git installed for compatibility.
-- If you encounter any issues, feel free to open an issue or join our [Discord Server](https://discord.gg/PzfUBgQ2gt) for support and chat!
+From `StrawVerse/electron`:
+
+```bash
+npx electron-builder --win
+```
+
+Output: `electron\dist\StrawVerse.Setup.<version>.exe`
+
+> [!WARNING]
+> `npm run package` (and `package:mac` / `package:all`) **delete the entire `electron\dist` folder first**, and their Linux targets cannot run on Windows. Prefer the direct `npx electron-builder --win` command above when other artifacts in `dist` must survive.
+
+## Desktop — Linux & macOS via Docker
+
+Linux targets need Linux-only tools (`mksquashfs` for AppImage, `fpm` for deb), and electron-builder refuses `--mac` when run on Windows — so both are built inside a Docker/Linux container. From **PowerShell**, set your clone path once:
+
+```powershell
+$REPO = "C:\path\to\StrawVerse"   # <- your clone location
+```
+
+**Linux (.deb + .AppImage):**
+
+```powershell
+docker run --rm -e XDG_CACHE_HOME=/root/.cache -v "${REPO}:/project" -w /project/electron -v strawverse-eb-cache:/root/.cache electronuserland/builder bash -c "npx electron-builder --linux --x64 --publish never 2>&1"
+```
+
+**macOS (Apple Silicon .zip):**
+
+```powershell
+docker run --rm -e XDG_CACHE_HOME=/root/.cache -v "${REPO}:/project" -w /project/electron -v strawverse-eb-cache:/root/.cache electronuserland/builder bash -c "npx electron-builder --mac --arm64 --publish never 2>&1"
+```
+
+Notes:
+
+- **Run both commands at the same time** (two terminals) — they write to disjoint outputs and share the cache volume safely.
+- The `strawverse-eb-cache` volume (~320 MB) persists Electron zips and builder tools between runs. **First run** downloads everything (~30 min for both platforms); **every run after** logs `using cached artifact` and takes **~7 minutes for both platforms** (measured: Linux 6.5 min, macOS 4.0 min).
+- The macOS build is an **unsigned zip for Apple Silicon only** — see the Gatekeeper note in the Installation section. (Code signing is skipped automatically on non-macOS hosts; that log line is expected.)
+- On a **native** Linux or macOS host, `npm run package` / `npm run package:mac` work directly instead of Docker.
+
+## Release Artifacts
+
+| Artifact                              | Built by                       | Output directory                                   |
+| :------------------------------------ | :----------------------------- | :------------------------------------------------- |
+| `StrawVerse.Setup.<v>.exe`            | `npx electron-builder --win`   | `electron\dist\`                                   |
+| `strawverse-<v>.AppImage`             | Docker `--linux --x64`         | `electron\dist\`                                   |
+| `strawverse_<v>_amd64.deb`            | Docker `--linux --x64`         | `electron\dist\`                                   |
+| `StrawVerse-<v>-mac-arm64.zip`        | Docker `--mac --arm64`         | `electron\dist\`                                   |
+| `app-release.apk`                     | `npm run build:android`        | `capacitor\android\app\build\outputs\apk\release\` |
+
+The release manifest [`latest.yml`](latest.yml) in the repository root records the exact **size + SHA512** of every published artifact — update it after any rebuild.
 
 ---
 
 # Build and Run the Android Application
-
-Follow these steps to build and run the application on Android:
 
 ## Prerequisites
 
@@ -273,7 +337,7 @@ Follow these steps to build and run the application on Android:
 
 ## Steps to Build and Run
 
-1. **Install Dependencies**:
+1. **Install Dependencies** (one-time):
 
    In the repository root:
 
@@ -281,28 +345,27 @@ Follow these steps to build and run the application on Android:
    npm install
    ```
 
-   Go into the `capacitor` folder and install its dependencies:
+   Then install the Capacitor project's dependencies:
 
    ```bash
    cd capacitor
    npm install
+   cd ..
    ```
 
-2. **Sync Android Project**:
-
-   Build GUI, bundle backend, fetch dependencies, and sync with Capacitor:
+2. **Sync Android Project** (builds the GUI, bundles the backend, and syncs with Capacitor) — from the repository root:
 
    ```bash
    npm run sync:android
    ```
 
-3. **Build Android APK**:
+3. **Build Android APK** — from the repository root:
 
    ```bash
-   npm run package:android
+   npm run build:android
    ```
 
-   _(Outputs signed release APK to `capacitor/android/app/build/outputs/apk/release/app-release.apk`)_
+   _(Outputs a signed release APK to `capacitor/android/app/build/outputs/apk/release/app-release.apk`)_
 
 4. **Run the Application**:
    - **Option A**: Directly from the terminal:
@@ -313,3 +376,14 @@ Follow these steps to build and run the application on Android:
      ```bash
      npx cap open android
      ```
+
+## Repository Scripts Reference
+
+| Script (repository root)   | What it does                                                    |
+| :------------------------- | :-------------------------------------------------------------- |
+| `npm run start:desktop`    | Builds the GUI, then launches Electron for development          |
+| `npm run build:gui`        | Vite production build of the GUI (`gui/dist`)                   |
+| `npm run sync:android`     | Builds the GUI and syncs the Capacitor Android project          |
+| `npm run build:android`    | Syncs, then builds the signed release APK                       |
+
+Scripts in `electron/`: `npm start` (dev run), `npm run build` (GUI bundle), `npx electron-builder --win|--linux|--mac` (packaging — see sections above).
