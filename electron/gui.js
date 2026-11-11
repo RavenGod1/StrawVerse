@@ -796,7 +796,15 @@ app.whenReady().then(async () => {
   });
 
   if (app.isPackaged) {
-    autoUpdater.checkForUpdatesAndNotify();
+    // Deferred so the update check (GitHub round-trip, ~4s) does not compete
+    // with window paint, mapping sync and scraper loading during startup.
+    setTimeout(() => {
+      try {
+        autoUpdater.checkForUpdatesAndNotify();
+      } catch (err) {
+        logger.error(`Auto-update check failed to start: ${err.message}`);
+      }
+    }, 8000);
   }
 
   try {

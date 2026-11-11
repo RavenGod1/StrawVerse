@@ -40,6 +40,12 @@ const userDataPath = getUserDataPath();
 const MAPPING_API_BASE =
   process.env.MAPPING_API_URL || "https://strawverse.theyogmehta.online";
 
+// Tables the mapping server answered with an error for during this session.
+// One broken provider table used to fail the entire combined sync request
+// (HTTP 500), which also blocked anime/manga/next_episodes from updating.
+// Remembered here so later requests skip only the broken table.
+const syncFailedTables = new Set();
+
 async function dropAllTriggers() {
   try {
     const triggers = await mappingQueryAll(
@@ -238,6 +244,19 @@ async function applySyncResponse(data) {
   await mappingExec("PRAGMA foreign_keys = OFF");
 
   try {
+    // Load local unlinked ids once up front. The pruning below used to run
+    // one SELECT per incoming row — 80k+ queries on a full anime+manga
+    // snapshot — which blocked the event loop during startup sync.
+    let unlinkedIds = null;
+    if (global.db) {
+      try {
+        const unlinkedRows = await queryAll("SELECT id FROM unlinked_mal_ids");
+        unlinkedIds = new Set((unlinkedRows || []).map((r) => String(r.id)));
+      } catch (_) {
+        unlinkedIds = new Set();
+      }
+    }
+
     // 1. Process regular & core tables (anime, manga, next_episodes, pahe, etc.)
     if (tables && typeof tables === "object") {
       for (const [tbl, tableData] of Object.entries(tables)) {
@@ -357,21 +376,17 @@ async function applySyncResponse(data) {
                 const targetIds = [row.id, row.uuid]
                   .filter(Boolean)
                   .map(String);
-                if (global.db && targetIds.length > 0) {
+                if (unlinkedIds && unlinkedIds.size > 0 && targetIds.length > 0) {
                   for (const tid of targetIds) {
+                    if (!unlinkedIds.has(tid)) continue;
                     try {
-                      const localEntry = await queryOne(
-                        "SELECT malid FROM unlinked_mal_ids WHERE id = ? LIMIT 1",
-                        [tid],
+                      await run("DELETE FROM unlinked_mal_ids WHERE id = ?", [
+                        tid,
+                      ]);
+                      unlinkedIds.delete(tid);
+                      logger.info(
+                        `[mappingUpdater] Pruned duplicate local mapping for ${tid} (canonical MAL ID ${row.malid})`,
                       );
-                      if (localEntry) {
-                        await run("DELETE FROM unlinked_mal_ids WHERE id = ?", [
-                          tid,
-                        ]);
-                        logger.info(
-                          `[mappingUpdater] Pruned duplicate local mapping for ${tid} (canonical MAL ID ${row.malid})`,
-                        );
-                      }
                     } catch (_) {}
                   }
                 }
@@ -700,13 +715,20 @@ async function checkForMappingUpdates(force = false) {
 
   const osName = getOSName();
 
-  try {
+  // Exclude tables the server already failed on this session.
+  const liveTables = {};
+  for (const [tbl, meta] of Object.entries(reqTables)) {
+    if (!syncFailedTables.has(tbl)) liveTables[tbl] = meta;
+  }
+  const liveUnmapped = {};
+  for (const [prov, meta] of Object.entries(reqUnmapped)) {
+    if (!syncFailedTables.has(prov)) liveUnmapped[prov] = meta;
+  }
+
+  const postSync = async (tables, unmapped) => {
     const res = await mappingClient.post(
       `${MAPPING_API_BASE}/api/mapping/sync`,
-      {
-        tables: reqTables,
-        unmapped: reqUnmapped,
-      },
+      { tables, unmapped },
       {
         headers: {
           os: osName,
@@ -714,28 +736,95 @@ async function checkForMappingUpdates(force = false) {
         },
       },
     );
+    return res.data || null;
+  };
 
-    if (res.data) {
-      if (
-        res.data.upToDate &&
-        (!res.data.tables || Object.keys(res.data.tables).length === 0)
-      ) {
-        logger.info("[mappingUpdater] Mapping database is already up to date.");
-      } else {
-        const changed = await applySyncResponse(res.data);
-        if (changed) {
-          logger.info(
-            "[mappingUpdater] Mapping database sync completed successfully.",
-          );
-        } else {
-          logger.info("[mappingUpdater] Mapping database is up to date.");
-        }
-      }
+  const applyData = async (data, label) => {
+    if (!data) return;
+    if (
+      data.upToDate &&
+      (!data.tables || Object.keys(data.tables).length === 0)
+    ) {
+      logger.info(`[mappingUpdater] ${label} is already up to date.`);
+      return;
     }
+    const changed = await applySyncResponse(data);
+    logger.info(
+      changed
+        ? `[mappingUpdater] ${label} sync completed successfully.`
+        : `[mappingUpdater] ${label} is up to date.`,
+    );
+  };
+
+  // Fast path: one combined request for everything.
+  try {
+    await applyData(
+      await postSync(liveTables, liveUnmapped),
+      "Mapping database",
+    );
   } catch (err) {
+    const status = err.response && err.response.status;
     logger.error(
       `[mappingUpdater] Failed to sync mapping database: ${err.message}`,
     );
+
+    // The server answered with an error: retry split by table group so a
+    // single broken table no longer aborts the whole sync. (Verified: the
+    // API can 500 on one provider table while anime/manga stay healthy.)
+    if (status && status >= 400) {
+      logger.warn(
+        "[mappingUpdater] Retrying sync split by table group so one bad table cannot block the rest.",
+      );
+
+      const core = {};
+      const providers = {};
+      for (const [tbl, meta] of Object.entries(liveTables)) {
+        if (tbl === "anime" || tbl === "manga" || tbl === "next_episodes") {
+          core[tbl] = meta;
+        } else {
+          providers[tbl] = meta;
+        }
+      }
+
+      // 1) Core tables together with every unmapped bucket.
+      if (Object.keys(core).length > 0) {
+        try {
+          await applyData(
+            await postSync(core, liveUnmapped),
+            "Mapping database (core tables)",
+          );
+        } catch (coreErr) {
+          logger.error(
+            `[mappingUpdater] Core table sync failed: ${coreErr.message}`,
+          );
+          try {
+            await applyData(
+              await postSync(core, {}),
+              "Mapping database (core tables)",
+            );
+          } catch (coreOnlyErr) {
+            logger.error(
+              `[mappingUpdater] Core table sync failed without unmapped data: ${coreOnlyErr.message}`,
+            );
+          }
+        }
+      }
+
+      // 2) Each provider table on its own; remember the ones that fail.
+      for (const [tbl, meta] of Object.entries(providers)) {
+        try {
+          await applyData(
+            await postSync({ [tbl]: meta }, {}),
+            `Provider table "${tbl}"`,
+          );
+        } catch (provErr) {
+          syncFailedTables.add(tbl);
+          logger.warn(
+            `[mappingUpdater] Skipping provider table "${tbl}" for this session: ${provErr.message}`,
+          );
+        }
+      }
+    }
   }
 
   try {
@@ -783,6 +872,11 @@ async function syncExtensionMapping(extensionName) {
       logger.info(`[mappingUpdater] Initialized mappings for ${cleanProv}`);
     }
   } catch (err) {
+    if (err.response && err.response.status >= 400) {
+      // Server-side failure for this provider table: remember it so the
+      // next full sync skips it instead of failing the whole request.
+      syncFailedTables.add(cleanProv);
+    }
     logger.warn(
       `[mappingUpdater] Could not fetch mappings for ${cleanProv}: ${err.message}`,
     );

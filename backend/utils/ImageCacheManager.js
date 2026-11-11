@@ -180,6 +180,26 @@ async function enforceLimit() {
   }
 }
 
+// Delete ImageCache rows in chunks instead of one statement per row:
+// startup cleanup used to issue hundreds of sequential awaits.
+async function deleteImageCacheRows(urls) {
+  if (!urls || urls.length === 0) return;
+  const CHUNK = 400;
+  for (let i = 0; i < urls.length; i += CHUNK) {
+    const chunk = urls.slice(i, i + CHUNK);
+    try {
+      const placeholders = chunk.map(() => "?").join(", ");
+      await run(`DELETE FROM ImageCache WHERE url IN (${placeholders})`, chunk);
+    } catch (_) {
+      for (const url of chunk) {
+        try {
+          await run("DELETE FROM ImageCache WHERE url = ?", [url]);
+        } catch (_) {}
+      }
+    }
+  }
+}
+
 async function runStartupCleanup() {
   logger.info("Running startup image cache cleanup...");
   try {
@@ -191,6 +211,7 @@ async function runStartupCleanup() {
       [cutoff],
     );
 
+    const expiredUrls = [];
     for (const item of expiredItems) {
       try {
         const filePath = path.join(cacheDir, item.filename);
@@ -198,8 +219,9 @@ async function runStartupCleanup() {
           await fs.promises.unlink(filePath);
         }
       } catch (_) {}
-      await run("DELETE FROM ImageCache WHERE url = ?", [item.url]);
+      expiredUrls.push(item.url);
     }
+    await deleteImageCacheRows(expiredUrls);
     if (expiredItems.length > 0) {
       logger.info(`Evicted ${expiredItems.length} expired image cache files.`);
     }
@@ -229,12 +251,14 @@ async function runStartupCleanup() {
     }
 
     const allDbItems = await queryAll("SELECT url, filename FROM ImageCache");
+    const missingFileUrls = [];
     for (const item of allDbItems) {
       const filePath = path.join(cacheDir, item.filename);
       if (!fs.existsSync(filePath)) {
-        await run("DELETE FROM ImageCache WHERE url = ?", [item.url]);
+        missingFileUrls.push(item.url);
       }
     }
+    await deleteImageCacheRows(missingFileUrls);
 
     await migrateDatabaseBase64Images();
   } catch (e) {

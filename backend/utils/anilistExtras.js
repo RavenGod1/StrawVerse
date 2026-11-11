@@ -13,8 +13,18 @@ const EXTRAS_MAX_HOPS = 8; // max sequel/prequel hops per title
 const EXTRAS_MAX_PER_HOP = 8; // max related titles queried per hop
 const extrasCache = new Map();
 
-// Only these formats count as a "season" of a show (movies/OVAs excluded).
-const SEASON_FORMATS = new Set(["TV", "TV_SHORT", "ONA", "TV_SPECIAL"]);
+// These formats count as "seasons" or related content for the Info page.
+// Includes TV series + specials (OVA, movies, ONA, specials) that are related
+// via SEQUEL/PREQUEL relations.
+const SEASON_FORMATS = new Set([
+  "TV",
+  "TV_SHORT",
+  "ONA",
+  "TV_SPECIAL",
+  "MOVIE",
+  "OVA",
+  "SPECIAL",
+]);
 
 const ANILIST_MEDIA_FIELDS = `
   id

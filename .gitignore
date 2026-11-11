@@ -38,3 +38,4 @@ app.log
 **/libffmpeg.so
 .DS_Store
 **/.DS_Store
+image_cache/

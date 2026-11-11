@@ -1,0 +1,54 @@
+# StrawVerse Latest Release
+# Generated locally for v11.2.2 (versionCode 27)
+# Fork: RavenGod1/StrawVerse
+# Upstream: TheYogMehta/StrawVerse
+
+version: 11.2.2
+versionCode: 27
+releaseDate: '2026-11-10'
+
+artifacts:
+  - name: StrawVerse.Setup.11.2.2.exe
+    url: https://github.com/RavenGod1/StrawVerse/releases/download/v11.2.2/StrawVerse.Setup.11.2.2.exe
+    platform: windows
+    size: 237.28
+    sha512: EC08A1CF3DCEBB6FC175BB05DC63C208204C21901EC62AAA0D2063C9791B4F030A35477AEAF92884802D7AD09A87A04EC92719AB1788FBAF0F8E958BE6C9A437
+
+  - name: app-release.apk
+    url: https://github.com/RavenGod1/StrawVerse/releases/download/v11.2.2/app-release.apk
+    platform: android
+    size: 135.26
+    sha512: 3D8B4D4BA746F44DE9FB93607B072BA95211F5D08FDE0E9C91BFFE74B8AF8DBAD88B8114B8F15FA1D73B5C7589946A7D614B0BEE97447B61D97A5861CF8920BA
+
+  - name: strawverse-11.2.2.AppImage
+    url: https://github.com/RavenGod1/StrawVerse/releases/download/v11.2.2/strawverse-11.2.2.AppImage
+    platform: linux
+    size: 268.24
+    sha512: BFC249D64969C2B4D8B70E1336962AFE3A14FAC64E27ADF8DAEB615E0245897C99F9AF193B679D25DA08361CD94DC1E49CEC0238C69ADF7EF36BADBF49B7384D
+
+  - name: strawverse_11.2.2_amd64.deb
+    url: https://github.com/RavenGod1/StrawVerse/releases/download/v11.2.2/strawverse_11.2.2_amd64.deb
+    platform: linux
+    size: 219.24
+    sha512: 6E3229F06A9FF1FCEED0831B64B5646E166FDA6FAB9745994EA77F3226DE19C4F36D8AB4D12B6AC4A2C4C146FA9E14EB4E28F44EFE26FF1FA4895388F9E21C0D
+
+  - name: StrawVerse-11.2.2-mac-arm64.zip
+    url: https://github.com/RavenGod1/StrawVerse/releases/download/v11.2.2/StrawVerse-11.2.2-mac-arm64.zip
+    platform: mac
+    arch: arm64
+    size: 472.17
+    sha512: 9D9B0BC11BA07273538DD1095F3C238F7775AF53084CAED9F38C47735AB1EDB42021F6C8B4AF2A113C30E3141DBAED81FD41D41A6E434361FDFEAF3E9D8F5E95
+    note: "Unsigned build — first launch: right-click → Open, or run: xattr -cr /Applications/StrawVerse.app"
+
+changelog:
+  - "[11.2.2]"
+    - **Mapping sync fix**: One broken provider table returning HTTP 500 no longer aborts the whole mapping sync — core tables (anime/manga) now sync even when a provider table fails
+    - **Faster startup**: Auto-update check deferred 8s; image-cache cleanup batches deletes; snapshot apply removes 80k+ per-row queries
+    - **repo enable/disable**: Toggle extension repositories on/off; disabled repos hide but installed items remain
+    - **Discover provider switcher**: Provider picker left of Anime/Manga toggle; clears caches, reloads page 1
+    - **Description copy button**: Copy full raw text (strips `[more]`)
+    - **Plex & Jellyfin section**: Dedicated settings before Subtitle Customization & Appearance
+    - **Info page seasons**: Now includes OVA, MOVIE, and SPECIAL formats (not just TV series)
+    - **Changelog merge**: Merged upstream [11.2.1] entries ([manga reader overhaul](https://github.com/TheYogMehta/StrawVerse/releases/tag/v11.2.1), [mapping/Manga schema fixes](https://github.com/TheYogMehta/StrawVerse/releases/tag/v11.2.0))
+    - **Fixed Android bugs**: Browse button dead (missing `Swal` import), provider picker hidden (gate relaxed `> 1` → `>= 1`)
+    - **Version continues as 11.2.2** above upstream's 11.2.1

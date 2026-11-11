@@ -2,6 +2,12 @@
 
 # [11.2.2] - 2026-11-10
 
+### Startup & Mapping Sync
+
+- **Mapping Sync No Longer Aborted by One Bad Table:** The mapping database sync used to send every table in a single request, so one provider table answering HTTP 500 (the `animesalt` table on the mapping server) blocked *all* tables — including `anime`/`manga` — from ever updating. The sync now falls back to splitting the request by group: core tables (`anime`, `manga`, `next_episodes`) plus unmapped items are fetched first, then each provider table individually, so only the broken table is skipped (and remembered for the session).
+- **Faster Startup:** The auto-update check is deferred by 8 seconds so it no longer competes with window paint, mapping sync and scraper loading for network/CPU; image-cache cleanup now batches its deletes instead of issuing one database statement per row.
+- **Cheaper Snapshot Apply:** Duplicate-mapping pruning loads local ids once up front instead of running a query per incoming row — 80k+ queries removed when applying a full anime/manga snapshot.
+
 ### Discover & Info Badges
 
 - **Badges From the Extension Side:** Airing status and SUB/DUB badges now fall back to the provider + mapping databases, so titles with no MAL id or no AniList match are no longer left blank on Discover cards.
@@ -13,6 +19,7 @@
 - **Sections Load Again:** Seasons and Recommendations were being wiped when the title page resolved its id a second time — the in-flight response is no longer cancelled, so the sections (and their badges) render reliably.
 - **Back Returns to the Previous Title:** Clicking a Season or Recommendation card now opens a real history entry, so the back button returns to the title you came from instead of jumping straight to Discover.
 - **Search Fallback Keeps History:** Recommendations with no MAL id open a Discover search as a new entry, so Back still returns to the previous title.
+- **OVA/Movie/Special Support:** Seasons now includes OVA, MOVIE, and SPECIAL formats (not just TV series); related content fetched via SEQUEL/PREQUEL relations.
 
 ### Settings
 
