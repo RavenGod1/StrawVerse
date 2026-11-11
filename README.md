@@ -89,18 +89,41 @@ Full history: [changelog.md](changelog.md) • upstream releases: [TheYogMehta/S
 
 ---
 
+## Showcase
+
+**Desktop**
+
+<p align="center">
+  <img src="assets/screenshots/pc-discover-anime.jpg" alt="Discover page with anime filters" width="49%">
+  <img src="assets/screenshots/pc-discover-manga.jpg" alt="Discover page with manga grid" width="49%">
+  <img src="assets/screenshots/pc-title-page.jpg" alt="Anime title page with MyAnimeList integration" width="49%">
+  <img src="assets/screenshots/pc-manga-title-page.jpg" alt="Manga title page with chapters list" width="49%">
+  <img src="assets/screenshots/pc-extensions.png" alt="Extensions and repositories manager" width="49%">
+</p>
+
+**Android**
+
+<p align="center">
+  <img src="assets/screenshots/android-discover-anime.jpg" alt="Discover page with anime filters on Android" width="32%">
+  <img src="assets/screenshots/android-discover-manga.jpg" alt="Discover page with manga grid on Android" width="32%">
+  <img src="assets/screenshots/android-title-page.jpg" alt="Title page on Android" width="32%">
+  <img src="assets/screenshots/android-seasons.jpg" alt="Seasons and recommendations on Android" width="32%">
+</p>
+
+---
+
 > [!IMPORTANT]
 > **Legal Disclaimer:** StrawVerse is an open-source local media manager and indexing application designed for developers and researchers. The developers of this application do not host, store, stream, or distribute any copyrighted media (video, audio, or images). The application functions solely as a client-side parser and downloader wrapper utilizing publicly available web resource links. We do not condone, promote, or encourage copyright infringement. By using this software, you acknowledge and agree that all download and media-access activities are conducted at your own risk and responsibility, and that you are solely responsible for ensuring compliance with all local, national, and international copyright laws and terms of service.
 
-## Table of Contents
+## 📑 Table of Contents
 
-- [Overview](#overview)
-- [Key Features](#key-features)
+- [Overview](#-overview)
+- [Key Features](#-key-features)
 - [System Requirements](#system-requirements)
 - [Installation](#installation)
-- [Usage](#usage)
+- [Usage](#-usage)
 - [Videos](#videos)
-- [Configuration](#configuration)
+- [Configuration](#-configuration)
 - [Uninstalling the Application](#uninstalling-the-application)
 - [Build the Application](#build-the-application)
   - [Prerequisites](#prerequisites)
@@ -111,7 +134,7 @@ Full history: [changelog.md](changelog.md) • upstream releases: [TheYogMehta/S
 
 ---
 
-## Overview
+## 🌟 Overview
 
 **StrawVerse** is a cross-platform application built with Electron, Capacitor, React, and Vite that allows you to stream, read, download, and track your anime and manga collections. It uses a local SQLite database to manage your library and watch history.
 
@@ -119,7 +142,7 @@ Beyond standard downloading, StrawVerse includes real-time playback synchronizat
 
 ---
 
-## Key Features
+## 🚀 Key Features
 
 - **Watch Together:** Host or join rooms to watch anime synchronously with friends (includes shared queue and text chat).
 - **In-App Player & Reader:** Stream anime directly or read manga chapters in the app. Remembers your playback position and layout preferences.
@@ -166,7 +189,7 @@ Beyond standard downloading, StrawVerse includes real-time playback synchronizat
 2. Download the APK file `app-release.apk`.
 3. Open and install the APK on your Android device!
 
-## Usage
+## 📖 Usage
 
 1. Run the application (`StrawVerse.exe` on Windows, `StrawVerse.app` on macOS, or `strawverse-<version>.AppImage` on Linux).
 2. **Search and Discover:** Use the unified Discover page to search across anime or manga, switching search modes with the header toggle slider.
@@ -182,7 +205,7 @@ Beyond standard downloading, StrawVerse includes real-time playback synchronizat
 
 https://github.com/user-attachments/assets/9042f0f9-be25-4705-a6a5-dace3a3539e0
 
-## Configuration
+## 🔧 Configuration
 
 Navigate to the settings tab to configure your StrawVerse application:
 
