@@ -4083,13 +4083,13 @@ router.post(
             if (!remoteImg) {
               const listTable =
                 AnimeManga === "Anime" ? "MyAnimeList" : "MyMangaList";
+              // MyAnimeList/MyMangaList have no main_picture column — MAL's
+              // main_picture is stored into image by the list sync.
               const malRow = await global.db
-                .prepare(
-                  `SELECT image, main_picture FROM ${listTable} WHERE id = ?`,
-                )
+                .prepare(`SELECT image FROM ${listTable} WHERE id = ?`)
                 .get(String(data.malid));
               if (malRow) {
-                remoteImg = malRow.image || malRow.main_picture;
+                remoteImg = malRow.image;
               }
             }
             if (remoteImg) {
