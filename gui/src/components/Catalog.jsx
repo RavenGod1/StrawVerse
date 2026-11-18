@@ -436,7 +436,12 @@ export default function Catalog({
 
   useEffect(() => {
     const fetchInstalledProviders = async () => {
-      const settingKey = type === "Manga" ? "Mangaprovider" : "Animeprovider";
+      const settingKey =
+        type === "Movies"
+          ? "Moviesprovider"
+          : type === "Manga"
+            ? "Mangaprovider"
+            : "Animeprovider";
       try {
         if (window.sharedStateAPI && window.sharedStateAPI.getSettings) {
           const res = await window.sharedStateAPI.getSettings([
@@ -444,6 +449,7 @@ export default function Catalog({
             "installedExtensions",
             "Animeprovider",
             "Mangaprovider",
+            "Moviesprovider",
           ]);
           const pList = res?.settings?.providers?.[type] || [];
           setInstalledProvidersList(pList);
@@ -1730,7 +1736,12 @@ export default function Catalog({
     if (!newProvider || newProvider === activeProviderName) return;
 
     setActiveProviderName(newProvider);
-    const settingKey = type === "Manga" ? "Mangaprovider" : "Animeprovider";
+    const settingKey =
+      type === "Movies"
+        ? "Moviesprovider"
+        : type === "Manga"
+          ? "Mangaprovider"
+          : "Animeprovider";
 
     try {
       if (window.sharedStateAPI && window.sharedStateAPI.updateSetting) {
