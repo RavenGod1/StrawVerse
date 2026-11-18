@@ -762,15 +762,15 @@ function validateExtensionSafety(code, repoOwner = "TheYogMehta") {
 }
 
 const DEFAULT_EXTENSION_REPO = {
-  id: "TheYogMehta/extensions",
-  owner: "TheYogMehta",
+  id: "RavenGod1/extensions",
+  owner: "RavenGod1",
   name: "extensions",
-  displayName: "Official Extensions",
-  url: "https://github.com/TheYogMehta/extensions",
+  displayName: "Extensions (Test)",
+  url: "https://github.com/RavenGod1/extensions",
   marketplaceUrl:
-    "https://raw.githubusercontent.com/TheYogMehta/extensions/refs/heads/main/marketplace.json",
+    "https://raw.githubusercontent.com/RavenGod1/extensions/refs/heads/Test/marketplace.json",
   rawBaseUrl:
-    "https://raw.githubusercontent.com/TheYogMehta/extensions/refs/heads/main",
+    "https://raw.githubusercontent.com/RavenGod1/extensions/refs/heads/Test",
   isDefault: true,
 };
 
@@ -1803,7 +1803,7 @@ async function HandleExtensions(
 
   const rawBase =
     RepoBaseUrl ||
-    "https://raw.githubusercontent.com/TheYogMehta/extensions/refs/heads/main";
+    "https://raw.githubusercontent.com/RavenGod1/extensions/refs/heads/Test";
 
   if (TaskType === "add") {
     try {

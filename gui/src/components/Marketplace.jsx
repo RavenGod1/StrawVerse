@@ -690,7 +690,7 @@ export default function Marketplace({ initialType }) {
                 provider.icon ||
                 `${(
                   provider.repoBaseUrl ||
-                  "https://raw.githubusercontent.com/TheYogMehta/extensions/refs/heads/main"
+                  "https://raw.githubusercontent.com/RavenGod1/extensions/refs/heads/Test"
                 ).replace(/\/$/, "")}/ico/${provider.name}.ico`;
               const installedVer = getInstalledVersion(provider);
               const hasUpdate = installedVer
