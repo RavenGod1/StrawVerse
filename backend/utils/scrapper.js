@@ -1809,6 +1809,13 @@ global.axios = axios.create({
 });
 global.axios.interceptors.request.use(
   async (config) => {
+    // The custom adapters never serialize config.params (axios only does that
+    // in its default adapters) — fold them into the URL once here, or every
+    // param request (TMDB api_key, site search queries) loses its query string.
+    if (config.params) {
+      config.url = axios.getUri(config);
+      delete config.params;
+    }
     const headers = getHeaders(config.url, config.method);
     if (config.headers) {
       if (headers["User-Agent"]) {
