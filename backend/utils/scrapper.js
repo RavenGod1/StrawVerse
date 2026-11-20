@@ -856,9 +856,11 @@ global.cloudflarebypass = async (targetUrl, force = false, referer = null) => {
         }
       } catch (_) {}
 
-      if (force) {
-        showScrapperWindow();
-      }
+      // Never show the window up front: every caller passes force=true
+      // (background retries), and the destination may be a plain error page
+      // (e.g. nginx 404 on a CDN root). The loop below surfaces it only
+      // when the page is a real challenge; challenge JS keeps running while
+      // hidden (backgroundThrottling: false).
 
       // Reset window state so title and DOM do not retain stale state
       try {
@@ -931,7 +933,10 @@ global.cloudflarebypass = async (targetUrl, force = false, referer = null) => {
           global.LastScrapperResponseCode === 403 ||
           global.LastScrapperResponseCode === 503;
 
-        if (isChallenge || isHttpBlocked) {
+        // Show only for real challenges. A bare isHttpBlocked (403/503)
+        // is not enough: plain nginx error pages return 403 too, and those
+        // popped the window during background downloads.
+        if (isChallenge) {
           showScrapperWindow();
         }
 

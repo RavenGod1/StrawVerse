@@ -1,5 +1,13 @@
 # Changelog
 
+# [12.1.2] - 2026-11-20
+
+### Verification Window
+
+- **No More Stray Popups During Downloads:** The Cloudflare "Verification" window no longer pops up over the app during background downloads and source retries. It now appears only when a real Cloudflare challenge actually needs solving — previously every background check showed it, including on plain "404 Not Found" error pages of CDN hosts.
+
+- Version bump to 12.1.2 (versionCode 34).
+
 # [12.1.1] - 2026-11-19
 
 ### Settings on Android
