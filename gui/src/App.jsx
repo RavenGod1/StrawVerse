@@ -469,6 +469,10 @@ export default function App() {
             return;
           }
 
+          // Settings section open on Android: back returns to the category
+          // index instead of leaving settings entirely.
+          if (window.settingsHardwareBack?.()) return;
+
           if (historyRef.current.length > 1) {
             cancelObsoleteNativeRequests();
             setHistory((prev) => prev.slice(0, prev.length - 1));
@@ -779,7 +783,7 @@ export default function App() {
       case "settings":
         return (
           <SettingsView
-            initialTab={current.params?.tab || "general"}
+            initialTab={current.params?.tab}
             scrollToSection={current.params?.scrollTo || null}
             onMarketplaceOpen={(initialType) =>
               navigateTo("marketplace", { type: initialType })

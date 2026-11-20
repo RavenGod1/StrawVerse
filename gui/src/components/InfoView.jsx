@@ -1778,18 +1778,35 @@ export default function InfoView({
     return formatAudioLangs([...merged]) || "SUB";
   }, [type, episodesOrChapters, details, dubSelect]);
 
+  // Audio languages for Movies/TV titles (from the provider, e.g. the
+  // post's "Dual Audio {Hindi-English}" tag or TMDB spoken languages)
+  const movieAudioLangs = useMemo(() => {
+    if (type !== "Movies" || !Array.isArray(details?.audioLangs)) return null;
+    const clean = details.audioLangs.map((l) => String(l).trim()).filter(Boolean);
+    return clean.length ? clean.join("/") : null;
+  }, [type, details]);
+
   // Audio languages for the Seasons/Recommendations cards (one bulk lookup)
   const [extrasLangs, setExtrasLangs] = useState({});
   const extrasLangsKeyRef = useRef(null);
 
   useEffect(() => {
+    // Every entry costs one provider episode request, so only ask for the
+    // cards that are actually rendered (and never on a non-anime page).
+    if (type !== "Anime") {
+      extrasLangsKeyRef.current = null;
+      setExtrasLangs({});
+      return;
+    }
     const targets = [
       ...((extras?.seasons || []).map((s) => s.idMal)),
-      ...((extras?.recommendations || []).map((r) => r.idMal)),
+      ...((extras?.recommendations || [])
+        .slice(0, recCount)
+        .map((r) => r.idMal)),
     ]
       .map(Number)
       .filter((n) => Number.isInteger(n) && n > 0);
-    const unique = [...new Set(targets)].slice(0, 24);
+    const unique = [...new Set(targets)].slice(0, 12);
     if (!unique.length) {
       extrasLangsKeyRef.current = null;
       setExtrasLangs({});
@@ -1830,7 +1847,7 @@ export default function InfoView({
     return () => {
       clearTimeout(timer);
     };
-  }, [extras]);
+  }, [extras, type, recCount]);
 
   useEffect(() => {
     if (window.sharedStateAPI && window.sharedStateAPI.on) {
@@ -3698,6 +3715,12 @@ export default function InfoView({
               </span>
             )}
           </div>
+
+          {movieAudioLangs && (
+            <div className="meta-item">
+              <strong>Languages - {movieAudioLangs}</strong>
+            </div>
+          )}
 
           {(() => {
             const rawDescription = (details?.description || "")

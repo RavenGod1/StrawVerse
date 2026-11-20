@@ -18,6 +18,8 @@ const {
   queryAll,
   queryOne,
   run,
+  getKeyValue,
+  setKeyValue,
 } = require("./db");
 const { getOSName, sanitizeFolderName } = require("./constants");
 const {
@@ -1545,6 +1547,8 @@ async function syncLibraryIdsWithMapping() {
 module.exports = {
   checkForMappingUpdates,
   parseSyncIntervalHours,
+  getSyncIntervalHours,
+  shouldAutoSyncMapping,
   applyDeltaUpdates,
   syncExtensionMapping,
   cleanupExtensionMapping,

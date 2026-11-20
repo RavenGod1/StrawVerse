@@ -1417,3 +1417,73 @@
 .theme-reset-btn:active {
   transform: rotate(180deg) scale(0.92);
 }
+
+/* ---------------------------------------------------------------- */
+/* Mihon-style category index (Android)                              */
+/* ---------------------------------------------------------------- */
+.settings-header-left {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.settings-back-btn {
+  display: flex;
+  align-items: center;
+  padding: 6px;
+  margin-left: -6px;
+  background: none;
+  border: none;
+  color: var(--text-main);
+  cursor: pointer;
+}
+
+.settings-category-list {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0 16px;
+}
+
+.settings-category-item {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  width: 100%;
+  padding: 14px 10px;
+  background: none;
+  border: none;
+  border-radius: 14px;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-category-item:active {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.settings-category-icon {
+  display: flex;
+  flex-shrink: 0;
+  color: var(--accent-hover);
+}
+
+.settings-category-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.settings-category-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.settings-category-desc {
+  font-size: 13.5px;
+  color: var(--text-muted);
+}

@@ -16,6 +16,15 @@ import {
   Check,
   FolderOpen,
   RotateCcw,
+  ArrowLeft,
+  Palette,
+  Tv,
+  BookOpen,
+  Film,
+  Play,
+  History,
+  ScrollText,
+  Info,
 } from "lucide-react";
 import { swalSuccess, swalError, swalConfirm } from "../../utils/swal";
 import { isMobileApp } from "../../utils/nativeBridge";
@@ -70,6 +79,64 @@ const SETTINGS_TABS = [
   "history",
   "changelog",
   "about",
+];
+
+// Mihon-style category index shown instead of the tab row on Android.
+const MOBILE_SECTIONS = [
+  {
+    id: "general",
+    label: "General & UI",
+    desc: "Theme, pagination, developer mode",
+    icon: Palette,
+  },
+  {
+    id: "anime",
+    label: "Anime Settings",
+    desc: "Catalog, providers, episodes",
+    icon: Tv,
+  },
+  {
+    id: "manga",
+    label: "Manga Settings",
+    desc: "Reader defaults, providers",
+    icon: BookOpen,
+  },
+  {
+    id: "movies",
+    label: "Movies & Series",
+    desc: "Catalog and provider options",
+    icon: Film,
+  },
+  {
+    id: "player",
+    label: "Player Settings",
+    desc: "Playback, subtitles, MPV",
+    icon: Play,
+  },
+  {
+    id: "tags",
+    label: "Library Tags",
+    desc: "Tags, visibility, ordering",
+    icon: Tag,
+  },
+  {
+    id: "history",
+    label: "History & Stats",
+    desc: "Watch history and statistics",
+    icon: History,
+  },
+  {
+    id: "changelog",
+    label: "Release Notes",
+    desc: "What's new in this version",
+    icon: ScrollText,
+  },
+  {
+    id: "about",
+    label: "About & Disclaimer",
+    desc: "Version, credits, legal",
+    icon: Info,
+  },
 ];
 
 const PREVIEW_SAMPLE_CARDS = [
@@ -134,7 +201,9 @@ const PRESET_THEMES = [
 ];
 
 export default function SettingsView({
-  initialTab = "general",
+  // No default: an absent tab means "opened from the settings icon", which on
+  // Android must land on the category index (mobileIndex), not on a section.
+  initialTab = null,
   scrollToSection = null,
   onSelectMedia,
   onSettingsSaved,
@@ -176,7 +245,6 @@ export default function SettingsView({
   const [maxLogFiles, setMaxLogFiles] = useState(5);
   const [logDirectory, setLogDirectory] = useState("");
   const [autoSkipIntro, setAutoSkipIntro] = useState(true);
-  const [syncingMapping, setSyncingMapping] = useState(null);
   const [mappingSyncInterval, setMappingSyncInterval] = useState(1);
   const [infoRecCount, setInfoRecCount] = useState(4);
   const [subFontSize, setSubFontSize] = useState(46);
@@ -395,12 +463,32 @@ export default function SettingsView({
     if (initialTab === "anime_manga") return "anime";
     return initialTab || "general";
   });
+  // Android opens on the Mihon-style category index; an explicit tab (deep
+  // link from elsewhere in the app) drops straight into that section.
+  const [mobileIndex, setMobileIndex] = useState(!initialTab);
 
   useEffect(() => {
     setActiveTab(
       initialTab === "anime_manga" ? "anime" : initialTab || "general",
     );
+    if (initialTab) setMobileIndex(false);
   }, [initialTab]);
+
+  // Android hardware back should return to the category index instead of
+  // leaving settings entirely; App's backButton listener calls this first.
+  useEffect(() => {
+    if (isMobileApp() && !mobileIndex) {
+      window.settingsHardwareBack = () => {
+        setMobileIndex(true);
+        return true;
+      };
+    } else {
+      window.settingsHardwareBack = undefined;
+    }
+    return () => {
+      window.settingsHardwareBack = undefined;
+    };
+  }, [mobileIndex]);
 
   useEffect(() => {
     if (scrollToSection) {
@@ -446,6 +534,8 @@ export default function SettingsView({
   const handleTouchEnd = (e) => {
     if (!e.changedTouches || e.changedTouches.length !== 1) return;
     if (!touchStartRef.current.time) return;
+    // On the Android category index a swipe must not silently change tabs.
+    if (isMobileApp() && mobileIndex) return;
 
     const touchEndX = e.changedTouches[0].clientX;
     const touchEndY = e.changedTouches[0].clientY;
@@ -986,29 +1076,8 @@ export default function SettingsView({
     }
   };
 
-  // Mapping auto-sync saves directly instead of through the debounced form
-  // state: it only affects the backend's boot-time sync, not a form field.
-  const mappingToggleKey = (type) =>
-    type === "Manga" ? "mappingAutoSyncManga" : "mappingAutoSyncAnime";
-
-  const handleMappingAutoSyncChange = async (val, type) => {
-    const value = val === "true";
-    const key = mappingToggleKey(type);
-    setSettings((prev) => ({ ...(prev || {}), [key]: value }));
-    try {
-      if (window.sharedStateAPI && window.sharedStateAPI.updateSetting) {
-        await window.sharedStateAPI.updateSetting(key, value);
-      } else {
-        const res = await apiPost("/api/settings/update", { [key]: value });
-        if (res && res.success === false) {
-          throw new Error(res.error || "Save failed");
-        }
-      }
-    } catch (err) {
-      swalError("Error Saving Settings", err.message);
-    }
-  };
-
+  // Mapping interval saves directly instead of through the debounced form
+  // state: it only tunes the backend's background timer, not a form field.
   const handleMappingIntervalChange = async (raw) => {
     const n = parseInt(raw, 10);
     const clean = Number.isFinite(n) && n >= 0 ? n : 1;
@@ -1033,24 +1102,6 @@ export default function SettingsView({
       }
     } catch (err) {
       swalError("Error Saving Settings", err.message);
-    }
-  };
-
-  const handleSyncMappingNow = async (type) => {
-    setSyncingMapping(type);
-    try {
-      const res = await apiPost("/api/mapping/refresh", { type });
-      if (res && res.success === false) {
-        throw new Error(res.error || "Sync failed");
-      }
-      swalSuccess(
-        "Mapping Updated",
-        `The ${type.toLowerCase()} mapping database is up to date.`,
-      );
-    } catch (err) {
-      swalError("Sync Failed", err.message);
-    } finally {
-      setSyncingMapping(null);
     }
   };
 
@@ -1461,7 +1512,27 @@ export default function SettingsView({
       <div className="settings-container-inner">
         <div className="settings-top-section">
           <header className="settings-header">
-            <h1 className="settings-title">App Settings</h1>
+            <div className="settings-header-left">
+              {isMobileApp() && !mobileIndex && (
+                <button
+                  type="button"
+                  className="settings-back-btn"
+                  aria-label="Back to settings list"
+                  onClick={() => setMobileIndex(true)}
+                >
+                  <ArrowLeft size={22} />
+                </button>
+              )}
+              <h1 className="settings-title">
+                {isMobileApp()
+                  ? mobileIndex
+                    ? "Settings"
+                    : (MOBILE_SECTIONS.find((s) => s.id === activeTab)
+                        ?.label ?? "Settings")
+                  : "App Settings"}
+              </h1>
+            </div>
+            {(!isMobileApp() || !mobileIndex) && (
             <div className="u-style-66">
               {saving ? (
                 <>
@@ -1485,9 +1556,11 @@ export default function SettingsView({
                 </>
               )}
             </div>
+            )}
           </header>
 
-          {/* Horizontal Tabs Navigation */}
+          {/* Horizontal Tabs Navigation — desktop only; Android uses the category index */}
+          {!isMobileApp() && (
           <div className="settings-tabs-row" ref={tabsRowRef}>
             <button
               type="button"
@@ -1553,8 +1626,35 @@ export default function SettingsView({
               About & Disclaimer
             </button>
           </div>
+          )}
         </div>
 
+        {isMobileApp() && mobileIndex ? (
+          <div className="settings-category-list">
+            {MOBILE_SECTIONS.map((s) => {
+              const Icon = s.icon;
+              return (
+                <button
+                  key={s.id}
+                  type="button"
+                  className="settings-category-item"
+                  onClick={() => {
+                    setActiveTab(s.id);
+                    setMobileIndex(false);
+                  }}
+                >
+                  <span className="settings-category-icon">
+                    <Icon size={24} />
+                  </span>
+                  <span className="settings-category-text">
+                    <span className="settings-category-title">{s.label}</span>
+                    <span className="settings-category-desc">{s.desc}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        ) : (
         <form onSubmit={(e) => e.preventDefault()} className="settings-form">
           {activeTab === "general" && (
             <div className="settings-column">
@@ -1607,68 +1707,6 @@ export default function SettingsView({
                     minWidth={200}
                   />
                 </SettingsRow>
-                <SettingsRow
-                  label="Anime Mapping Auto-Sync"
-                  desc="Sync anime title-to-MAL mappings when the app starts, skipped when the data is already fresh. Off skips the startup sync only — the background interval below and Sync now still work."
-                >
-                  <div
-                    style={{ display: "flex", gap: 8, alignItems: "center" }}
-                  >
-                    <Dropdown
-                      value={String(
-                        settings?.mappingAutoSyncAnime ??
-                          (settings?.mappingAutoSync !== false),
-                      )}
-                      onChange={(val) =>
-                        handleMappingAutoSyncChange(val, "Anime")
-                      }
-                      options={[
-                        { value: "true", label: "On" },
-                        { value: "false", label: "Off" },
-                      ]}
-                      minWidth={110}
-                    />
-                    <button
-                      type="button"
-                      className="settings-market-btn"
-                      disabled={syncingMapping === "Anime"}
-                      onClick={() => handleSyncMappingNow("Anime")}
-                    >
-                      {syncingMapping === "Anime" ? "Syncing..." : "Sync now"}
-                    </button>
-                  </div>
-                </SettingsRow>
-                <SettingsRow
-                  label="Manga Mapping Auto-Sync"
-                  desc="Sync manga title-to-MAL mappings when the app starts, skipped when the data is already fresh. Off skips the startup sync only — the background interval below and Sync now still work."
-                >
-                  <div
-                    style={{ display: "flex", gap: 8, alignItems: "center" }}
-                  >
-                    <Dropdown
-                      value={String(
-                        settings?.mappingAutoSyncManga ??
-                          (settings?.mappingAutoSync !== false),
-                      )}
-                      onChange={(val) =>
-                        handleMappingAutoSyncChange(val, "Manga")
-                      }
-                      options={[
-                        { value: "true", label: "On" },
-                        { value: "false", label: "Off" },
-                      ]}
-                      minWidth={110}
-                    />
-                    <button
-                      type="button"
-                      className="settings-market-btn"
-                      disabled={syncingMapping === "Manga"}
-                      onClick={() => handleSyncMappingNow("Manga")}
-                    >
-                      {syncingMapping === "Manga" ? "Syncing..." : "Sync now"}
-                    </button>
-                  </div>
-                </SettingsRow>
                 <div className="settings-row-item">
                   <div className="settings-row-info">
                     <div className="settings-row-label">
@@ -1676,8 +1714,8 @@ export default function SettingsView({
                     </div>
                     <div className="settings-row-hint">
                       Hours between automatic background mapping syncs while
-                      the app is running. 0 disables the timer; startup sync
-                      and Sync now still follow the settings above.
+                      the app is running. 0 disables the timer; a sync still
+                      runs at launch.
                     </div>
                   </div>
                   <div className="settings-row-control u-style-72">
@@ -3906,6 +3944,7 @@ export default function SettingsView({
             </div>
           )}
         </form>
+        )}
       </div>
     </div>
   );

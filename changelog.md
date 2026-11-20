@@ -1,5 +1,45 @@
 # Changelog
 
+# [12.1.1] - 2026-11-19
+
+### Settings on Android
+
+- **Settings Icon Opens the Category List:** Tapping the settings icon on Android now opens the Mihon-style category index (General & UI, Anime Settings, Manga Settings, …) instead of jumping straight into a section. Links that open a specific section (for example the player settings shortcut) still open that section directly, and the back arrow in the header returns to the index.
+
+### Catalog Fixes (Android)
+
+- **No More Looping Pages:** A catalog page that fails to load is now skipped instead of being requested again and again — the old behaviour re-sent the same failing page up to dozens of times per minute. The scroll stops after two consecutive failures instead of hammering the site.
+- **No Duplicate Cards:** Results are merged by id, so a provider that answers a page with rows you already have can no longer stack the same anime on top of each other. Preloading a page window no longer overwrites rows that were loaded in the meantime.
+
+### Dub Languages
+
+- **Dubs Are Visible Now:** AnimeSuge, AniXo and Miruro report which tracks an episode is available in, so the DUB option and the "SUB & DUB" badge show the real availability instead of always assuming sub-only. Update the extensions in Settings → Extensions to get it.
+
+### Fewer Background Requests
+
+- **Card Languages Only When Visible:** The subtitle/dub lookup behind the Seasons and Recommendations cards now runs only for the cards that are on screen and only on anime pages, instead of fanning out to every provider for every card.
+- **History Poll Slowed Down:** The local library history is polled every 30 seconds instead of every 4 seconds, and still refreshes immediately when the app regains focus.
+
+- Version bump to 12.1.1 (versionCode 33).
+
+# [12.1.0] - 2026-11-19
+
+### Languages & Audio Tracks
+
+- **Languages Row:** Anime title pages now show a "Languages" row with the tracks the provider offers (SUB / DUB / HSUB), and the episode list can be filtered by track.
+- **Mihon-Style Settings on Android:** Settings on Android is now a category list (General & UI, Anime Settings, Manga Settings, Movies & Series, Player Settings, Library Tags, History & Stats, Release Notes, About) instead of a tab row.
+
+### UI Cleanups
+
+- **Catalog Badge Cleanup:** Removed the noisy provider badges from catalog cards and the auto-sync toggle that duplicated the mapping sync interval setting.
+- **Merge Soft Subtitles:** The player can now merge a soft subtitle track into the video.
+
+### Extensions
+
+- Removed the shonen, anivault, komiku, anime7 and arrowtv sources; reworked the movies sources (Reelix, VegaMovies, UHDMovies) to expose audio languages.
+
+- Version bump to 12.1.0 (versionCode 32).
+
 # [12.0.5] - 2026-11-17
 
 ### Mapping Sync Timer

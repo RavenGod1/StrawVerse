@@ -1,9 +1,7 @@
 import { useState, useEffect } from "react";
 import {
   Download,
-  Film,
   Eye,
-  CheckCircle,
   BookOpen,
   ChevronLeft,
   ChevronRight,
@@ -65,7 +63,6 @@ export default function CatalogGrid({
   handlePageChange,
   handleRemoveFromLibrary,
   getItemTagInfo,
-  getCardMeta,
   onOpenTagModal,
 }) {
   const [loadingStatusText, setLoadingStatusText] = useState("");
@@ -262,33 +259,7 @@ export default function CatalogGrid({
                   </div>
                 )}
 
-                {item.nextEpisodeIn && (
-                  <div
-                    className="indicator-badge schedule-badge"
-                    title="Next release countdown"
-                  >
-                    <Film size={12} className="u-style-16" />
-                    {item.nextEpisodeIn}
-                  </div>
-                )}
-
-                {item.isCompleted || item.malStatus === "completed" ? (
-                  <div
-                    className="indicator-badge completed-badge"
-                    title={`Completed${
-                      item.watched
-                        ? ` (${type === "Manga" ? "Ch " : "Ep "}${item.watched}${item.totalEpisodes ? `/${item.totalEpisodes}` : ""})`
-                        : ""
-                    }`}
-                  >
-                    <CheckCircle size={12} className="u-style-16" />
-                    Completed
-                    {item.watched > 0
-                      ? ` (${item.totalEpisodes > 0 ? `${item.watched}/${item.totalEpisodes}` : `${type === "Manga" ? "Ch " : "Ep "}${item.watched}`})`
-                      : ""}
-                  </div>
-                ) : (
-                  item.watched !== undefined &&
+                {item.watched !== undefined &&
                   item.watched !== null &&
                   item.watched > 0 && (
                     <div
@@ -304,35 +275,9 @@ export default function CatalogGrid({
                         ? `${item.watched}/${item.totalEpisodes}`
                         : `${type === "Manga" ? "Ch " : "Ep "}${item.watched}`}
                     </div>
-                  )
-                )}
+                  )}
               </div>
 
-              {/* Airing status + sub/dub strip along the poster bottom */}
-              {(() => {
-                const meta = getCardMeta ? getCardMeta(item) : null;
-                if (!meta) return null;
-                return (
-                  <div className="card-foot-badges">
-                    {meta.status && (
-                      <span
-                        className={`foot-badge status-${meta.status.kind}`}
-                        title="Airing status"
-                      >
-                        {meta.status.label}
-                      </span>
-                    )}
-                    {meta.langs && (
-                      <span
-                        className="foot-badge langs-badge"
-                        title="Available audio"
-                      >
-                        {meta.langs}
-                      </span>
-                    )}
-                  </div>
-                );
-              })()}
             </div>
 
             <div className="card-info">

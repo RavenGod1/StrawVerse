@@ -20,7 +20,7 @@ import {
 import Swal from "sweetalert2";
 import { swalSuccess, swalError, swalConfirm } from "../utils/swal";
 import { apiPost, parseTags } from "../utils/common";
-import { normalizeStatus, formatAudioLangs } from "../utils/mediaBadges";
+import { mergeUniqueResults } from "../utils/catalogMerge";
 
 import CatalogHeader from "./catalog/CatalogHeader";
 import LibraryStats from "./catalog/LibraryStats";
@@ -329,6 +329,7 @@ export default function Catalog({
   const sentinelRef = useRef(null);
   const infiniteObserverRef = useRef(null);
   const isFetchingMoreRef = useRef(false);
+  const appendFailuresRef = useRef(0);
 
   const wrapperRef = useRef(null);
   const topSentinelRef = useRef(null);
@@ -395,12 +396,6 @@ export default function Catalog({
     return sessionStorage.getItem(`catalog_source_${type}`) || "mal";
   });
   const [totalCount, setTotalCount] = useState(null);
-  const [cardMeta, setCardMeta] = useState({});
-  const cardMetaStatusReqRef = useRef(new Set());
-  const cardMetaLangsReqRef = useRef(new Set());
-  // Failed passes are retried on a later render (the key is unmarked), so we
-  // count attempts per key+field to give up after 3 instead of looping.
-  const cardMetaAttemptRef = useRef(new Map());
   const tagChipsRef = useRef(null);
 
   const filteredProviders = useMemo(() => {
@@ -504,199 +499,6 @@ export default function Catalog({
       results: displayResults,
     }),
     [data, displayResults],
-  );
-
-  // MAL id for badge lookups: only trust a real malid, never a provider id.
-  // (Unique/unmapped provider lists carry provider ids in `id` — using that
-  // as a malid would query the wrong title's status.)
-  const getMalIdForItem = (item) => {
-    const raw = item?.malid || item?.MalID || null;
-    const num = Number(raw);
-    return Number.isInteger(num) && num > 0 ? num : null;
-  };
-
-  // Cache key for a card's badge metadata. Cards with a MAL id use it; cards
-  // without one fall back to the provider + provider id they came from so the
-  // extension-side lookups (status from the mapping DB, languages from the
-  // provider's own episode list) still have somewhere to land.
-  const getItemMetaKey = (item) => {
-    const malid = getMalIdForItem(item);
-    if (malid != null) return `${type}:${malid}`;
-    if (item?.provider && item?.id !== undefined && item?.id !== null) {
-      return `${type}:p:${item.provider}:${item.id}`;
-    }
-    return null;
-  };
-
-  // Status + sub/dub badges for catalog cards, fetched as two passes so the
-  // fast AniList status lookup paints without waiting on the slow provider
-  // episode-list lookup (langs). Both passes fire on the same 500ms defer and
-  // run concurrently; each merges its own field, so a slow langs response
-  // never delays a status badge. Requests are capped at 24 cards (the
-  // endpoint's own limit) and a response re-runs this effect, cascading
-  // through any remaining items. Keys stay marked after a success (no
-  // refetch of a known-null) and are unmarked on failure so a later render
-  // retries.
-  useEffect(() => {
-    const items = Array.isArray(displayResults) ? displayResults : [];
-    const needStatus = [];
-    const needLangs = [];
-    const seen = new Set();
-    for (const item of items) {
-      const key = getItemMetaKey(item);
-      if (!key || seen.has(key)) continue;
-      seen.add(key);
-      const malid = getMalIdForItem(item);
-      // A card the backend can be asked about (a MAL id, or the provider +
-      // provider id it came from for the extension-side lookups) always goes
-      // through the batched lookup — AniList wins over the card's own status.
-      // Status/languages carried on the item itself only satisfy cards that
-      // nothing can be fetched for.
-      const fetchable =
-        malid != null ||
-        !!(item.provider && item.id !== undefined && item.id !== null);
-      const fetched = cardMeta[key];
-      const hasStatus =
-        !!normalizeStatus(fetched?.status, type) ||
-        cardMetaStatusReqRef.current.has(key) ||
-        (!fetchable && !!normalizeStatus(item.status, type));
-      const hasLangs =
-        type !== "Anime" ||
-        !!formatAudioLangs(fetched?.langs) ||
-        cardMetaLangsReqRef.current.has(key) ||
-        (!fetchable && !!formatAudioLangs(item.langs));
-      const lookup = {
-        key,
-        malid,
-        provider: item.provider || null,
-        id: item.id !== undefined ? item.id : null,
-        title: item.title || null,
-      };
-      if (!hasStatus && needStatus.length < 24) {
-        needStatus.push(lookup);
-      }
-      if (!hasLangs && needLangs.length < 24) {
-        needLangs.push(lookup);
-      }
-      if (
-        needStatus.length >= 24 &&
-        (type !== "Anime" || needLangs.length >= 24)
-      ) {
-        break;
-      }
-    }
-          // Skip if cardMeta already has all the needed data (from previous filter changes)
-      if (cardMeta && Object.keys(cardMeta).length >= displayResults.length) {
-        const hasAllStatus = displayResults.every((item) => {
-          const key = getItemMetaKey(item);
-          return cardMeta[key]?.status !== null;
-        });
-        const hasAllLangs = displayResults.every((item) => {
-          const key = getItemMetaKey(item);
-          return cardMeta[key]?.langs !== null;
-        });
-        if (hasAllStatus && hasAllLangs) {
-          setCardMeta((prev) => prev);
-          return;
-        }
-      }
-      const langsBatch = type === "Anime" ? needLangs : [];
-    if (!needStatus.length && !langsBatch.length) return;
-
-    const timer = setTimeout(async () => {
-      const runPass = async (batch, extraBody, field, ref) => {
-        batch.forEach(({ key }) => ref.current.add(key));
-        try {
-          const response = await fetch("/api/info/bulk-meta", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              type,
-              items: batch.map(({ key, malid, provider, id, title }) => ({
-                key,
-                malid,
-                provider,
-                id,
-                title,
-              })),
-              ...extraBody,
-            }),
-          });
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          const payload = await response.json();
-          setCardMeta((prev) => {
-            const next = { ...prev };
-            for (const { key } of batch) {
-              const got = payload?.meta?.[key];
-              const existing = prev[key] || { status: null, langs: null };
-              next[key] = {
-                status: field === "status" ? got?.status ?? null : existing.status,
-                langs: field === "langs" ? got?.langs ?? null : existing.langs,
-              };
-            }
-            return next;
-          });
-          // The backend flags a pass that failed (outage/rate limit) as
-          // distinct from "genuinely unknown" — unmark those keys so a later
-          // render retries them instead of pinning null badges all session.
-          const failed =
-            field === "status" ? payload?.statusFailed : payload?.langsFailed;
-          if (failed) {
-            batch.forEach(({ key }) => {
-              const id = `${field}:${key}`;
-              const attempts = (cardMetaAttemptRef.current.get(id) || 0) + 1;
-              cardMetaAttemptRef.current.set(id, attempts);
-              if (attempts < 3) ref.current.delete(key);
-            });
-          }
-        } catch (err) {
-          console.error(`Failed to load card ${field}:`, err);
-          batch.forEach(({ key }) => ref.current.delete(key));
-        }
-      };
-
-      await Promise.all([
-        ...(needStatus.length
-          ? [
-              runPass(
-                needStatus,
-                { includeLangs: false },
-                "status",
-                cardMetaStatusReqRef,
-              ),
-            ]
-          : []),
-        ...(langsBatch.length
-          ? [
-              runPass(
-                langsBatch,
-                { includeStatus: false },
-                "langs",
-                cardMetaLangsReqRef,
-              ),
-            ]
-          : []),
-      ]);
-    }, 250);
-    return () => clearTimeout(timer);
-  }, [displayResults, type, provider, cardMeta]);
-
-  const getCardMeta = useCallback(
-    (item) => {
-      if (!item) return null;
-      const key = getItemMetaKey(item);
-      const fetched = key ? cardMeta[key] : null;
-      const status =
-        normalizeStatus(fetched?.status, type) ||
-        normalizeStatus(item.status, type);
-      const langs =
-        type === "Anime"
-          ? formatAudioLangs(item.langs) || formatAudioLangs(fetched?.langs)
-          : null;
-      if (!status && !langs) return null;
-      return { status, langs };
-    },
-    [cardMeta, type, provider],
   );
 
   const handleResetFilters = () => {
@@ -1669,6 +1471,7 @@ export default function Catalog({
       }
     }
 
+    const preloaded = {};
     if (pagesToFetch.length > 0) {
       await Promise.all(
         pagesToFetch.map(async (p) => {
@@ -1683,7 +1486,7 @@ export default function Catalog({
             if (response.ok) {
               const resData = await response.json();
               if (resData?.results) {
-                updatedPages[p] = applyCustomOrder(
+                preloaded[p] = applyCustomOrder(
                   resData.results,
                   currentFilters,
                 );
@@ -1696,7 +1499,12 @@ export default function Catalog({
       );
     }
 
-    setFetchedPages(updatedPages);
+    // Merge, never overwrite: a concurrent append may already have stored
+    // pages this snapshot does not know about.
+    if (Object.keys(preloaded).length > 0) {
+      setFetchedPages((prev) => ({ ...prev, ...preloaded }));
+      Object.assign(updatedPages, preloaded);
+    }
 
     let actualEnd = endP;
     const windowResults = [];
@@ -1708,12 +1516,12 @@ export default function Catalog({
       }
     }
 
-    setLoadedPageStart(startP);
-    setLoadedPageEnd(actualEnd);
+    setLoadedPageStart((prev) => Math.min(prev, startP));
+    setLoadedPageEnd((prev) => Math.max(prev, actualEnd));
     setData((prev) => ({
       ...prev,
       currentPage: targetPage,
-      results: windowResults,
+      results: mergeUniqueResults(prev?.results || [], windowResults),
     }));
     didFetchRef.current = true;
   };
@@ -1771,6 +1579,22 @@ export default function Catalog({
     setLoadedPageStart(1);
     setLoadedPageEnd(1);
     fetchData(1, activeFilters);
+  };
+
+  // A failed page must never be requested again: the infinite-scroll observer
+  // would otherwise re-fire the very same failing page forever (dozens of
+  // identical 404s in a row). Advance past it and stop after two failures.
+  const markAppendFailed = (failedPage) => {
+    appendFailuresRef.current += 1;
+    setFetchedPages((prev) => ({ ...prev, [failedPage]: prev[failedPage] || [] }));
+    setLoadedPageEnd((prev) => (failedPage > prev ? failedPage : prev));
+    if (appendFailuresRef.current >= 2) {
+      setData((prev) => ({
+        ...prev,
+        hasNextPage: false,
+        totalPages: failedPage,
+      }));
+    }
   };
 
   const fetchData = async (
@@ -1883,6 +1707,8 @@ export default function Catalog({
             currentPage: 1,
             hasNextPage: false,
           });
+        } else {
+          markAppendFailed(page);
         }
       } else if (resData?.error) {
         const lowerMsg = (resData.message || "").toLowerCase();
@@ -1906,6 +1732,8 @@ export default function Catalog({
             currentPage: 1,
             hasNextPage: false,
           });
+        } else {
+          markAppendFailed(page);
         }
       } else {
         lastLoadedKeyRef.current = `${type}_${provider}`;
@@ -1914,14 +1742,32 @@ export default function Catalog({
           currentFilters,
         );
         if (isAppend) {
+          appendFailuresRef.current = 0;
           setFetchedPages((prev) => ({ ...prev, [page]: sortedResults }));
           setLoadedPageEnd(page);
 
-          setData((prevData) => ({
-            ...resData,
-            currentPage: page,
-            results: [...(prevData?.results || []), ...sortedResults],
-          }));
+          setData((prevData) => {
+            const previous = prevData?.results || [];
+            const merged = mergeUniqueResults(previous, sortedResults);
+            // The provider ignored the page number and repeated itself (or the
+            // catalogue ended): stop instead of piling up the same cards.
+            if (merged.length === previous.length) {
+              return {
+                ...prevData,
+                ...resData,
+                currentPage: page,
+                results: merged,
+                hasNextPage: false,
+                totalPages: page,
+              };
+            }
+            return {
+              ...prevData,
+              ...resData,
+              currentPage: page,
+              results: merged,
+            };
+          });
         } else {
           setFetchedPages({ [page]: sortedResults });
           setLoadedPageStart(page);
@@ -1968,6 +1814,8 @@ export default function Catalog({
           currentPage: 1,
           hasNextPage: false,
         });
+      } else {
+        markAppendFailed(page);
       }
     } finally {
       if (lastRequestRef.current === currentRequestId) {
@@ -2114,7 +1962,9 @@ export default function Catalog({
 
       window.addEventListener("focus", handleFocus);
       document.addEventListener("visibilitychange", handleVisibility);
-      const timer = setInterval(fetchHistoryData, 4000);
+      // The local history only changes while the user watches something, so a
+      // slow poll plus focus/visibility refreshes is enough (was every 4 s).
+      const timer = setInterval(fetchHistoryData, 30000);
 
       return () => {
         window.removeEventListener("focus", handleFocus);
@@ -2685,7 +2535,7 @@ export default function Catalog({
           setData((prevData) => ({
             ...prevData,
             currentPage: prevPage,
-            results: newResults,
+            results: mergeUniqueResults([], newResults),
           }));
 
           return nextPages;
@@ -3298,7 +3148,6 @@ export default function Catalog({
               handlePageChange={handlePageChange}
               handleRemoveFromLibrary={handleRemoveFromLibrary}
               getItemTagInfo={getItemTagInfo}
-              getCardMeta={getCardMeta}
               onOpenTagModal={handleOpenTagModal}
             />
           )}
