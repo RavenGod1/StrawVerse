@@ -1,5 +1,22 @@
 # Changelog
 
+# [12.1.7] - 2026-11-22
+
+### Android Reliability
+
+- **No More Frozen App:** A Cloudflare challenge that cannot be solved no longer leaves the app waiting: the verification now gives up after 30 seconds and cools that site down for a minute, so requests fail fast instead of hanging until the app is restarted.
+
+### Player & Downloads
+
+- **Your Language Choice Wins:** Picking SUB or DUB now plays that version. The app no longer replaces an explicit choice with the language remembered from an earlier episode.
+- **Slower Connections Survive:** A download part that takes a while to start is no longer aborted after one minute, so downloads on slow mobile connections keep going instead of restarting.
+
+### Maintenance
+
+- **Quieter Logs:** Repeated Cloudflare retries no longer dump every request header into the log, log files are capped at 10 MB each, and the downloader no longer reports thread counts above the real limit.
+
+- Version bump to 12.1.7 (versionCode 39).
+
 # [12.1.6] - 2026-11-22
 
 ### Download Reliability

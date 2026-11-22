@@ -583,10 +583,6 @@ async function boot() {
           console.log(
             `[android] Cloudflare challenge (status: ${response.status}) for ${config.url}. Retrying with bypass...`,
           );
-          console.log(
-            `[android] Initial request headers:`,
-            JSON.stringify(config.headers || {}),
-          );
           try {
             const referer =
               config.headers?.Referer || config.headers?.referer || "";
@@ -596,10 +592,6 @@ async function boot() {
               "";
             await global.cloudflarebypass(config.url, true, referer, ua);
             const newHeaders = getHeaders(config.url, config.method);
-            console.log(
-              `[android] Freshly fetched bypass headers:`,
-              JSON.stringify(newHeaders),
-            );
             const retryHeaders =
               typeof config.headers?.toJSON === "function"
                 ? config.headers.toJSON()
@@ -614,10 +606,6 @@ async function boot() {
               ...retryHeaders,
               ...newHeaders,
             };
-            console.log(
-              `[android] Final retry request headers:`,
-              JSON.stringify(config.headers),
-            );
             return global.axios(config);
           } catch (bypassErr) {
             return Promise.reject(bypassErr);
@@ -648,10 +636,21 @@ async function boot() {
 
   const { queryOne, run: dbRun } = require("../../../backend/utils/db");
 
+  // A failed challenge must not pin the whole app: wait at most
+  // BYPASS_WAIT_SECONDS for cf_clearance, then cool the domain down so the
+  // next request fails fast instead of opening another challenge.
+  const BYPASS_WAIT_SECONDS = 30;
+  const BYPASS_COOLDOWN_MS = 60000;
+  const bypassCooldowns = new Map();
+
   global.cloudflarebypass = async (targetUrl, silent, referer, userAgent) => {
     if (!targetUrl) return;
     const domain = normalizeHostname(new URL(targetUrl).hostname).toLowerCase();
     if (activeBypasses.has(domain)) return activeBypasses.get(domain);
+    const cooldownUntil = bypassCooldowns.get(domain) || 0;
+    if (Date.now() < cooldownUntil) {
+      throw new Error(`Cloudflare bypass cooling down for ${domain}`);
+    }
 
     const bypassPromise = (async () => {
       try {
@@ -669,13 +668,14 @@ async function boot() {
       broadcast("cf-bypass-request", request);
 
       try {
-        for (let i = 0; i < 120; i++) {
+        for (let i = 0; i < BYPASS_WAIT_SECONDS; i++) {
           await new Promise((resolve) => setTimeout(resolve, 1000));
           const row = await queryOne(
             "SELECT value FROM cookie WHERE id = ? OR (name = 'cf_clearance' AND LTRIM(?, '.') = LTRIM(domain, '.')) ORDER BY CAST(expirationDate AS REAL) DESC LIMIT 1",
             [`${domain}-cf_clearance`, domain],
           );
           if (row?.value) {
+            bypassCooldowns.delete(domain);
             try {
               const proxyHeaders = require("../../../backend/utils/proxyHeaders");
               if (
@@ -688,6 +688,7 @@ async function boot() {
             return true;
           }
         }
+        bypassCooldowns.set(domain, Date.now() + BYPASS_COOLDOWN_MS);
         throw new Error("Cloudflare bypass timeout");
       } finally {
         if (pendingBypassRequest === request) pendingBypassRequest = null;

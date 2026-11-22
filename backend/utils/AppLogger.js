@@ -108,6 +108,8 @@ const logger = winston.createLogger({
   transports: [
     new winston.transports.File({
       filename: LogFilePath,
+      maxsize: 10 * 1024 * 1024,
+      maxFiles: 3,
     }),
     new winston.transports.Console({
       format: winston.format.printf((info) => {
@@ -365,6 +367,8 @@ function configureExternalLogs(opts = {}) {
     if (!externalFileTransport) {
       externalFileTransport = new winston.transports.File({
         filename: currentExternalLogPath,
+        maxsize: 10 * 1024 * 1024,
+        maxFiles: 3,
       });
       logger.add(externalFileTransport);
     }

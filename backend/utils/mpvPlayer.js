@@ -838,11 +838,10 @@ async function playInMpv(window, options) {
         }
       }
 
-      if (
-        activeRec &&
-        activeRec.sub_dub &&
-        (!options.subdub || options.subdub === "sub")
-      ) {
+      // Only restore the stored language when the caller made no choice:
+      // the GUI always sends one ("sub" by default), so restoring here
+      // overrode an explicit SUB pick with the stored DUB preference.
+      if (activeRec && activeRec.sub_dub && !options.subdub) {
         subdub = activeRec.sub_dub;
         logger.info(
           `[MPV] Restored subdub preference "${subdub}" from ${histTable} for ${title}`,

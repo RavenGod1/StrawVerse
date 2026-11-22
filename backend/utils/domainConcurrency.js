@@ -391,6 +391,9 @@ function recordDomainBatchSuccess(domain, batchThroughput = null) {
     }
   }
 
+  // Keep the shared counter bounded: it used to climb past 100 while the
+  // downloader applied its own cap, which only produced misleading logs.
+  newConcurrency = Math.min(newConcurrency, 16);
   if (domainMaxCap[domain]) {
     newConcurrency = Math.min(newConcurrency, domainMaxCap[domain]);
   }

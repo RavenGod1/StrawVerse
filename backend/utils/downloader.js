@@ -1364,7 +1364,7 @@ class downloader {
             this.fetchDirectVideoRange(
               this.streamUrl,
               `bytes=${part.start}-${part.end}`,
-              60000,
+              120000,
             ),
           );
           this.absorbResponseCookies(res?.headers);
