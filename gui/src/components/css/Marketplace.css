@@ -96,6 +96,24 @@
   font-weight: 600;
 }
 
+.market-status-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.market-status-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 12px;
+  background: rgba(59, 130, 246, 0.12);
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  color: #93c5fd;
+  letter-spacing: 0.2px;
+}
+
 .market-disabled-banner {
   display: flex;
   align-items: center;

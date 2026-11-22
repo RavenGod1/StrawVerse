@@ -11,7 +11,9 @@ export default function TagPickerModal({
   onClose,
 }) {
   const [searchQuery, setSearchQuery] = useState("");
-  const [highlightIndex, setHighlightIndex] = useState(0);
+  const [highlight, setHighlight] = useState({ query: "", index: 0 });
+  const highlightIndex =
+    highlight.query === searchQuery ? highlight.index : 0;
   const inputRef = useRef(null);
   const listRef = useRef(null);
 
@@ -41,11 +43,6 @@ export default function TagPickerModal({
     return sortedTags.filter((t) => t.toLowerCase().includes(q));
   }, [sortedTags, searchQuery]);
 
-  // Reset highlight index when filter results change
-  useEffect(() => {
-    setHighlightIndex(0);
-  }, [searchQuery]);
-
   // Ensure highlighted element is scrolled into view
   useEffect(() => {
     if (listRef.current) {
@@ -59,14 +56,24 @@ export default function TagPickerModal({
   const handleKeyDown = (e) => {
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setHighlightIndex((prev) =>
-        filteredTags.length > 0
-          ? Math.min(filteredTags.length - 1, prev + 1)
-          : 0,
-      );
+      setHighlight((prev) => {
+        const current =
+          prev.query === searchQuery ? prev.index : 0;
+        return {
+          query: searchQuery,
+          index:
+            filteredTags.length > 0
+              ? Math.min(filteredTags.length - 1, current + 1)
+              : 0,
+        };
+      });
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
-      setHighlightIndex((prev) => Math.max(0, prev - 1));
+      setHighlight((prev) => {
+        const current =
+          prev.query === searchQuery ? prev.index : 0;
+        return { query: searchQuery, index: Math.max(0, current - 1) };
+      });
     } else if (e.key === "Enter") {
       e.preventDefault();
       if (filteredTags.length > 0 && highlightIndex < filteredTags.length) {
@@ -146,7 +153,9 @@ export default function TagPickerModal({
                     isSelected ? "is-selected" : ""
                   }`}
                   onClick={() => onSelectTag(tag)}
-                  onMouseEnter={() => setHighlightIndex(idx)}
+                  onMouseEnter={() =>
+                    setHighlight({ query: searchQuery, index: idx })
+                  }
                 >
                   <div className="tag-picker-tag-name-wrapper">
                     <span className="tag-picker-tag-name">{tag}</span>

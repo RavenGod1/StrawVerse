@@ -1,5 +1,4 @@
-/* eslint-disable react-hooks/exhaustive-deps, no-unused-vars */
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Loader2,
   Trash2,
@@ -15,6 +14,7 @@ import {
   Clock,
 } from "lucide-react";
 import { apiPost } from "../utils/common";
+import { getDownloadProgress } from "../utils/downloadProgress";
 import "./css/DownloadsTracker.css";
 
 function extractTasks(data) {
@@ -49,6 +49,31 @@ function extractTasks(data) {
   return [];
 }
 
+function RetryStatus({ status }) {
+  const retryMatch = status.match(/Retrying in (\d+)s/i);
+  const initialSeconds = retryMatch ? parseInt(retryMatch[1], 10) : null;
+  const [seconds, setSeconds] = useState(initialSeconds);
+
+  useEffect(() => {
+    if (initialSeconds === null) return undefined;
+
+    const interval = setInterval(() => {
+      setSeconds((prev) => {
+        if (prev === null || prev <= 1) {
+          clearInterval(interval);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [initialSeconds]);
+
+  if (seconds === null) return status;
+  return status.replace(/Retrying in \d+s/i, `Retrying in ${seconds}s`);
+}
+
 export default function DownloadsTracker({
   onBackToAnime,
   backLabel = "Back to Discover",
@@ -57,9 +82,16 @@ export default function DownloadsTracker({
   const [queue, setQueue] = useState([]);
   const [loading, setLoading] = useState(true);
   const [isPaused, setIsPaused] = useState(false);
-  const [retryCountdown, setRetryCountdown] = useState(null);
 
-  const fetchDownloads = async () => {
+  const updateStates = useCallback((data) => {
+    setActiveTasks(extractTasks(data));
+    setQueue(data.queue || []);
+    if (data.isPaused !== undefined) {
+      setIsPaused(!!data.isPaused);
+    }
+  }, []);
+
+  const fetchDownloads = useCallback(async () => {
     try {
       const data = await apiPost("/downloads");
       updateStates(data);
@@ -68,18 +100,13 @@ export default function DownloadsTracker({
     } finally {
       setLoading(false);
     }
-  };
-
-  const updateStates = (data) => {
-    setActiveTasks(extractTasks(data));
-    setQueue(data.queue || []);
-    if (data.isPaused !== undefined) {
-      setIsPaused(!!data.isPaused);
-    }
-  };
+  }, [updateStates]);
 
   useEffect(() => {
-    fetchDownloads();
+    apiPost("/downloads")
+      .then(updateStates)
+      .catch((err) => console.error(err))
+      .finally(() => setLoading(false));
 
     // Listen to real-time Capacitor IPC download events
     if (window.sharedStateAPI && window.sharedStateAPI.on) {
@@ -114,31 +141,7 @@ export default function DownloadsTracker({
         }
       });
     }
-  }, []);
-
-  useEffect(() => {
-    const rawCaption = activeTasks[0]?.caption || "";
-    const retryMatch = rawCaption.match(/Retrying in (\d+)s/i);
-
-    if (retryMatch) {
-      const initialSeconds = parseInt(retryMatch[1], 10);
-      setRetryCountdown(initialSeconds);
-
-      const interval = setInterval(() => {
-        setRetryCountdown((prev) => {
-          if (prev === null || prev <= 1) {
-            clearInterval(interval);
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
-
-      return () => clearInterval(interval);
-    } else {
-      setRetryCountdown(null);
-    }
-  }, [activeTasks[0]?.caption]);
+  }, [updateStates]);
 
   const handleTogglePause = async () => {
     try {
@@ -222,11 +225,7 @@ export default function DownloadsTracker({
       {activeTasks.length > 0 ? (
         <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
           {activeTasks.map((activeTask) => {
-            const progressPct = activeTask.totalSegments
-              ? Math.floor(
-                  (activeTask.currentSegments / activeTask.totalSegments) * 100,
-                )
-              : 0;
+            const progressPct = getDownloadProgress(activeTask);
             const rawCaption = activeTask.caption || "";
             let mainTitle;
             let subStatus = null;
@@ -292,12 +291,10 @@ export default function DownloadsTracker({
                     </div>
                     {subStatus && (
                       <div className="active-substatus">
-                        {retryCountdown !== null
-                          ? subStatus.replace(
-                              /Retrying in \d+s/i,
-                              `Retrying in ${retryCountdown}s`,
-                            )
-                          : subStatus}
+                        <RetryStatus
+                          key={activeTask.caption}
+                          status={subStatus}
+                        />
                       </div>
                     )}
                   </div>
@@ -316,7 +313,9 @@ export default function DownloadsTracker({
                     <span>
                       {activeTask.totalSegments > 1
                         ? `Downloaded ${activeTask.currentSegments} of ${activeTask.totalSegments} segments`
-                        : "Resolving stream links..."}
+                        : /\(\d+%\)/.test(activeTask.caption || "")
+                          ? "Downloading video stream..."
+                          : "Resolving stream links..."}
                     </span>
                     {activeTask.concurrency && (
                       <span className="badge-concurrent">

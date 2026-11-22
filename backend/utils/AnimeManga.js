@@ -11,6 +11,8 @@ const { getHeaders } = require("./proxyHeaders");
 const { queryAll, queryOne, run } = require("./db");
 const { sanitizeFolderName, getDownloadsFolder } = require("./DirectoryMaker");
 const { verifyStreamReachability } = require("./streamVerifier");
+const { normalizeSourceRequest, hasMediaSources } = require("./mediaSource");
+const { getMangaAssetExtension } = require("./mangaAssets");
 const {
   hasLocalMediaFiles,
   cleanAlphanumeric,
@@ -279,14 +281,9 @@ async function fetchEpisodeSources(provider, episodeId, category = null) {
       "Missing Provider! ( try downloading from settings > marketplace )",
     );
 
-  let cleanEpisodeId = String(episodeId ?? "");
-  const suffixMatch = cleanEpisodeId.match(/-(sub|dub|hsub|both)$/);
-  if (suffixMatch) {
-    if (!category) {
-      category = suffixMatch[1] === "both" ? null : suffixMatch[1];
-    }
-    cleanEpisodeId = cleanEpisodeId.slice(0, -suffixMatch[0].length);
-  }
+  const normalizedRequest = normalizeSourceRequest(episodeId, category);
+  const cleanEpisodeId = normalizedRequest.episodeId;
+  category = normalizedRequest.category;
 
   const cacheKey = CreateHashKey(
     // provider_name, not name: pObj from providerFetch has no `name` —
@@ -309,7 +306,7 @@ async function fetchEpisodeSources(provider, episodeId, category = null) {
       cleanEpisodeId,
       category,
     );
-    if (sources) {
+    if (hasMediaSources(sources)) {
       cache.set(cacheKey, sources, 60);
     }
   }
@@ -621,6 +618,10 @@ async function fetchMovieSources(provider, episodeId, category = null) {
     );
   }
 
+  const normalizedRequest = normalizeSourceRequest(episodeId, category);
+  const cleanEpisodeId = normalizedRequest.episodeId;
+  category = normalizedRequest.category;
+
   const sourcesFn =
     provider.provider.fetchEpisodeSources ||
     provider.provider.fetchSources ||
@@ -634,12 +635,12 @@ async function fetchMovieSources(provider, episodeId, category = null) {
   }
 
   const cacheKey = CreateHashKey(
-    `moviesources_${provider.provider_name}_${episodeId}_${category || "all"}`,
+    `moviesources_${provider.provider_name}_${cleanEpisodeId}_${category || "all"}`,
   );
   let sources = cache.get(cacheKey);
   if (!sources) {
-    sources = await sourcesFn.call(provider.provider, episodeId, category);
-    if (sources) {
+    sources = await sourcesFn.call(provider.provider, cleanEpisodeId, category);
+    if (hasMediaSources(sources)) {
       cache.set(cacheKey, sources, 60);
     }
   }
@@ -726,17 +727,7 @@ async function DownloadChapters(
             }
           });
 
-          let fileExtension = "jpg";
-          if (!imageUrl.startsWith("file://") && !imageUrl.startsWith("/")) {
-            fileExtension = imageUrl.split(".").pop().split(/\#|\?/)[0];
-          } else {
-            fileExtension =
-              path
-                .extname(
-                  imageUrl.startsWith("file://") ? imageUrl.slice(7) : imageUrl,
-                )
-                .replace(".", "") || "jpg";
-          }
+          const fileExtension = getMangaAssetExtension(imageUrl) || "jpg";
 
           results[i] = {
             fileName: `${i + 1}.${fileExtension}`,
@@ -797,6 +788,9 @@ async function downloadImage(url, onAttemptResult = null) {
       headers: {
         ...(resolvedHeaders.Referer
           ? { Referer: resolvedHeaders.Referer }
+          : {}),
+        ...(resolvedHeaders.Origin || resolvedHeaders.origin
+          ? { Origin: resolvedHeaders.Origin || resolvedHeaders.origin }
           : {}),
         ...(resolvedHeaders["User-Agent"]
           ? { "User-Agent": resolvedHeaders["User-Agent"] }

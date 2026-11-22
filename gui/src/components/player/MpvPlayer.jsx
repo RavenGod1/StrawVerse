@@ -308,7 +308,7 @@ export default function VideoPlayer({
         if (window.sharedStateAPI?.controlMpv) {
           window.sharedStateAPI.controlMpv("quit", []);
         }
-      } catch (_) {}
+      } catch {}
       removeMpvStartedListener();
       removeMpvLoadingListener();
       removeMpvActionListener();

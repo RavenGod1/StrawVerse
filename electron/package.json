@@ -1,6 +1,6 @@
 {
   "name": "strawverse",
-  "version": "12.1.2",
+  "version": "12.1.6",
   "description": "Download anime in batches & its fast :3",
   "main": "gui.js",
   "scripts": {

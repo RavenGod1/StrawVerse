@@ -471,12 +471,18 @@ async function boot() {
         const headers = getHeaders(config.url, config.method);
         if (config.headers) {
           if (headers["User-Agent"]) {
+            const callerUserAgent =
+              config.headers["User-Agent"] || config.headers["user-agent"];
             delete config.headers["user-agent"];
             delete config.headers["User-Agent"];
+            if (callerUserAgent) headers["User-Agent"] = callerUserAgent;
           }
           if (headers["Referer"]) {
+            const callerReferer =
+              config.headers["Referer"] || config.headers["referer"];
             delete config.headers["referer"];
             delete config.headers["Referer"];
+            if (callerReferer) headers["Referer"] = callerReferer;
           }
           if (headers["Cookie"]) {
             const existingCookie =
@@ -569,6 +575,7 @@ async function boot() {
           (response.status === 403 || response.status === 503) &&
           config &&
           !config._retry &&
+          !config.skipBypass &&
           global?.cloudflarebypass &&
           shouldBypassUrl(config.url, reqReferer, response)
         ) {

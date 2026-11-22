@@ -1,4 +1,12 @@
-import { useState, useEffect, useRef, lazy, Suspense } from "react";
+import {
+  useState,
+  useEffect,
+  useMemo,
+  useCallback,
+  useRef,
+  lazy,
+  Suspense,
+} from "react";
 import { Loader2 } from "lucide-react";
 import Sidebar from "./components/Sidebar";
 import Catalog from "./components/Catalog";
@@ -74,14 +82,17 @@ export default function App() {
     params: {},
   };
 
-  const cancelObsoleteNativeRequests = () => {
+  const cancelObsoleteNativeRequests = useCallback(() => {
     window.sharedStateAPI?.cancelNativeRequests?.().catch(() => {});
-  };
+  }, []);
 
-  const navigateTo = (view, params = {}) => {
-    cancelObsoleteNativeRequests();
-    setHistory((prev) => [...prev, { view, params }]);
-  };
+  const navigateTo = useCallback(
+    (view, params = {}) => {
+      cancelObsoleteNativeRequests();
+      setHistory((prev) => [...prev, { view, params }]);
+    },
+    [cancelObsoleteNativeRequests],
+  );
 
   const navigateBack = () => {
     if (history.length > 1) {
@@ -93,17 +104,19 @@ export default function App() {
   // Bottom-bar taps reset the history stack, so the stack can't tell you
   // where you were. Remember the last anime browsing screen instead, so the
   // Downloads header can offer a button back to it.
-  const lastAnimeViewRef = useRef({ view: "discover", params: {} });
-  useEffect(() => {
-    const cur = history[history.length - 1];
-    if (cur && ["home", "discover", "filters", "info"].includes(cur.view)) {
-      lastAnimeViewRef.current = { view: cur.view, params: cur.params };
+  const lastAnimeView = useMemo(() => {
+    for (let index = history.length - 1; index >= 0; index--) {
+      const item = history[index];
+      if (["home", "discover", "filters", "info"].includes(item.view)) {
+        return item;
+      }
     }
+    return { view: "discover", params: {} };
   }, [history]);
 
   const goBackToAnime = () => {
     cancelObsoleteNativeRequests();
-    const target = lastAnimeViewRef.current;
+    const target = lastAnimeView;
     if (target.view === "info") {
       // Keep a Discover entry underneath so the detail page's own
       // "Back to Discover" button still has somewhere to pop to.
@@ -178,8 +191,7 @@ export default function App() {
     let lastIndex = 0;
     const regex = /\[([^\]]+)\]\(([^)]+)\)|\*\*([^*]+)\*\*|`([^`]+)`/g;
 
-    let match;
-    while ((match = regex.exec(clean)) !== null) {
+    for (const match of clean.matchAll(regex)) {
       const matchIndex = match.index;
       if (matchIndex > lastIndex) {
         parts.push(clean.substring(lastIndex, matchIndex));
@@ -228,7 +240,7 @@ export default function App() {
         );
       }
 
-      lastIndex = regex.lastIndex;
+      lastIndex = matchIndex + match[0].length;
     }
 
     if (lastIndex < clean.length) {
@@ -294,7 +306,7 @@ export default function App() {
   };
 
   // Sync basic configurations and MAL connections from server
-  const syncSettings = async () => {
+  const syncSettings = useCallback(async () => {
     try {
       if (window.sharedStateAPI && window.sharedStateAPI.getSettings) {
         const settingsData = await window.sharedStateAPI.getSettings();
@@ -308,11 +320,12 @@ export default function App() {
     } catch (err) {
       console.error("Failed to sync app info:", err);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    syncSettings();
-  }, [current.view]);
+    const timer = setTimeout(syncSettings, 0);
+    return () => clearTimeout(timer);
+  }, [current.view, syncSettings]);
 
   useEffect(() => {
     if (window.sharedStateAPI && window.sharedStateAPI.checkWhatsNew) {
@@ -381,11 +394,26 @@ export default function App() {
       });
       window.sharedStateAPI.on("anime-id-updated", (data) => {
         if (!data?.oldId || !data?.newId) return;
+        // Patch the healed id inside the cached lists: dropping the whole
+        // cache reset the user's Discover page, filters and scroll position.
         if (window.catalogCache) {
-          delete window.catalogCache["Anime_local"];
-          delete window.catalogCache["Anime_provider"];
-          delete window.catalogCache["Movies_local"];
-          delete window.catalogCache["Movies_provider"];
+          for (const key of [
+            "Anime_local",
+            "Anime_provider",
+            "Movies_local",
+            "Movies_provider",
+          ]) {
+            const entry = window.catalogCache[key];
+            if (!entry?.data?.results) continue;
+            entry.data = {
+              ...entry.data,
+              results: entry.data.results.map((item) =>
+                String(item.id) === String(data.oldId)
+                  ? { ...item, id: data.newId }
+                  : item,
+              ),
+            };
+          }
         }
         setHistory((prev) =>
           prev.map((item) => {
@@ -412,7 +440,7 @@ export default function App() {
         });
       });
     }
-  }, []);
+  }, [navigateTo]);
 
   useEffect(() => {
     if (!whatsNewData) return;
@@ -501,7 +529,7 @@ export default function App() {
         appStateListener.remove();
       }
     };
-  }, []);
+  }, [cancelObsoleteNativeRequests]);
 
   const renderActiveView = () => {
     switch (current.view) {
@@ -768,7 +796,7 @@ export default function App() {
           />
         );
       case "downloads": {
-        const target = lastAnimeViewRef.current;
+        const target = lastAnimeView;
         const viewNames = { home: "Home", discover: "Discover", filters: "Filters" };
         const backLabel =
           target.view === "info"
@@ -822,27 +850,17 @@ export default function App() {
           currentView={current.view}
           setView={(view) => {
             cancelObsoleteNativeRequests();
-            // Re-tapping the active view is an explicit refresh: wipe the
-            // cached list and remount. Switching TO a view keeps its cache
-            // so Discover returns to the page/scroll/filters the user was
-            // last seeing instead of restarting at page 1.
+            // Re-tapping the active view is an explicit refresh. Refreshing the
+            // mounted catalog in place keeps the source, filters and scroll the
+            // user was on; wiping the cache reset all of them. Switching TO a
+            // view keeps its cache so Discover returns to the page/scroll/filters
+            // the user was last seeing instead of restarting at page 1.
             if (view === current.view) {
-              if (window.catalogCache) {
-                if (view === "home") {
-                  delete window.catalogCache[`Anime_local`];
-                  delete window.catalogCache[`Manga_local`];
-                  delete window.catalogCache[`Movies_local`];
-                } else if (view === "discover") {
-                  delete window.catalogCache[`Anime_provider`];
-                  delete window.catalogCache[`Manga_provider`];
-                  delete window.catalogCache[`Movies_provider`];
-                } else if (view === "filters") {
-                  delete window.catalogCache[`Anime_mal`];
-                  delete window.catalogCache[`Manga_mal`];
-                  delete window.catalogCache[`Movies_mal`];
-                }
+              if (window.refreshCatalogData) {
+                window.refreshCatalogData();
+              } else {
+                setReloadCounter((prev) => prev + 1);
               }
-              setReloadCounter((prev) => prev + 1);
             }
             setHistory([{ view, params: {} }]);
           }}

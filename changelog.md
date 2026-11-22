@@ -1,5 +1,80 @@
 # Changelog
 
+# [12.1.6] - 2026-11-22
+
+### Download Reliability
+
+- **Downloads That No Longer Hang:** Direct video downloads on hosts that serve only one range request at a time now finish by downloading the remaining parts one by one instead of failing at 0%, and the stream probe waits long enough for slow hosts to answer.
+
+### Interface Polish
+
+- **Discover Keeps Its Place:** Reopening the Discover tab restores the selected source, filters and scroll position; healing an anime id or updating a tag no longer clears the tab.
+- **Download Status Text:** A single-stream download reports "Downloading video stream..." with its percentage instead of staying on "Resolving stream links...".
+
+### Provider Fixes
+
+- **ManhwaTop on Android:** Provider requests now use the app's Cloudflare clearance, so pages load again instead of failing with 403 (extension v1.0.3).
+
+- Version bump to 12.1.6 (versionCode 38).
+
+# [12.1.5] - 2026-11-21
+
+### Provider Accuracy
+
+- **Truthful Anime Languages:** Kunon the Sorcerer Can See is reported as SUB-only, while titles with an English audio track continue to show both SUB and DUB.
+- **Portrait Detail Covers:** Anime World India and AniXoHindi detail pages use poster artwork instead of wide banner images.
+- **Downloadable Subtitles:** WebVTT subtitles supplied as data URLs are now saved as local subtitle files with downloads.
+
+### Reliability & Maintenance
+
+- **ManhwaTop on Android:** Provider requests now use a stable mobile browser identity and the direct HTTP transport, avoiding the native Cloudflare challenge path that returned 403 responses.
+- **Fresh Marketplace Updates:** Extension catalog and script URLs now use GitHub's fresh branch raw path, preventing stale CDN manifests after publishing.
+- **Clean React Build:** All 54 reported React Compiler and ESLint warnings in the GUI have been fixed.
+
+- Version bump to 12.1.5 (versionCode 37).
+
+# [12.1.4] - 2026-11-20
+
+### Manga Providers
+
+- **New Manga Sources:** Atu Moe, ManhwaTop, and NovelPing are available from the Extensions Marketplace; Kagane and MangaWorld were removed from the catalogue.
+- **Novel SVG Chapters:** NovelPing prose is rendered as paginated SVG pages that work in both the reader and downloaded CBZ files.
+- **Correct Local Images:** Downloaded SVG, AVIF, and JXL pages keep their real MIME type and filename when a chapter is reopened, and provider-generated data pages are no longer mistaken for local downloads.
+- **Detail Covers Fixed:** Cover art on a title's details page is now loaded through the app's image proxy, so providers whose CDN rejects direct app requests (for example Atu Moe) show the real artwork instead of the placeholder image.
+
+### Android Reliability
+
+- **Accurate Download Progress:** Direct-video downloads now show the backend's byte percentage instead of remaining at 0% while the video is transferring.
+- **Reliable Parallel Ranges:** AniXoHindi media parts use unique range URLs, preventing cached full-file responses from replacing later HTTP 206 chunks.
+- **Fast Provider Retries:** Android provider requests can opt out of the long native challenge wait and retry protected requests with a short bounded backoff.
+
+- Version bump to 12.1.4 (versionCode 36).
+
+# [12.1.3] - 2026-11-20
+
+### Catalog Request Reduction
+
+- **Details Load on Click:** Catalog rows no longer resolve a provider for every visible title or fetch individual provider pages. The clicked title resolves its provider and loads its details once.
+- **One Page per Scroll:** Infinite scroll no longer preloads neighbouring pages, and failed pages are skipped without repeating the same request.
+- **No Background Episode Lookups:** Seasons and recommendation cards no longer trigger provider episode requests just to display language badges.
+
+### Streaming & Download Fixes
+
+- **Accurate Download Languages:** Download Options now follows provider metadata when episode rows omit language labels. Dual-audio providers show both SUB and DUB; single-language providers hide the language section and ask only for resolution.
+- **Movies Queue Fixed:** Movie and TV downloads now use the movie source resolver instead of the Anime-only resolver, preventing `fetchEpisodeSources is not a function` failures.
+- **Dub IDs Fixed:** Queued `-sub`, `-dub`, `-hsub`, and `-both` suffixes are removed before resolving a movie episode, so episode `1-dub` is no longer treated as episode number `1-dub`.
+- **HLS Playback Fixed:** Root-relative variant and audio URLs are now resolved from the playlist origin, preventing malformed paths and the resulting 404/502 playback failures.
+- **Protected CDN Downloads:** Bypass-protected HLS sources now start with one request, ramp gradually up to four, and back off when a host returns 403. Cloudflare clearance is cached per host, so one rotating CDN no longer suppresses verification for another.
+- **Shared Resolver Recovery:** Empty source responses are no longer cached for 60 seconds, and queue tasks that receive no sources now retry with backoff before being removed. This prevents a temporary Cinezo/Flikhub/Yenime outage from being reported as permanently unavailable content.
+
+### Extensions
+
+- **Extension Status Badges:** Extension creators can now add optional status labels such as "Hindi Dub", "HD", or "HLS" to their marketplace entry so users can see an extension's capabilities before installing it.
+- **Anime World India:** Media requests now include the required player Referer and Origin headers for Zephyrix and rotating Zn-Grid hosts.
+- Removed Miruro from the marketplace because its rotating stream hosts frequently return protected 403 responses.
+
+- Version bump to 12.1.3 (versionCode 35).
+
 # [12.1.2] - 2026-11-20
 
 ### Verification Window

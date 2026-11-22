@@ -41,6 +41,7 @@ function LazyMangaPage({
   const [hasError, setHasError] = useState(false);
   const [currentSrc, setCurrentSrc] = useState(src);
   const [didProxyRetry, setDidProxyRetry] = useState(false);
+  const [measuredHeight, setMeasuredHeight] = useState(0);
   const pageRef = useRef(null);
   const imgRef = useRef(null);
   const measuredHeightRef = useRef(null);
@@ -124,6 +125,7 @@ function LazyMangaPage({
     );
     if (measuredHeight > 50) {
       measuredHeightRef.current = measuredHeight;
+      setMeasuredHeight(measuredHeight);
     }
     setLoaded(true);
     setHasError(false);
@@ -136,15 +138,15 @@ function LazyMangaPage({
     }
   };
 
-  if (!isVirtualActive && loaded && measuredHeightRef.current) {
+  if (!isVirtualActive && loaded && measuredHeight) {
     return (
       <div
         ref={pageRef}
         className="lazy-page-container is-virtualized"
         style={{
           ...style,
-          height: `${measuredHeightRef.current}px`,
-          minHeight: `${measuredHeightRef.current}px`,
+          height: `${measuredHeight}px`,
+          minHeight: `${measuredHeight}px`,
         }}
       >
         <div className="virtualized-page-placeholder">
@@ -668,9 +670,7 @@ export default function MangaReader({
         cacheID = chapterObj.id;
         targetChNum = chapterObj.number;
       } else {
-        const initialChapterObj = (
-          sortedChaptersRef.current || sortedChapters
-        ).find((c) => {
+        const initialChapterObj = sortedChapters.find((c) => {
           if (isCurrentDownloaded) {
             return Number(c.number) === Number(currentChapter);
           } else {
@@ -679,14 +679,14 @@ export default function MangaReader({
         });
         cacheID = initialChapterObj ? initialChapterObj.id : currentChapter;
         targetChNum =
-          (sortedChaptersRef.current || sortedChapters).find(
+          sortedChapters.find(
             (c) => c.id === cacheID,
           )?.number || getCleanChapterNum(cacheID, currentChapter);
       }
 
       const effectiveChapterObj =
         chapterObj ||
-        (sortedChaptersRef.current || sortedChapters).find(
+        sortedChapters.find(
           (c) => c.id === cacheID,
         ) ||
         currentChapterObj;
@@ -695,7 +695,7 @@ export default function MangaReader({
         30,
         savedResumePageRef.current || 0,
         pendingTargetPageRef.current?.page || 0,
-        getEstimatedPageCount(effectiveChapterObj, itemsRef.current || items),
+        getEstimatedPageCount(effectiveChapterObj, items),
       );
 
       const placeholderHeader = {
@@ -745,14 +745,11 @@ export default function MangaReader({
 
         const chNum = isAppend
           ? chapterObj.number
-          : (sortedChaptersRef.current || sortedChapters).find(
+          : sortedChapters.find(
               (c) => c.id === cacheID,
             )?.number || getCleanChapterNum(cacheID, currentChapter);
 
-        const isActuallyLocal =
-          isDownloadedLocal &&
-          data[0]?.img &&
-          data[0].img.startsWith("data:image/");
+        const isActuallyLocal = isDownloadedLocal && data[0]?.isLocal === true;
 
         if (isActuallyLocal) {
           const num = Number(chNum);
@@ -1506,15 +1503,11 @@ export default function MangaReader({
   const activePageRef = useRef(1);
   const activeChapterRef = useRef(chapterNumOrId);
   const savedResumePageRef = useRef(1);
-  const itemsRef = useRef(items);
-  itemsRef.current = items;
-  const sortedChaptersRef = useRef(sortedChapters);
-  sortedChaptersRef.current = sortedChapters;
 
   const saveReadProgress = async (isFinal = false) => {
     const currentActiveChId = activeChapterRef.current || activeChapterInView;
-    const chapters = sortedChaptersRef.current || sortedChapters;
-    const allItems = itemsRef.current || items;
+    const chapters = sortedChapters;
+    const allItems = items;
 
     const pagesOfCurrentCh = allItems.filter(
       (item) => item.type === "page" && item.chapterId === currentActiveChId,
@@ -1578,18 +1571,18 @@ export default function MangaReader({
   const handleExitReader = async () => {
     try {
       await saveReadProgress(true);
-    } catch (_) {}
+    } catch {}
     if (onBack) onBack();
   };
 
   // Load progress
   useEffect(() => {
-    savedResumePageRef.current = 1;
-    activePageRef.current = 1;
-    setActivePage(1); // Reset active page state on chapter change
     lastTickTimeRef.current = Date.now();
 
     const loadProgress = async () => {
+      savedResumePageRef.current = 1;
+      activePageRef.current = 1;
+      setActivePage(1); // Reset active page state on chapter change
       try {
         const res = await fetch(
           `/api/history/progress?mediaId=${encodeURIComponent(id)}&type=Manga`,
@@ -1664,7 +1657,9 @@ export default function MangaReader({
       } else if (savedResumePageRef.current && savedResumePageRef.current > 1) {
         const targetPage = savedResumePageRef.current;
         const targetChapId = activeChapterRef.current || activeChapterInView;
-        savedResumePageRef.current = null;
+        setTimeout(() => {
+          savedResumePageRef.current = null;
+        }, 0);
         startScrollLock(targetPage, targetChapId);
         const pageEl = container.querySelector(
           `[data-chapter="${targetChapId}"][data-page="${targetPage}"]`,
@@ -1733,7 +1728,7 @@ export default function MangaReader({
       if (activeId && activeId !== activeChapterInView) {
         setActiveChapterInView(activeId);
         activeChapterRef.current = activeId;
-        const targetObj = (sortedChaptersRef.current || sortedChapters).find(
+        const targetObj = sortedChapters.find(
           (item) => item.id === activeId,
         );
         if (targetObj) {

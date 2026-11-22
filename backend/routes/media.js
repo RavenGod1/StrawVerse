@@ -42,6 +42,8 @@ const {
 const ImageCacheManager = require("../utils/ImageCacheManager");
 const { getHeaders } = require("../utils/proxyHeaders");
 const { isAdSegmentUrl } = require("../utils/adSegments");
+const { resolvePlaylistUri } = require("../utils/mediaSource");
+const { getMangaAssetMimeType } = require("../utils/mangaAssets");
 const {
   resolveMalIdFromMapping,
   getLinkedProvidersForMalId,
@@ -1560,67 +1562,45 @@ async function getLocalCatalogList(AnimeManga, filters = {}, keyword = "") {
     } catch (_) {}
   }
 
-  const setting = await settingfetch();
-  const preferred = (
-    isAnime
-      ? setting?.Animeprovider || "pahe"
-      : setting?.Mangaprovider || "weebcentral"
-  ).toLowerCase();
-
-  const results = await Promise.all(
-    (pageRows || []).map(async (r) => {
-      let nextEpisodeIn = null;
-      if (r.livechart_id && nextEpMap.has(r.livechart_id)) {
-        const nextEp = nextEpMap.get(r.livechart_id);
-        const now = Math.floor(Date.now() / 1000);
-        const diff = nextEp.date - now;
-        const days = Math.ceil(diff / (24 * 3600));
-        const hours = Math.ceil(diff / 3600);
-        if (days > 0) {
-          nextEpisodeIn = `Ep ${nextEp.episode}: ${days} day${days > 1 ? "s" : ""}`;
-        } else if (hours > 0) {
-          nextEpisodeIn = `Ep ${nextEp.episode}: ${hours} hr${hours > 1 ? "s" : ""}`;
-        } else {
-          nextEpisodeIn = `Ep ${nextEp.episode}: soon`;
-        }
+  const results = (pageRows || []).map((r) => {
+    let nextEpisodeIn = null;
+    if (r.livechart_id && nextEpMap.has(r.livechart_id)) {
+      const nextEp = nextEpMap.get(r.livechart_id);
+      const now = Math.floor(Date.now() / 1000);
+      const diff = nextEp.date - now;
+      const days = Math.ceil(diff / (24 * 3600));
+      const hours = Math.ceil(diff / 3600);
+      if (days > 0) {
+        nextEpisodeIn = `Ep ${nextEp.episode}: ${days} day${days > 1 ? "s" : ""}`;
+      } else if (hours > 0) {
+        nextEpisodeIn = `Ep ${nextEp.episode}: ${hours} hr${hours > 1 ? "s" : ""}`;
+      } else {
+        nextEpisodeIn = `Ep ${nextEp.episode}: soon`;
       }
+    }
 
-      let resolvedProvider = null;
-      let resolvedId = null;
-
-      try {
-        const best = await getBestProviderForMalId(
-          r.malid,
-          AnimeManga,
-          preferred,
-        );
-        if (best) {
-          resolvedProvider = best.provider;
-          resolvedId = best.id;
-        }
-      } catch (_) {}
-
-      return {
-        id: resolvedId ? String(resolvedId) : String(r.malid),
-        malid: Number(r.malid),
-        MalID: Number(r.malid),
-        title: r.title,
-        image: r.image_url,
-        type: r.type,
-        episodes: r.episodes,
-        chapters: r.chapters,
-        volumes: r.volumes,
-        status: r.status,
-        season: r.season,
-        year: r.year,
-        genres: r.genres,
-        aired: r.year ? `${r.season ? r.season + " " : ""}${r.year}` : null,
-        nextEpisodeIn,
-        provider: resolvedProvider || preferred,
-        isMapped: !!resolvedProvider,
-      };
-    }),
-  );
+    // Provider links are resolved by the detail route after the user opens
+    // the title. Resolving every catalogue row here caused repeated mapping
+    // lookups before anyone selected a card.
+    return {
+      id: String(r.malid),
+      malid: Number(r.malid),
+      MalID: Number(r.malid),
+      title: r.title,
+      image: r.image_url,
+      type: r.type,
+      episodes: r.episodes,
+      chapters: r.chapters,
+      volumes: r.volumes,
+      status: r.status,
+      season: r.season,
+      year: r.year,
+      genres: r.genres,
+      aired: r.year ? `${r.season ? r.season + " " : ""}${r.year}` : null,
+      nextEpisodeIn,
+      provider: "mal",
+    };
+  });
 
   let lastFetched = null;
   if (global.mappingDb) {
@@ -1766,54 +1746,6 @@ async function getUniqueProviderList(
     if (!item.image) {
       item.image = "/images/image-404.png";
     }
-  }
-
-  const missingInDb = results.filter(
-    (it) => it.image === "/images/image-404.png",
-  );
-  if (missingInDb.length > 0) {
-    setImmediate(async () => {
-      try {
-        const pObj = await getProviderOrThrow(AnimeManga, provider);
-        const searchFn =
-          pObj?.provider?.SearchAnime ||
-          pObj?.provider?.animesearch ||
-          pObj?.provider?.MangaSearch ||
-          pObj?.provider?.Search;
-        if (typeof searchFn !== "function") return;
-
-        for (const item of missingInDb.slice(0, 5)) {
-          try {
-            const sRes = await searchFn(item.title);
-            const sResults = sRes?.results || (Array.isArray(sRes) ? sRes : []);
-            if (sResults.length > 0) {
-              const exact =
-                sResults.find(
-                  (s) =>
-                    (s.title || "").toLowerCase().trim() ===
-                    (item.title || "").toLowerCase().trim(),
-                ) || sResults[0];
-              const fetchedImg = exact?.image || exact?.image_url || null;
-              const fetchedId =
-                provider === "pahe" && exact?.id ? String(exact.id) : null;
-              if (fetchedImg && global.mappingDb) {
-                await global.mappingDb
-                  .prepare(
-                    "UPDATE unmapped_items SET image_url = ?, id = COALESCE(?, id) WHERE provider = ? AND (id = ? OR LOWER(TRIM(name)) = ?)",
-                  )
-                  .run(
-                    fetchedImg,
-                    fetchedId || null,
-                    provider,
-                    item.id,
-                    (item.title || "").toLowerCase().trim(),
-                  );
-              }
-            }
-          } catch (_) {}
-        }
-      } catch (_) {}
-    });
   }
 
   return {
@@ -2179,7 +2111,12 @@ router.post(
 
       if (data?.results && data.results.length > 0) {
         try {
-          await enrichResultsWithMappingImages(data.results, AnimeManga);
+          // The MAL catalogue already comes from mapping.db with its MAL id and
+          // artwork; mapping it back to a provider here repeats the work for
+          // every visible row. The clicked detail route resolves it once.
+          if (provider !== "mal") {
+            await enrichResultsWithMappingImages(data.results, AnimeManga);
+          }
         } catch (_) {}
 
         try {
@@ -5176,9 +5113,10 @@ router.post("/api/read", async (req, res) => {
             .sort((a, b) => parseInt(a) - parseInt(b))
             .map(async (file) => ({
               page: parseInt(file),
-              img: `data:image/jpeg;base64,${await zip
+              img: `data:${getMangaAssetMimeType(file) || "image/jpeg"};base64,${await zip
                 .file(file)
                 .async("base64")}`,
+              isLocal: true,
             })),
         );
         return res.json(pages);
@@ -5245,7 +5183,10 @@ router.get("/api/image", async (req, res) => {
         ? decodedUrl.slice(7)
         : decodedUrl;
       if (fs.existsSync(filePath)) {
-        res.setHeader("Content-Type", "image/jpeg");
+        res.setHeader(
+          "Content-Type",
+          getMangaAssetMimeType(filePath) || "image/jpeg",
+        );
         res.setHeader("Cache-Control", "public, max-age=86400");
         return res.sendFile(filePath, { dotfiles: "allow" });
       } else {
@@ -5268,10 +5209,8 @@ router.get("/api/image", async (req, res) => {
           decodedUrl,
         ]);
 
-        let contentType = "image/jpeg";
-        if (cached.filename.endsWith(".png")) contentType = "image/png";
-        else if (cached.filename.endsWith(".gif")) contentType = "image/gif";
-        else if (cached.filename.endsWith(".webp")) contentType = "image/webp";
+        const contentType =
+          getMangaAssetMimeType(cached.filename) || "image/jpeg";
 
         res.setHeader("Content-Type", contentType);
         res.setHeader("Cache-Control", "public, max-age=86400");
@@ -5531,7 +5470,6 @@ router.get("/api/stream/m3u8", async (req, res) => {
         .status(502)
         .send("Upstream returned invalid playlist manifest");
     }
-    const base = url.substring(0, url.lastIndexOf("/") + 1);
     const refParam = customReferer
       ? `&referer=${encodeURIComponent(customReferer)}`
       : "";
@@ -5571,7 +5509,7 @@ router.get("/api/stream/m3u8", async (req, res) => {
         outLines.push(
           t.includes('URI="')
             ? t.replace(/URI="([^"]+)"/, (_, u) => {
-                const abs = u.startsWith("http") ? u : base + u;
+                const abs = resolvePlaylistUri(u, url);
                 regHost(abs);
                 const isSubOrAudio =
                   t.includes("TYPE=SUBTITLES") || t.includes("TYPE=AUDIO");
@@ -5587,7 +5525,7 @@ router.get("/api/stream/m3u8", async (req, res) => {
       const isVariant = nextIsVariantPlaylist;
       nextIsVariantPlaylist = false;
 
-      const abs = t.startsWith("http") ? t : base + t;
+      const abs = resolvePlaylistUri(t, url);
       regHost(abs);
       if (!isVariant && !abs.includes(".m3u8") && isAdSegmentUrl(abs)) {
         const prev = outLines[outLines.length - 1];

@@ -994,7 +994,9 @@ public class CloudflareBypassPlugin extends Plugin {
                                 String value = headers.getString(key);
                                 if (key.equalsIgnoreCase("user-agent")) {
                                     hasUA = true;
-                                    value = cleanUserAgent(value);
+                                    // Explicit extension UAs are intentional. Removing
+                                    // Version/4.0 here changes the browser identity and
+                                    // makes some Cloudflare-protected sites reject it.
                                 }
                                 if (key.equalsIgnoreCase("cookie")) {
                                     explicitCookies = value;

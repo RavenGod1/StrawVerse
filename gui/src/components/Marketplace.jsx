@@ -9,12 +9,18 @@ import {
   Trash2,
   X,
   RotateCcw,
-  ChevronDown,
 } from "lucide-react";
 import Swal from "sweetalert2";
 import { swalSuccess, swalError, swalConfirm } from "../utils/swal";
 import Dropdown from "./common/Dropdown";
 import "./css/Marketplace.css";
+
+function clearCatalogCache(type) {
+  if (!window.catalogCache) return;
+  delete window.catalogCache[`${type}_provider`];
+  delete window.catalogCache[`${type}_trending`];
+  delete window.catalogCache[`${type}_latest`];
+}
 
 export default function Marketplace({ initialType }) {
   const [activeType, setActiveType] = useState(initialType || "Anime");
@@ -134,7 +140,7 @@ export default function Marketplace({ initialType }) {
               Movies: s.Moviesprovider || "",
             });
           }
-        } catch (_) {}
+        } catch {}
       }
 
       // 5. Fetch current app version
@@ -143,7 +149,7 @@ export default function Marketplace({ initialType }) {
         try {
           const v = await window.sharedStateAPI.getAppVersion();
           if (v) currentAppVer = v;
-        } catch (_) {}
+        } catch {}
       } else {
         try {
           const vRes = await fetch("/api/version");
@@ -152,7 +158,7 @@ export default function Marketplace({ initialType }) {
             const v = vData.version || vData.result;
             if (v) currentAppVer = v;
           }
-        } catch (_) {}
+        } catch {}
       }
       setAppVersion(currentAppVer);
     } catch (err) {
@@ -327,11 +333,7 @@ export default function Marketplace({ initialType }) {
         });
       }
 
-      if (window.catalogCache) {
-        delete window.catalogCache[`${activeType}_provider`];
-        delete window.catalogCache[`${activeType}_trending`];
-        delete window.catalogCache[`${activeType}_latest`];
-      }
+      clearCatalogCache(activeType);
 
       setActiveProviders((prev) => ({
         ...prev,
@@ -690,9 +692,12 @@ export default function Marketplace({ initialType }) {
                 provider.icon ||
                 `${(
                   provider.repoBaseUrl ||
-                  "https://raw.githubusercontent.com/RavenGod1/extensions/refs/heads/Test"
+                  "https://raw.githubusercontent.com/RavenGod1/extensions/Test"
                 ).replace(/\/$/, "")}/ico/${provider.name}.ico`;
               const installedVer = getInstalledVersion(provider);
+              const statuses = Array.isArray(provider.statuses)
+                ? provider.statuses
+                : [];
               const hasUpdate = installedVer
                 ? isUpdateAvailable(installedVer, provider.version)
                 : false;
@@ -744,6 +749,21 @@ export default function Marketplace({ initialType }) {
                           </span>
                         )}
                       </span>
+                      {statuses.length > 0 && (
+                        <div
+                          className="market-status-list"
+                          aria-label="Extension statuses"
+                        >
+                          {statuses.map((status, index) => (
+                            <span
+                              className="market-status-badge"
+                              key={`${status}-${index}`}
+                            >
+                              {status}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
 

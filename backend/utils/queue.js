@@ -36,6 +36,7 @@ const {
 const { verifyStreamReachability } = require("./streamVerifier");
 const { updateHistory } = require("./history");
 const { getBestProviderForMalId } = require("./mappingResolver");
+const { isRetryableError } = require("./queueRetry");
 
 let _bgDownloadDepth = 0;
 let isProcessorRunning = false;
@@ -528,48 +529,6 @@ function describeStuckWorker() {
   }
 }
 
-function isRetryableError(err) {
-  if (!err || !err.message) return false;
-  const msg = err.message.toLowerCase();
-  if (
-    msg.includes("queue paused") ||
-    msg.includes("episode cancelled") ||
-    msg.includes("data missing") ||
-    msg.includes("type is not valid")
-  ) {
-    return false;
-  }
-  return (
-    msg.includes("slow_mirror_failover") ||
-    msg.includes("scraper_temporary_error") ||
-    msg.includes("stream link") ||
-    msg.includes("resolution timeout") ||
-    msg.includes("server resolution") ||
-    msg.includes("failed to download") ||
-    msg.includes("no stream url") ||
-    msg.includes("no source link") ||
-    msg.includes("no image found") ||
-    msg.includes("cloudflare") ||
-    msg.includes("err_address_unreachable") ||
-    msg.includes("econnrefused") ||
-    msg.includes("econnreset") ||
-    msg.includes("etimedout") ||
-    msg.includes("socket hang up") ||
-    msg.includes("network error") ||
-    msg.includes("fetch failed") ||
-    msg.includes("abort") ||
-    msg.includes("timeout") ||
-    msg.includes("429") ||
-    msg.includes("403") ||
-    msg.includes("500") ||
-    msg.includes("502") ||
-    msg.includes("503") ||
-    msg.includes("504") ||
-    msg.includes("enotfound") ||
-    msg.includes("eai_again")
-  );
-}
-
 // queue start
 async function continuousExecution() {
   if (isQueuePausedState) return;
@@ -759,15 +718,13 @@ async function continuousExecution() {
               return;
             }
 
-            const isNonRetryable = Boolean(
+            const isNoSources = Boolean(
               err.message && err.message.includes("NO_SOURCES_AVAILABLE"),
             );
-            currentTask.retryCount = isNonRetryable
-              ? 3
-              : (currentTask.retryCount || 0) + 1;
+            currentTask.retryCount = (currentTask.retryCount || 0) + 1;
             const maxRetries = 3;
             if (currentTask.retryCount >= maxRetries) {
-              const friendlyMsg = isNonRetryable
+              const friendlyMsg = isNoSources
                 ? err.message.replace(/^NO_SOURCES_AVAILABLE:\s*/, "")
                 : `${err.message} (max retries exceeded)`;
               logger.error(
@@ -778,7 +735,7 @@ async function continuousExecution() {
                   ? `${currentTask.Title} (${currentTask?.Type === "Manga" ? "CHP" : "EP"} ${currentTask?.EpNum || ""})`
                   : "Download";
                 global.sendToRenderer("download-error", {
-                  title: isNonRetryable
+                  title: isNoSources
                     ? "Episode Unavailable"
                     : "Download Failed",
                   message: `${itemLabel}: ${friendlyMsg}`,
@@ -1044,6 +1001,9 @@ async function downloadEpisodeByQuality(
         ? config.Moviesprovider || config.Animeprovider
         : config.Animeprovider,
     );
+    const fetchSourcesForProvider = isMovie
+      ? fetchMovieSources
+      : fetchEpisodeSources;
     logger.info(`[queueWorker] ${epid} phase: provider-ok, fetching sources`);
     let resolvedEpid = epid;
     if (subdub && !epid.endsWith(`-${subdub}`) && !epid.endsWith("-both")) {
@@ -1057,9 +1017,11 @@ async function downloadEpisodeByQuality(
     while (fetchAttempt < maxFetchAttempts && !sourcesArray) {
       fetchAttempt++;
       try {
-        sourcesArray = isMovie
-          ? await fetchMovieSources(provider, resolvedEpid, subdub)
-          : await fetchEpisodeSources(provider, resolvedEpid, subdub);
+        sourcesArray = await fetchSourcesForProvider(
+          provider,
+          resolvedEpid,
+          subdub,
+        );
       } catch (err) {
         lastFetchErr = err;
         logger.warn(
@@ -1126,7 +1088,7 @@ async function downloadEpisodeByQuality(
     let sourcesList = extractSources(sourcesArray, subdub);
 
     if ((!sourcesList || sourcesList.length === 0) && resolvedEpid !== epid) {
-      sourcesArray = await fetchEpisodeSources(provider, epid, subdub);
+      sourcesArray = await fetchSourcesForProvider(provider, epid, subdub);
       sourcesList = extractSources(sourcesArray, subdub);
     }
 
@@ -1139,7 +1101,11 @@ async function downloadEpisodeByQuality(
       const tryCategory =
         subdub.toLowerCase() === "sub" ? "dub" : subdub.toLowerCase() === "dub" ? "hsub" : "sub";
       try {
-        const fallback = await fetchEpisodeSources(provider, resolvedEpid, tryCategory);
+        const fallback = await fetchSourcesForProvider(
+          provider,
+          resolvedEpid,
+          tryCategory,
+        );
         const fallbackList = extractSources(fallback, tryCategory);
         if (fallbackList && fallbackList.length > 0) {
           logger.info(
@@ -1154,7 +1120,7 @@ async function downloadEpisodeByQuality(
     // Final fallback: try without any category suffix (get all servers)
     if ((!sourcesList || sourcesList.length === 0) && resolvedEpid !== epid) {
       try {
-        const noCategory = await fetchEpisodeSources(provider, epid, null);
+        const noCategory = await fetchSourcesForProvider(provider, epid, null);
         const noCatList = extractSources(noCategory, null);
         if (noCatList && noCatList.length > 0) {
           logger.info(
@@ -1172,6 +1138,7 @@ async function downloadEpisodeByQuality(
     // same EP number, and retry sources once with the fresh episode id.
     if (
       (!sourcesList || sourcesList.length === 0) &&
+      !isMovie &&
       malid &&
       episodeNumber !== undefined &&
       episodeNumber !== null
@@ -1219,7 +1186,7 @@ async function downloadEpisodeByQuality(
       const provName =
         provider?.provider_name || config?.Animeprovider || "provider";
       throw new Error(
-        `NO_SOURCES_AVAILABLE: No stream sources found for this episode on ${provName}. The episode may not have aired or been uploaded yet.`,
+        `NO_SOURCES_AVAILABLE: No stream sources were returned by ${provName} for this episode. The title may be unavailable, or the provider/resolver may be temporarily down.`,
       );
     }
 

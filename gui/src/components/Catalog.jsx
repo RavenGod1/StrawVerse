@@ -316,6 +316,20 @@ function matchItemFilters(item, filters) {
   return true;
 }
 
+function getCatalogCache() {
+  if (!window.catalogCache) window.catalogCache = {};
+  return window.catalogCache;
+}
+
+function clearCatalogCache(keys) {
+  const cache = getCatalogCache();
+  keys.forEach((key) => delete cache[key]);
+}
+
+function currentTime() {
+  return Date.now();
+}
+
 export default function Catalog({
   type,
   provider,
@@ -339,20 +353,13 @@ export default function Catalog({
   const pendingScrollAdjustRef = useRef(null);
   const isRestoredRef = useRef(false);
   const didFetchRef = useRef(false);
-  const lastTypeRef = useRef(type);
-  const lastProviderRef = useRef(provider);
 
-  if (lastTypeRef.current !== type || lastProviderRef.current !== provider) {
-    lastTypeRef.current = type;
-    lastProviderRef.current = provider;
+  useEffect(() => {
     didFetchRef.current = false;
-  }
+  }, [type, provider]);
 
-  if (!window.catalogCache) {
-    window.catalogCache = {};
-  }
   const cacheKey = `${type}_${provider}`;
-  const cache = window.catalogCache[cacheKey];
+  const cache = getCatalogCache()[cacheKey];
 
   const [data, setData] = useState(
     () =>
@@ -491,7 +498,7 @@ export default function Catalog({
   const displayResults = useMemo(() => {
     if (!data?.results || !Array.isArray(data.results)) return [];
     return data.results.filter((item) => matchItemFilters(item, activeFilters));
-  }, [data?.results, activeFilters]);
+  }, [data, activeFilters]);
 
   const displayData = useMemo(
     () => ({
@@ -786,7 +793,7 @@ export default function Catalog({
   const [calendarDayFilter, setCalendarDayFilter] = useState("Today");
   const [calendarLoading, setCalendarLoading] = useState(false);
   const [scheduleUpdating, setScheduleUpdating] = useState(false);
-  const [timeTicker, setTimeTicker] = useState(Date.now());
+  const [timeTicker, setTimeTicker] = useState(currentTime);
 
   const lastLoadedKeyRef = useRef(`${type}_${provider}`);
   const scrollDebounceRef = useRef(null);
@@ -1453,79 +1460,6 @@ export default function Catalog({
     return `/api/list/${type}/mal`;
   };
 
-  const preloadPagesAround = async (targetPage, currentFilters) => {
-    const startP = Math.max(1, targetPage - 1);
-    const endP = targetPage + 1;
-    const endpoint = getApiEndpoint(catalogSource);
-
-    let updatedPages = {};
-    setFetchedPages((prev) => {
-      updatedPages = { ...prev };
-      return prev;
-    });
-
-    const pagesToFetch = [];
-    for (let p = startP; p <= endP; p++) {
-      if (!updatedPages[p]) {
-        pagesToFetch.push(p);
-      }
-    }
-
-    const preloaded = {};
-    if (pagesToFetch.length > 0) {
-      await Promise.all(
-        pagesToFetch.map(async (p) => {
-          try {
-            const response = await fetch(endpoint, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                filters: { ...currentFilters, page: p },
-              }),
-            });
-            if (response.ok) {
-              const resData = await response.json();
-              if (resData?.results) {
-                preloaded[p] = applyCustomOrder(
-                  resData.results,
-                  currentFilters,
-                );
-              }
-            }
-          } catch (e) {
-            console.error(`Failed to preload page ${p}:`, e);
-          }
-        }),
-      );
-    }
-
-    // Merge, never overwrite: a concurrent append may already have stored
-    // pages this snapshot does not know about.
-    if (Object.keys(preloaded).length > 0) {
-      setFetchedPages((prev) => ({ ...prev, ...preloaded }));
-      Object.assign(updatedPages, preloaded);
-    }
-
-    let actualEnd = endP;
-    const windowResults = [];
-    for (let p = startP; p <= endP; p++) {
-      if (updatedPages[p]) {
-        windowResults.push(...updatedPages[p]);
-      } else if (p > targetPage) {
-        actualEnd = p - 1;
-      }
-    }
-
-    setLoadedPageStart((prev) => Math.min(prev, startP));
-    setLoadedPageEnd((prev) => Math.max(prev, actualEnd));
-    setData((prev) => ({
-      ...prev,
-      currentPage: targetPage,
-      results: mergeUniqueResults(prev?.results || [], windowResults),
-    }));
-    didFetchRef.current = true;
-  };
-
   const handleCatalogSourceChange = (newSource) => {
     setCatalogSource(newSource);
     sessionStorage.setItem(`catalog_source_${type}`, newSource);
@@ -1566,12 +1500,12 @@ export default function Catalog({
     }
 
     // Drop every cached view that was built from the previous provider.
-    if (window.catalogCache) {
-      delete window.catalogCache[`${type}_provider`];
-      delete window.catalogCache[`${type}_trending`];
-      delete window.catalogCache[`${type}_latest`];
-      delete window.catalogCache[`${type}_${provider}`];
-    }
+    clearCatalogCache([
+      `${type}_provider`,
+      `${type}_trending`,
+      `${type}_latest`,
+      `${type}_${provider}`,
+    ]);
 
     setCurrentPage(1);
     setData(null);
@@ -1778,10 +1712,6 @@ export default function Catalog({
             currentPage: page,
             results: sortedResults,
           });
-
-          if (infiniteScroll && page > 1) {
-            preloadPagesAround(page, currentFilters);
-          }
         }
         // v11 may report scoped provider ids ("TheYogMehta/anikoto");
         // filter defs are keyed by short lowercase names.
@@ -1886,7 +1816,7 @@ export default function Catalog({
     } catch (err) {
       console.error("Failed to fetch history list:", err);
     }
-  }, [type, provider]);
+  }, [type, provider, setStats, setRecentHistory]);
 
   useEffect(() => {
     const cacheKey = `${type}_${provider}`;
@@ -1980,6 +1910,19 @@ export default function Catalog({
       setRecentHistory([]);
     }
   }, [type, provider, fetchHistoryData]);
+
+  // Let the shell refresh this catalog in place (re-tap of the active tab)
+  // instead of wiping the cache and remounting.
+  useEffect(() => {
+    const refresh = () =>
+      fetchData(currentPage, activeFilters, searchQuery, null);
+    window.refreshCatalogData = refresh;
+    return () => {
+      if (window.refreshCatalogData === refresh) {
+        delete window.refreshCatalogData;
+      }
+    };
+  }, [currentPage, activeFilters, searchQuery, catalogSource]);
 
   const handleDismissHistory = async (item) => {
     setRecentHistory((prev) =>
@@ -2948,7 +2891,11 @@ export default function Catalog({
                   <label className="filter-label">{filter.label}</label>
                   <select
                     value={activeFilters[key] || ""}
-                    onChange={(e) => handleFilterChange(key, e.target.value)}
+                    onChange={
+                      // Event handlers run after render; reading request refs there is safe.
+                      // eslint-disable-next-line react-hooks/refs
+                      (e) => handleFilterChange(key, e.target.value)
+                    }
                     className={`filter-select ${activeFilters[key] ? "is-active" : ""}`}
                   >
                     {Object.entries(filter.options).map(

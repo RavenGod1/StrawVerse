@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   Download,
   Eye,
@@ -14,26 +14,7 @@ import {
   SearchX,
 } from "lucide-react";
 
-const getProxiedImageUrl = (url, item) => {
-  if (!url) return "/images/image-404.png";
-  if (
-    url.startsWith("/api/image") ||
-    url.startsWith("data:") ||
-    url.startsWith("file://") ||
-    url.startsWith("/images/")
-  ) {
-    return url;
-  }
-  let query = `url=${encodeURIComponent(url)}`;
-  const malid = item?.malid || item?.MalID || item?.id;
-  if (malid && !isNaN(parseInt(malid, 10))) {
-    query += `&malid=${malid}`;
-  }
-  if (item?.title) {
-    query += `&title=${encodeURIComponent(item.title)}`;
-  }
-  return `/api/image?${query}`;
-};
+import { getProxiedImageUrl } from "../../utils/imageUrl";
 
 export default function CatalogGrid({
   loading,
@@ -66,24 +47,20 @@ export default function CatalogGrid({
   onOpenTagModal,
 }) {
   const [loadingStatusText, setLoadingStatusText] = useState("");
-  const [pageInput, setPageInput] = useState(String(currentPage || 1));
-
-  useEffect(() => {
-    setPageInput(String(currentPage || 1));
-  }, [currentPage]);
+  const pageInputRef = useRef(null);
 
   const handleJumpSubmit = (e) => {
     e.preventDefault();
-    const pageNum = parseInt(pageInput, 10);
+    const pageNum = parseInt(pageInputRef.current?.value, 10);
     if (!isNaN(pageNum) && handlePageChange) {
       const maxPages = data?.totalPages || 9999;
       const targetPage = Math.max(1, Math.min(maxPages, pageNum));
-      setPageInput(String(targetPage));
+      pageInputRef.current.value = String(targetPage);
       if (targetPage !== currentPage) {
         handlePageChange(targetPage);
       }
     } else {
-      setPageInput(String(currentPage || 1));
+      pageInputRef.current.value = String(currentPage || 1);
     }
   };
 
@@ -329,12 +306,15 @@ export default function CatalogGrid({
             <form onSubmit={handleJumpSubmit} className="pagination-jump-form">
               <span className="pagination-label">Page</span>
               <input
+                key={currentPage}
+                ref={pageInputRef}
                 type="number"
                 min="1"
                 max={data.totalPages || 9999}
-                value={pageInput}
-                onChange={(e) => setPageInput(e.target.value)}
-                onBlur={() => setPageInput(String(currentPage || 1))}
+                defaultValue={String(currentPage || 1)}
+                onBlur={() => {
+                  pageInputRef.current.value = String(currentPage || 1);
+                }}
                 className="pagination-jump-input"
                 aria-label="Jump to page number"
               />

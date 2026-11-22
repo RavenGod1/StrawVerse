@@ -10,6 +10,10 @@ const {
   ensureDirectoryExists,
 } = require("./DirectoryMaker");
 const { logger, configureExternalLogs } = require("./AppLogger.js");
+const {
+  normalizeExtensionStatuses,
+  normalizeGitHubRawUrl,
+} = require("./extensionMetadata");
 
 // Log folder users can actually reach: shared StrawVerse/logs on
 // mobile, ~/StrawVerse/logs on desktop.
@@ -768,9 +772,8 @@ const DEFAULT_EXTENSION_REPO = {
   displayName: "Extensions (Test)",
   url: "https://github.com/RavenGod1/extensions",
   marketplaceUrl:
-    "https://raw.githubusercontent.com/RavenGod1/extensions/refs/heads/Test/marketplace.json",
-  rawBaseUrl:
-    "https://raw.githubusercontent.com/RavenGod1/extensions/refs/heads/Test",
+    "https://raw.githubusercontent.com/RavenGod1/extensions/Test/marketplace.json",
+  rawBaseUrl: "https://raw.githubusercontent.com/RavenGod1/extensions/Test",
   isDefault: true,
 };
 
@@ -813,7 +816,9 @@ function parseExtensionRepoUrl(inputUrl) {
     const owner = ghRawMatch[1];
     const repoName = ghRawMatch[2];
     const branch = ghRawMatch[3] || "main";
-    const rawBaseUrl = cleanUrl.replace(/\/marketplace\.json$/i, "");
+    const rawBaseUrl = normalizeGitHubRawUrl(
+      cleanUrl.replace(/\/marketplace\.json$/i, ""),
+    );
     return {
       id: `${owner}/${repoName}`,
       owner,
@@ -821,7 +826,7 @@ function parseExtensionRepoUrl(inputUrl) {
       branch,
       url: `https://github.com/${owner}/${repoName}`,
       rawBaseUrl,
-      marketplaceUrl: cleanUrl,
+      marketplaceUrl: normalizeGitHubRawUrl(cleanUrl),
       isDefault:
         owner.toLowerCase() === "theyogmehta" &&
         repoName.toLowerCase() === "extensions",
@@ -885,6 +890,12 @@ function getExtensionRepos() {
           id,
           owner,
           name,
+          ...(r.rawBaseUrl
+            ? { rawBaseUrl: normalizeGitHubRawUrl(r.rawBaseUrl) }
+            : {}),
+          ...(r.marketplaceUrl
+            ? { marketplaceUrl: normalizeGitHubRawUrl(r.marketplaceUrl) }
+            : {}),
         };
       });
   };
@@ -1210,6 +1221,7 @@ async function fetchAggregatedMarketplace(activeType = "Anime") {
           (repoId.includes("/") ? repoId.split("/")[0] : "custom");
         return list.map((item) => ({
           ...item,
+          statuses: normalizeExtensionStatuses(item.statuses),
           type: isMovies ? "Movies" : activeType,
           category: isMovies ? "movies-tvshows" : activeType,
           repoOwner,
@@ -1803,7 +1815,7 @@ async function HandleExtensions(
 
   const rawBase =
     RepoBaseUrl ||
-    "https://raw.githubusercontent.com/RavenGod1/extensions/refs/heads/Test";
+    "https://raw.githubusercontent.com/RavenGod1/extensions/Test";
 
   if (TaskType === "add") {
     try {

@@ -166,7 +166,7 @@ export default function VideoPlayer({
 
   const handleZoneDoubleTap = (side, e) => {
     e.stopPropagation();
-    const now = Date.now();
+    const now = e.timeStamp;
     const last = lastZoneTapRef.current;
     if (last.side === side && now - last.time < 350) {
       if (clickTimerRef.current) {

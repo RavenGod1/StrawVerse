@@ -29,58 +29,36 @@ import {
   getMalStatusOptions,
   getMalStatusLabel,
 } from "../utils/common";
-import { normalizeStatus, formatAudioLangs } from "../utils/mediaBadges";
+import {
+  normalizeStatus,
+  formatAudioLangs,
+  hasLanguageChoice,
+  resolveItemLangs as getItemLangs,
+} from "../utils/mediaBadges";
+import { getProxiedImageUrl } from "../utils/imageUrl";
+import { getDownloadProgress } from "../utils/downloadProgress";
 import Dropdown from "./common/Dropdown";
 import "./css/InfoView.css";
 
-const getItemLangs = (item, details, dubSelect) => {
-  let langs = [];
-  if (Array.isArray(item.langs) && item.langs.length > 0) {
-    langs = item.langs.map((l) => String(l).toLowerCase());
-  } else if (item.lang) {
-    if (item.lang === "both") {
-      langs = ["sub", "dub"];
-    } else {
-      langs = [String(item.lang).toLowerCase()];
-    }
-  } else {
-    const hasSub =
-      item.hasSub !== undefined
-        ? item.hasSub
-        : details?.hasSub !== undefined
-          ? details.hasSub
-          : true;
-    const hasDub =
-      item.hasDub !== undefined
-        ? item.hasDub
-        : details?.hasDub ||
-          details?.subOrDub === "both" ||
-          details?.subOrDub === "dub";
-    const hasHsub = item.hasHsub || details?.hasHsub;
-    const hasSoftsub =
-      item.hasSoftsub || item.hasSoftSub || details?.hasSoftsub;
-    const hasSoftdub =
-      item.hasSoftdub || item.hasSoftDub || details?.hasSoftdub;
+function registerInfoViewProgressRefresh(handler) {
+  window.refreshInfoViewProgress = handler;
+}
 
-    if (hasSub) langs.push("sub");
-    if (hasDub) langs.push("dub");
-    if (hasHsub) langs.push("hsub");
-    if (hasSoftsub) langs.push("softsub");
-    if (hasSoftdub) langs.push("softdub");
-
-    if (langs.length === 0) {
-      langs = ["sub"];
-      if (
-        details?.subOrDub === "both" ||
-        details?.subOrDub === "dub" ||
-        dubSelect === "dub"
-      ) {
-        langs.push("dub");
-      }
-    }
+function unregisterInfoViewProgressRefresh(handler) {
+  if (window.refreshInfoViewProgress === handler) {
+    delete window.refreshInfoViewProgress;
   }
-  return [...new Set(langs)];
-};
+}
+
+function invalidateAllCatalogCaches() {
+  if (!window.catalogCache) return;
+  delete window.catalogCache.Anime_mal;
+  delete window.catalogCache.Manga_mal;
+  delete window.catalogCache.Anime_local;
+  delete window.catalogCache.Manga_local;
+  // Provider catalogs keep their membership when a tag changes; wiping them
+  // reset the user's Discover source, filters and scroll position.
+}
 
 // Status + sub/dub pills drawn over the bottom of a Seasons/Recommendations
 // poster (same idea as the badge strip on catalog cards).
@@ -132,6 +110,8 @@ export default function InfoView({
   const [localMalProvider, setLocalMalProvider] =
     useState(propLocalMalProvider);
   const [details, setDetails] = useState(null);
+  const [customTags, setCustomTags] = useState([]);
+  const [currentTags, setCurrentTags] = useState([]);
 
   // Anime extras: Seasons (sequel/prequel chain) + Recommendations, from AniList
   const [extras, setExtras] = useState(null);
@@ -268,6 +248,59 @@ export default function InfoView({
       setIsLinkingMapping(false);
     }
   };
+
+  async function saveTags(updatedTag, showSwal = true) {
+    try {
+      const activeProvider =
+        details?.provider &&
+        details.provider !== "provider" &&
+        details.provider !== "local source"
+          ? details.provider
+          : localMalProvider !== "provider" && localMalProvider !== "local"
+            ? localMalProvider
+            : undefined;
+
+      const response = await fetch("/api/local/tags/add", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type,
+          id: details?.id || id,
+          provider: activeProvider,
+          MalID: type === "Movies" ? null : details?.malid || details?.MalID,
+          CustomTag: updatedTag,
+        }),
+      });
+      const data = await response.json();
+      if (!data.error) {
+        invalidateAllCatalogCaches();
+        setCurrentTags(updatedTag ? [updatedTag] : []);
+
+        fetch(`/api/local/tags/view/${type}`)
+          .then((res) => res.json())
+          .then((tags) => setCustomTags(tags))
+          .catch((err) => console.error(err));
+
+        if (showSwal) {
+          Swal.fire({
+            title: "Library Updated",
+            text: updatedTag
+              ? `Status set to "${updatedTag}"`
+              : "Removed from Library",
+            icon: "success",
+            toast: true,
+            position: "top-end",
+            showConfirmButton: false,
+            timer: 2000,
+            background: "var(--bg-secondary)",
+            color: "var(--text-main)",
+          });
+        }
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  }
 
   useEffect(() => {
     if (type === "Movies") return;
@@ -499,8 +532,6 @@ export default function InfoView({
   const [malSyncing, setMalSyncing] = useState(false);
   const [malStatus, setMalStatus] = useState("not_in_list");
   const [malWatched, setMalWatched] = useState(0);
-  const [customTags, setCustomTags] = useState([]);
-  const [currentTags, setCurrentTags] = useState([]);
   const [pulseDropdown, setPulseDropdown] = useState(false);
 
   const triggerPulse = () => {
@@ -624,6 +655,7 @@ export default function InfoView({
   });
 
   const pollingIntervalRef = useRef(null);
+  const fetchDownloadsStateRef = useRef(null);
 
   const stopPollingDownloads = useCallback(() => {
     if (pollingIntervalRef.current) {
@@ -636,7 +668,12 @@ export default function InfoView({
     let activeList = [];
     if (Array.isArray(data.activeTasks) && data.activeTasks.length > 0) {
       activeList = data.activeTasks;
-    } else if (data.totalSegments && data.totalSegments > 0) {
+    } else if (
+      (data.totalSegments && data.totalSegments > 0) ||
+      (data.caption &&
+        data.caption !== "Nothing in progress" &&
+        data.caption !== "Preparing next episode...")
+    ) {
       activeList = [
         {
           caption: data.caption,
@@ -674,7 +711,7 @@ export default function InfoView({
       if (isDownloadingOrQueued) {
         if (!pollingIntervalRef.current) {
           pollingIntervalRef.current = setInterval(() => {
-            fetchDownloadsState();
+            fetchDownloadsStateRef.current?.();
           }, 1500);
         }
       } else {
@@ -684,6 +721,10 @@ export default function InfoView({
       stopPollingDownloads();
     }
   }, [parseActiveTasksData, stopPollingDownloads]);
+
+  useEffect(() => {
+    fetchDownloadsStateRef.current = fetchDownloadsState;
+  }, [fetchDownloadsState]);
 
   useEffect(() => {
     fetchDownloadsState();
@@ -738,7 +779,7 @@ export default function InfoView({
         if (isDownloadingOrQueued) {
           if (!pollingIntervalRef.current) {
             pollingIntervalRef.current = setInterval(() => {
-              fetchDownloadsState();
+              fetchDownloadsStateRef.current?.();
             }, 1500);
           }
         } else {
@@ -752,8 +793,7 @@ export default function InfoView({
     };
   }, [fetchDownloadsState, parseActiveTasksData, stopPollingDownloads]);
 
-  const getItemQueueStatus = useCallback(
-    (itemNum, itemSeason = null, itemId = null) => {
+  const getItemQueueStatus = (itemNum, itemSeason = null, itemId = null) => {
       const activeList =
         Array.isArray(downloadsState.activeTasks) &&
         downloadsState.activeTasks.length > 0
@@ -825,9 +865,7 @@ export default function InfoView({
             Number(activeNum) === Number(itemNum) &&
             seasonMatches)
         ) {
-          const total = active.totalSegments || 1;
-          const current = active.currentSegments || 0;
-          const pct = Math.min(100, Math.floor((current / total) * 100));
+          const pct = getDownloadProgress(active);
           return { inProgress: true, pct, isQueued: false };
         }
       }
@@ -895,10 +933,8 @@ export default function InfoView({
         return { inProgress: true, pct: 0, isQueued: true };
       }
 
-      return { inProgress: false, pct: 0, isQueued: false };
-    },
-    [downloadsState, id, details?.title, details?.malid, details?.id],
-  );
+    return { inProgress: false, pct: 0, isQueued: false };
+  };
 
   // Custom dropdown states
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
@@ -910,6 +946,7 @@ export default function InfoView({
   const [isImageExpanded, setIsImageExpanded] = useState(false);
   const [zoomScale, setZoomScale] = useState(1);
   const [zoomPos, setZoomPos] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
   const isDraggingRef = useRef(false);
   const hasDraggedRef = useRef(false);
   const dragStartRef = useRef({ x: 0, y: 0 });
@@ -970,6 +1007,7 @@ export default function InfoView({
     if (zoomScale <= 1) return;
     e.preventDefault();
     isDraggingRef.current = true;
+    setIsDragging(true);
     hasDraggedRef.current = false;
     dragStartRef.current = {
       x: e.clientX - zoomPos.x,
@@ -993,6 +1031,7 @@ export default function InfoView({
 
   const handleMouseUp = () => {
     isDraggingRef.current = false;
+    setIsDragging(false);
   };
 
   const handleTouchStart = (e) => {
@@ -1005,6 +1044,7 @@ export default function InfoView({
       touchDistRef.current = dist;
     } else if (e.touches.length === 1 && zoomScale > 1) {
       isDraggingRef.current = true;
+      setIsDragging(true);
       dragStartRef.current = {
         x: e.touches[0].clientX - zoomPos.x,
         y: e.touches[0].clientY - zoomPos.y,
@@ -1041,6 +1081,7 @@ export default function InfoView({
 
   const handleTouchEnd = () => {
     isDraggingRef.current = false;
+    setIsDragging(false);
     touchDistRef.current = 0;
   };
   const [installedExtensions, setInstalledExtensions] = useState(null);
@@ -1079,16 +1120,16 @@ export default function InfoView({
     [historyProgress, malWatched, type],
   );
 
-  const watchedCount = useMemo(() => {
-    if (!episodesOrChapters || episodesOrChapters.length === 0) return 0;
-    return episodesOrChapters.filter((item) => isItemWatched(item)).length;
-  }, [episodesOrChapters, isItemWatched]);
+  const watchedCount =
+    !episodesOrChapters || episodesOrChapters.length === 0
+      ? 0
+      : episodesOrChapters.filter((item) => isItemWatched(item)).length;
 
   const showWatchedSort =
     watchedCount > 0 && watchedCount < (episodesOrChapters?.length || 0);
 
   // Compute available seasons for Movies/Series season filter
-  const availableSeasons = useMemo(() => {
+  const availableSeasons = (() => {
     if (type !== "Movies" && type !== "Anime") return [];
     const seasonSet = new Set();
     episodesOrChapters.forEach((item) => {
@@ -1100,7 +1141,7 @@ export default function InfoView({
       .filter((s) => !isNaN(s))
       .sort((a, b) => a - b);
     return seasons.length > 1 ? seasons : [];
-  }, [episodesOrChapters, type]);
+  })();
 
   const userSelectedSeasonRef = useRef(false);
 
@@ -1604,7 +1645,7 @@ export default function InfoView({
 
   useEffect(() => {
     fetchHistoryProgress();
-    window.refreshInfoViewProgress = fetchHistoryProgress;
+    registerInfoViewProgressRefresh(fetchHistoryProgress);
 
     const handleFocus = () => fetchHistoryProgress();
     const handleVisibility = () => {
@@ -1619,9 +1660,7 @@ export default function InfoView({
       window.removeEventListener("focus", handleFocus);
       document.removeEventListener("visibilitychange", handleVisibility);
       clearInterval(timer);
-      if (window.refreshInfoViewProgress === fetchHistoryProgress) {
-        delete window.refreshInfoViewProgress;
-      }
+      unregisterInfoViewProgressRefresh(fetchHistoryProgress);
     };
   }, [fetchHistoryProgress]);
 
@@ -1768,15 +1807,53 @@ export default function InfoView({
     [extras?.status, details?.status, type],
   );
 
+  const detailHasSub = details?.hasSub;
+  const detailHasDub = details?.hasDub;
+  const detailHasHsub = details?.hasHsub;
+  const detailSubOrDub = details?.subOrDub;
+  const providerLangs = [];
+  if (type === "Anime") {
+    const merged = new Set();
+    const detailLanguages = {
+      hasSub: detailHasSub,
+      hasDub: detailHasDub,
+      hasHsub: detailHasHsub,
+      subOrDub: detailSubOrDub,
+    };
+    for (const item of episodesOrChapters) {
+      getItemLangs(item, detailLanguages, null).forEach((lang) =>
+        merged.add(lang),
+      );
+    }
+    if (episodesOrChapters.length === 0) {
+      getItemLangs({}, detailLanguages, null).forEach((lang) =>
+        merged.add(lang),
+      );
+    }
+    providerLangs.push(...merged);
+  }
+  const providerLangsKey = providerLangs.join(",");
+
+  useEffect(() => {
+    const langs = providerLangsKey.split(",").filter(Boolean);
+    if (
+      type === "Anime" &&
+      langs.length > 0 &&
+      !langs.includes(dubSelect)
+    ) {
+      setDubSelect(langs[0]);
+    }
+  }, [type, providerLangsKey, dubSelect]);
+
   // "SUB" / "SUB & DUB" from the languages of the loaded episode list
-  const audioLangsLabel = useMemo(() => {
+  const audioLangsLabel = (() => {
     if (type !== "Anime") return null;
     const merged = new Set();
     for (const item of episodesOrChapters) {
       getItemLangs(item, details, dubSelect).forEach((l) => merged.add(l));
     }
     return formatAudioLangs([...merged]) || "SUB";
-  }, [type, episodesOrChapters, details, dubSelect]);
+  })();
 
   // Audio languages for Movies/TV titles (from the provider, e.g. the
   // post's "Dual Audio {Hindi-English}" tag or TMDB spoken languages)
@@ -1785,69 +1862,6 @@ export default function InfoView({
     const clean = details.audioLangs.map((l) => String(l).trim()).filter(Boolean);
     return clean.length ? clean.join("/") : null;
   }, [type, details]);
-
-  // Audio languages for the Seasons/Recommendations cards (one bulk lookup)
-  const [extrasLangs, setExtrasLangs] = useState({});
-  const extrasLangsKeyRef = useRef(null);
-
-  useEffect(() => {
-    // Every entry costs one provider episode request, so only ask for the
-    // cards that are actually rendered (and never on a non-anime page).
-    if (type !== "Anime") {
-      extrasLangsKeyRef.current = null;
-      setExtrasLangs({});
-      return;
-    }
-    const targets = [
-      ...((extras?.seasons || []).map((s) => s.idMal)),
-      ...((extras?.recommendations || [])
-        .slice(0, recCount)
-        .map((r) => r.idMal)),
-    ]
-      .map(Number)
-      .filter((n) => Number.isInteger(n) && n > 0);
-    const unique = [...new Set(targets)].slice(0, 12);
-    if (!unique.length) {
-      extrasLangsKeyRef.current = null;
-      setExtrasLangs({});
-      return;
-    }
-    const key = unique.join(",");
-    if (extrasLangsKeyRef.current === key) return;
-    setExtrasLangs({});
-
-    // The key is claimed when the request actually starts, not when the timer
-    // is scheduled: an effect re-run with the same targets clears the pending
-    // timer, so claiming early would leave the languages never fetched. A stale
-    // response can never land either — the key is re-checked before applying.
-    const timer = setTimeout(async () => {
-      if (extrasLangsKeyRef.current === key) return;
-      extrasLangsKeyRef.current = key;
-      try {
-        const response = await fetch("/api/info/bulk-meta", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            type: "Anime",
-            items: unique.map((malid) => ({ malid })),
-            // Status comes straight from the AniList-shaped extras payload;
-            // only the provider episode languages need fetching here.
-            includeStatus: false,
-          }),
-        });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const data = await response.json();
-        if (extrasLangsKeyRef.current !== key) return;
-        setExtrasLangs(data?.meta || {});
-      } catch (err) {
-        console.error("Failed to load card languages:", err);
-        if (extrasLangsKeyRef.current === key) extrasLangsKeyRef.current = null;
-      }
-    }, 500);
-    return () => {
-      clearTimeout(timer);
-    };
-  }, [extras, type, recCount]);
 
   useEffect(() => {
     if (window.sharedStateAPI && window.sharedStateAPI.on) {
@@ -2011,16 +2025,14 @@ export default function InfoView({
     }
   }, [details, type]);
 
-  const allSortedEpisodes = useMemo(() => {
-    return [...episodesOrChapters].sort((a, b) => {
-      const sA =
-        a.season !== undefined && a.season !== null ? Number(a.season) : 1;
-      const sB =
-        b.season !== undefined && b.season !== null ? Number(b.season) : 1;
-      if (sA !== sB) return sA - sB;
-      return (parseFloat(a.number) || 0) - (parseFloat(b.number) || 0);
-    });
-  }, [episodesOrChapters]);
+  const allSortedEpisodes = [...episodesOrChapters].sort((a, b) => {
+    const sA =
+      a.season !== undefined && a.season !== null ? Number(a.season) : 1;
+    const sB =
+      b.season !== undefined && b.season !== null ? Number(b.season) : 1;
+    if (sA !== sB) return sA - sB;
+    return (parseFloat(a.number) || 0) - (parseFloat(b.number) || 0);
+  });
 
   const { nextToPlayItem, isCaughtUp, hasAnyProgress } = useMemo(() => {
     if (!allSortedEpisodes || allSortedEpisodes.length === 0) {
@@ -2351,26 +2363,17 @@ export default function InfoView({
           return;
         }
 
-        let hasSub = false;
-        let hasDub = false;
-        let hasHsub = false;
-
-        targetEpisodes.forEach((ep) => {
-          const langs =
-            ep.langs && Array.isArray(ep.langs) && ep.langs.length > 0
-              ? ep.langs
-              : ["sub"];
-
-          if (langs.includes("sub")) hasSub = true;
-          if (langs.includes("dub")) hasDub = true;
-          if (langs.includes("hsub")) hasHsub = true;
-        });
-
         const availableLangs = [];
-        if (hasSub) availableLangs.push("sub");
-        if (hasDub) availableLangs.push("dub");
-        if (hasHsub) availableLangs.push("hsub");
+        targetEpisodes.forEach((ep) => {
+          getItemLangs(ep, details, dubSelect).forEach((lang) => {
+            if (!availableLangs.includes(lang)) availableLangs.push(lang);
+          });
+        });
         if (availableLangs.length === 0) availableLangs.push("sub");
+        const showLanguageChoice = hasLanguageChoice(availableLangs);
+        const selectedLangDefault = availableLangs.includes(dubSelect)
+          ? dubSelect
+          : availableLangs[0];
 
         let defaultQuality = "1080p";
         try {
@@ -2509,14 +2512,14 @@ export default function InfoView({
               }
             </div>
             ${
-              availableLangs.length > 1
+              type === "Anime" && showLanguageChoice
                 ? `
               <div class="swal-dl-section-label">Language Version</div>
               <div class="swal-pill-group" id="swal-lang-pills">
                 ${availableLangs
                   .map(
-                    (lang, idx) => `
-                  <button type="button" class="swal-pill-btn swal-lang-btn ${idx === 0 ? "active" : ""}" data-value="${lang}">
+                    (lang) => `
+                  <button type="button" class="swal-pill-btn swal-lang-btn ${lang === selectedLangDefault ? "active" : ""}" data-value="${lang}">
                     ${lang.toUpperCase()}
                   </button>
                 `,
@@ -2587,7 +2590,7 @@ export default function InfoView({
             );
             const selLang = activeLangBtn
               ? activeLangBtn.getAttribute("data-value")
-              : availableLangs[0] || "sub";
+              : selectedLangDefault;
             const selQual = activeQualBtn
               ? activeQualBtn.getAttribute("data-value")
               : selectedQualityDefault;
@@ -2699,17 +2702,6 @@ export default function InfoView({
     }
   };
 
-  const invalidateAllCatalogCaches = () => {
-    if (window.catalogCache) {
-      delete window.catalogCache.Anime_mal;
-      delete window.catalogCache.Manga_mal;
-      delete window.catalogCache.Anime_local;
-      delete window.catalogCache.Manga_local;
-      delete window.catalogCache.Anime_provider;
-      delete window.catalogCache.Manga_provider;
-    }
-  };
-
   // MAL Status sync
   const handleMalSync = async () => {
     if (type === "Movies" || !details?.malid) return;
@@ -2798,60 +2790,6 @@ export default function InfoView({
       if (trimmed) {
         handleSetSingleTag(trimmed);
       }
-    }
-  };
-
-  const saveTags = async (updatedTag, showSwal = true) => {
-    try {
-      const activeProvider =
-        details?.provider &&
-        details.provider !== "provider" &&
-        details.provider !== "local source"
-          ? details.provider
-          : localMalProvider !== "provider" && localMalProvider !== "local"
-            ? localMalProvider
-            : undefined;
-
-      const response = await fetch("/api/local/tags/add", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: type,
-          id: details?.id || id,
-          provider: activeProvider,
-          MalID: type === "Movies" ? null : details?.malid || details?.MalID,
-          CustomTag: updatedTag,
-        }),
-      });
-      const data = await response.json();
-      if (!data.error) {
-        invalidateAllCatalogCaches();
-        setCurrentTags(updatedTag ? [updatedTag] : []);
-
-        // Refresh custom tag list
-        fetch(`/api/local/tags/view/${type}`)
-          .then((res) => res.json())
-          .then((tags) => setCustomTags(tags))
-          .catch((err) => console.error(err));
-
-        if (showSwal) {
-          Swal.fire({
-            title: "Library Updated",
-            text: updatedTag
-              ? `Status set to "${updatedTag}"`
-              : "Removed from Library",
-            icon: "success",
-            toast: true,
-            position: "top-end",
-            showConfirmButton: false,
-            timer: 2000,
-            background: "var(--bg-secondary)",
-            color: "var(--text-main)",
-          });
-        }
-      }
-    } catch (err) {
-      console.error(err);
     }
   };
 
@@ -3609,12 +3547,19 @@ export default function InfoView({
     return downloaded;
   }).length;
 
+  // The cover is fetched through the app's image proxy: provider CDNs answer
+  // direct renderer requests with 403, so the raw URL shows the placeholder.
+  const coverImage = getProxiedImageUrl(details?.image, {
+    malid: details?.malid,
+    title: details?.title,
+  });
+
   return (
     <div className="info-wrapper">
       {details?.image && (
         <div
           className="info-blur-bg"
-          style={{ backgroundImage: `url(${details.image})` }}
+          style={{ backgroundImage: `url("${coverImage}")` }}
         />
       )}
       {/* Back Header */}
@@ -3633,7 +3578,7 @@ export default function InfoView({
           style={{ cursor: details?.image ? "pointer" : "default" }}
         >
           <img
-            src={details?.image}
+            src={coverImage}
             alt={details?.title}
             className="cover-img"
             onError={(e) => {
@@ -4183,10 +4128,7 @@ export default function InfoView({
                           e.currentTarget.src = "/images/image-404.png";
                         }}
                       />
-                      <ExtrasCardBadges
-                        media={season}
-                        langs={extrasLangs[String(season.idMal)]?.langs}
-                      />
+                      <ExtrasCardBadges media={season} />
                     </span>
                     <span className="extras-body">
                       <span className="extras-title">{season.title}</span>
@@ -4240,10 +4182,7 @@ export default function InfoView({
                           e.currentTarget.src = "/images/image-404.png";
                         }}
                       />
-                      <ExtrasCardBadges
-                        media={rec}
-                        langs={extrasLangs[String(rec.idMal)]?.langs}
-                      />
+                      <ExtrasCardBadges media={rec} />
                     </span>
                     <span className="extras-body">
                       <span className="extras-title">{rec.title}</span>
@@ -4395,25 +4334,25 @@ export default function InfoView({
 
               {details?.provider &&
                 details?.provider !== "local source" &&
-                type === "Anime" && (
+                type === "Anime" &&
+                hasLanguageChoice(providerLangs) && (
                   <Dropdown
                     value={dubSelect}
                     onChange={setDubSelect}
                     options={(() => {
-                      const opts = [
-                        { value: "sub", label: "SUB" },
-                        { value: "dub", label: "DUB" },
-                      ];
-                      if (
-                        episodesOrChapters.some(
-                          (ep) =>
-                            (ep.langs && ep.langs.includes("hsub")) ||
-                            ep.hasHsub,
-                        )
-                      ) {
+                      const opts = [];
+                      if (providerLangs.includes("sub"))
+                        opts.push({ value: "sub", label: "SUB" });
+                      if (providerLangs.includes("dub"))
+                        opts.push({ value: "dub", label: "DUB" });
+                      if (providerLangs.includes("hsub"))
                         opts.push({ value: "hsub", label: "HSUB" });
-                      }
-                      return opts;
+                      return opts.length > 0
+                        ? opts
+                        : [
+                            { value: "sub", label: "SUB" },
+                            { value: "dub", label: "DUB" },
+                          ];
                     })()}
                     className="u-style-46"
                     triggerClassName="u-style-44"
@@ -5420,14 +5359,12 @@ export default function InfoView({
             }}
           >
             <img
-              src={details.image}
+              src={coverImage}
               alt={details?.title || "Expanded Cover"}
               className="image-expand-modal-content"
               style={{
                 transform: `translate(${zoomPos.x}px, ${zoomPos.y}px) scale(${zoomScale})`,
-                transition: isDraggingRef.current
-                  ? "none"
-                  : "transform 0.2s ease-out",
+                transition: isDragging ? "none" : "transform 0.2s ease-out",
               }}
             />
           </div>

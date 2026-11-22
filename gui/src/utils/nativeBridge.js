@@ -346,14 +346,14 @@ function createPolyfill() {
         if (typeof res === "string" && res) return res;
         if (res?.version) return res.version;
         if (res?.result) return res.result;
-      } catch (_) {}
+      } catch {}
       try {
         const resp = await fetch("/api/version");
         if (resp.ok) {
           const body = await resp.json();
           return body?.version || body?.result || "11.0.4";
         }
-      } catch (_) {}
+      } catch {}
       return "11.0.4";
     },
     openLocalPath: (targetPath, openFolder = true) =>

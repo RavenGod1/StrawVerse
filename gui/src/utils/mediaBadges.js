@@ -86,3 +86,65 @@ export function unionEpisodeLangs(episodes) {
   }
   return [...set];
 }
+
+export function hasLanguageChoice(langs = []) {
+  return Array.isArray(langs) && langs.includes("sub") && langs.includes("dub");
+}
+
+/**
+ * Resolve the playable language versions for one episode. Episode metadata is
+ * authoritative; provider detail metadata fills the gap when an extension does
+ * not label every episode (for example, dual-audio providers with plain rows).
+ */
+export function resolveItemLangs(item = {}, details = {}, selected = null) {
+  const explicit = Array.isArray(item.langs)
+    ? item.langs.flatMap((lang) => {
+        const value = String(lang).toLowerCase();
+        return value === "both" ? ["sub", "dub"] : [value];
+      })
+    : item.lang
+      ? String(item.lang).toLowerCase() === "both"
+        ? ["sub", "dub"]
+        : [String(item.lang).toLowerCase()]
+      : [];
+  if (explicit.length > 0) return [...new Set(explicit)];
+
+  const subOrDub = details?.subOrDub
+    ? String(details.subOrDub).toLowerCase()
+    : null;
+  const hasLanguageMetadata =
+    item.hasSub !== undefined ||
+    item.hasDub !== undefined ||
+    details?.hasSub !== undefined ||
+    details?.hasDub !== undefined ||
+    subOrDub;
+  const hasSub =
+    item.hasSub !== undefined
+      ? item.hasSub
+      : details?.hasSub !== undefined
+        ? details.hasSub
+        : subOrDub
+          ? subOrDub !== "dub"
+          : true;
+  const hasDub =
+    item.hasDub !== undefined
+      ? item.hasDub
+      : details?.hasDub !== undefined
+        ? details.hasDub
+        : subOrDub === "both" || subOrDub === "dub";
+
+  const langs = [];
+  if (hasSub) langs.push("sub");
+  if (hasDub) langs.push("dub");
+  if (item.hasHsub || details?.hasHsub) langs.push("hsub");
+  if (item.hasSoftsub || item.hasSoftSub || details?.hasSoftsub)
+    langs.push("softsub");
+  if (item.hasSoftdub || item.hasSoftDub || details?.hasSoftdub)
+    langs.push("softdub");
+
+  if (langs.length === 0 && !hasLanguageMetadata) {
+    langs.push("sub");
+    if (selected === "dub") langs.push("dub");
+  }
+  return [...new Set(langs)];
+}

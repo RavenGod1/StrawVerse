@@ -1,6 +1,9 @@
 const { queryOne, run, runUpsertCompat } = require("./db");
 const { logger } = require("./AppLogger");
-const { getCanonicalDomain } = require("./extensionRegistry");
+const {
+  getCanonicalDomain,
+  isBypassableUrl,
+} = require("./extensionRegistry");
 
 const cache = {};
 const circuitBreaker = {};
@@ -160,6 +163,25 @@ async function getDomainConcurrency(domain, defaultInitial = 4) {
     return Math.max(1, cache[domain]);
   }
   return getInitialDomainConcurrency(domain, defaultInitial);
+}
+
+function getDownloadConcurrencyPolicy(
+  url,
+  referer,
+  defaultInitial = 8,
+  defaultMax = 16,
+) {
+  const initial = Math.max(1, defaultInitial);
+  const max = Math.max(initial, defaultMax);
+  if (!isBypassableUrl(url, referer)) {
+    return { initial, max, isProtected: false };
+  }
+  const protectedInitial = Math.min(1, initial);
+  return {
+    initial: protectedInitial,
+    max: Math.max(protectedInitial, Math.min(4, max)),
+    isProtected: true,
+  };
 }
 
 function setDomainErrorCap(domain, failedAtConcurrency) {
@@ -428,6 +450,7 @@ module.exports = {
   extractDomain,
   getDomainConcurrency,
   getInitialDomainConcurrency,
+  getDownloadConcurrencyPolicy,
   recordDomainFailure,
   recordDomainSuccess,
   recordDomainBatchSuccess,

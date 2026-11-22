@@ -25,6 +25,7 @@ const { isLanguagePreferred, settingfetch } = require("./settings");
 const {
   extractDomain,
   getDomainConcurrency,
+  getDownloadConcurrencyPolicy,
   getInitialDomainConcurrency,
   recordDomainBatchSuccess,
   isCircuitOpen,
@@ -60,6 +61,16 @@ function resolveUrl(relativeUrl, baseUrl) {
   } catch (e) {
     return relativeUrl;
   }
+}
+
+function decodeDataUrl(value) {
+  const match = String(value || "").match(/^data:([^,]*),(.*)$/s);
+  if (!match) throw new Error("Invalid data URL");
+  const [, metadata, payload] = match;
+  if (/;base64/i.test(metadata)) {
+    return Buffer.from(payload, "base64").toString("utf8");
+  }
+  return decodeURIComponent(payload);
 }
 
 function stripPngHeader(buffer) {
@@ -263,7 +274,19 @@ async function getFfmpegPath() {
 // solver run instead of stampeding it. Successes are reused for 60s;
 // failures are negatively cached for 15s so segments fail fast and the
 // queue can rotate to another server instead of grinding stale headers.
-const clearanceRefresh = { successAt: 0, failAt: 0, pending: null };
+// Clearance is host-specific: one rotating CDN must not suppress the
+// challenge for a different CDN host.
+const clearanceRefresh = new Map();
+
+function getClearanceState(target) {
+  const key = String(target || "").toLowerCase();
+  let state = clearanceRefresh.get(key);
+  if (!state) {
+    state = { successAt: 0, failAt: 0, pending: null };
+    clearanceRefresh.set(key, state);
+  }
+  return state;
+}
 
 // Segment CDN hosts (e.g. cdnx.aniwatchtv.site) only serve media bytes and
 // answer the bypass probe with a non-challenge error page. Refresh against
@@ -290,33 +313,34 @@ function resolveClearanceTarget(targetUrl) {
 async function refreshCdnClearance(targetUrl, referer = null) {
   try {
     if (typeof global.cloudflarebypass !== "function") return false;
+    const target = resolveClearanceTarget(targetUrl);
+    const state = getClearanceState(target);
     const now = Date.now();
-    if (now - clearanceRefresh.successAt < 60000) return true;
-    if (now - clearanceRefresh.failAt < 15000) return false;
-    if (!clearanceRefresh.pending) {
-      const target = resolveClearanceTarget(targetUrl);
-      clearanceRefresh.pending = global
+    if (now - state.successAt < 60000) return true;
+    if (now - state.failAt < 15000) return false;
+    if (!state.pending) {
+      state.pending = global
         .cloudflarebypass(target, true, referer || null)
         .then((ok) => {
           if (ok === false) {
-            clearanceRefresh.failAt = Date.now();
+            state.failAt = Date.now();
             return false;
           }
-          clearanceRefresh.successAt = Date.now();
+          state.successAt = Date.now();
           return true;
         })
         .catch((err) => {
           logger.warn(
             `[Downloader] Clearance bypass failed for ${target}: ${err?.message || err}`,
           );
-          clearanceRefresh.failAt = Date.now();
+          state.failAt = Date.now();
           return false;
         })
         .finally(() => {
-          clearanceRefresh.pending = null;
+          state.pending = null;
         });
     }
-    return await clearanceRefresh.pending;
+    return await state.pending;
   } catch (_) {
     return false;
   }
@@ -331,6 +355,28 @@ function parseSpeedFloorBps(speedStr) {
   if (str.includes("mb")) return Math.round(num * 1024 * 1024);
   if (str.includes("kb")) return Math.round(num * 1024);
   return Math.round(num);
+}
+
+function isAnixohindiRangeUrl(targetUrl) {
+  try {
+    const url = new URL(targetUrl);
+    return (
+      url.hostname.toLowerCase() === "embed.anixohindi.cc" &&
+      url.pathname.startsWith("/stream/v/")
+    );
+  } catch (_) {
+    return false;
+  }
+}
+
+function withRangeCacheBuster(targetUrl) {
+  if (!isAnixohindiRangeUrl(targetUrl)) return targetUrl;
+  const url = new URL(targetUrl);
+  url.searchParams.set(
+    "cb",
+    `${Date.now()}-${crypto.randomBytes(6).toString("hex")}`,
+  );
+  return url.href;
 }
 
 class downloader {
@@ -426,6 +472,7 @@ class downloader {
         (err?.message && String(err.message).includes("net::ERR_"));
       if (
         isCfOrNetErr &&
+        !isAnixohindiRangeUrl(targetUrl) &&
         (await refreshCdnClearance(
           targetUrl,
           this.headers?.Referer || this.headers?.referer,
@@ -881,8 +928,12 @@ class downloader {
     targetUrl,
     rangeHeader = null,
     timeoutMs = 60000,
+    attempt = 0,
   ) {
-    const u = new URL(targetUrl);
+    const requestUrl = rangeHeader
+      ? withRangeCacheBuster(targetUrl)
+      : targetUrl;
+    const u = new URL(requestUrl);
     const isHttps = u.protocol === "https:";
     const transport = isHttps ? https : http;
     const agent = isHttps ? keepAliveAgent.https : keepAliveAgent.http;
@@ -936,6 +987,39 @@ class downloader {
             );
           }
 
+          // A 200 answer to a ranged request means the server ignored
+          // Range and is sending the whole file. Abort before buffering
+          // it so the caller can fall back to a single-stream download.
+          if (rangeHeader && statusCode === 200) {
+            const rangeMatch = String(rangeHeader).match(/bytes=(\d+)-(\d+)/);
+            const requested = rangeMatch
+              ? Number(rangeMatch[2]) - Number(rangeMatch[1]) + 1
+              : 0;
+            const cl = parseInt(res.headers["content-length"], 10);
+            if (requested > 0 && (!Number.isFinite(cl) || cl > requested)) {
+              const err = new Error("Server ignored Range request");
+              err.code = "RANGE_IGNORED";
+              if (isAnixohindiRangeUrl(targetUrl) && attempt < 2) {
+                res.destroy();
+                setTimeout(
+                  () =>
+                    resolve(
+                      this.fetchDirectVideoRange(
+                        targetUrl,
+                        rangeHeader,
+                        timeoutMs,
+                        attempt + 1,
+                      ),
+                    ),
+                  400 * (attempt + 1),
+                );
+                return;
+              }
+              res.destroy();
+              return reject(err);
+            }
+          }
+
           if (statusCode >= 400) {
             const err = new Error(
               `Request failed with status code ${statusCode}`,
@@ -946,6 +1030,26 @@ class downloader {
               statusText,
               headers: res.headers,
             };
+            if (
+              isAnixohindiRangeUrl(targetUrl) &&
+              [403, 429, 502, 503, 504].includes(statusCode) &&
+              attempt < 2
+            ) {
+              res.resume();
+              setTimeout(
+                () =>
+                  resolve(
+                    this.fetchDirectVideoRange(
+                      targetUrl,
+                      rangeHeader,
+                      timeoutMs,
+                      attempt + 1,
+                    ),
+                  ),
+                400 * (attempt + 1),
+              );
+              return;
+            }
             res.resume();
             return reject(err);
           }
@@ -1086,8 +1190,10 @@ class downloader {
     let supportsRange = false;
 
     try {
+      // Slow CDNs (anixohindi) take ~20s to first byte; the old 20s budget
+      // always expired there and mis-routed the download to HEAD/Case B.
       const probeRes = await this.fetchWithClearanceRetry(this.streamUrl, () =>
-        this.fetchDirectVideoRange(this.streamUrl, "bytes=0-0", 20000),
+        this.fetchDirectVideoRange(this.streamUrl, "bytes=0-0", 45000),
       );
       this.absorbResponseCookies(probeRes?.headers);
 
@@ -1153,12 +1259,35 @@ class downloader {
     const subCount =
       this.subtitles && this.subtitles.length > 0 ? this.subtitles.length : 0;
 
+    const CHUNK_SIZE = 5 * 1024 * 1024; // 5 MB per part
+
+    // Some CDNs advertise Accept-Ranges: bytes (and may even answer the
+    // first probe with 206) but then answer every real part request with
+    // the whole file as 200 — Case A would buffer the file once per part
+    // and never finish. Prove one part-sized range works first.
+    if (supportsRange && totalBytes > 0) {
+      try {
+        await this.fetchWithClearanceRetry(this.streamUrl, () =>
+          // Budget must cover first byte plus a full 5 MB part on slow hosts.
+          this.fetchDirectVideoRange(
+            this.streamUrl,
+            `bytes=0-${CHUNK_SIZE - 1}`,
+            45000,
+          ),
+        );
+      } catch (verifyErr) {
+        logger.warn(
+          `[Downloader] Range verify failed (${verifyErr.message}); using single-stream download.`,
+        );
+        supportsRange = false;
+      }
+    }
+
     // Case A: Multi-Part Range Download
     if (supportsRange && totalBytes > 0) {
       if (!fs.existsSync(tempDir)) {
         fs.mkdirSync(tempDir, { recursive: true });
       }
-      const CHUNK_SIZE = 5 * 1024 * 1024; // 5 MB per part
       const totalParts = Math.ceil(totalBytes / CHUNK_SIZE);
       this.totalSegments = totalParts + subCount;
 
@@ -1212,8 +1341,8 @@ class downloader {
       );
       this.logProgress(null, CONCURRENCY);
 
-      let nextPartIdx = 0;
       let stopDownloading = false;
+      let activeConcurrency = CONCURRENCY;
 
       const downloadPart = async (part, retryCount = 0) => {
         if (
@@ -1258,7 +1387,7 @@ class downloader {
           this.downloadedTotalBytes =
             (this.downloadedTotalBytes || 0) + buf.length;
           this.currentSegments++;
-          this.logProgress(null, CONCURRENCY);
+          this.logProgress(null, activeConcurrency);
         } catch (err) {
           await fs.promises.unlink(tempPartFile).catch(() => {});
           if (
@@ -1271,6 +1400,15 @@ class downloader {
           }
 
           const RETRY_DELAYS = [1000, 3000, 5000];
+          // An idle timeout under parallelism means the CDN stalls concurrent
+          // ranges: abort the pool now, runPool retries the rest one at a time.
+          if (
+            /Timeout of \d+ms exceeded/.test(err.message) &&
+            activeConcurrency > 1
+          ) {
+            stopDownloading = true;
+            throw err;
+          }
           if (retryCount < RETRY_DELAYS.length) {
             logger.warn(
               `[Downloader] Part ${part.index} failed (${err.message}). Retrying in ${RETRY_DELAYS[retryCount]}ms (attempt ${retryCount + 1}/${RETRY_DELAYS.length})...`,
@@ -1278,25 +1416,53 @@ class downloader {
             await new Promise((r) => setTimeout(r, RETRY_DELAYS[retryCount]));
             return downloadPart(part, retryCount + 1);
           }
+          stopDownloading = true; // siblings must not race the cleanup below
           throw new Error(
             `SCRAPER_TEMPORARY_ERROR: Part ${part.index} failed after retries: ${err.message}`,
           );
         }
       };
 
-      const worker = async () => {
-        while (nextPartIdx < partsToDownload.length && !stopDownloading) {
-          const part = partsToDownload[nextPartIdx++];
-          await downloadPart(part);
-        }
+      const runPool = async (list, concurrency) => {
+        activeConcurrency = concurrency;
+        stopDownloading = false;
+        let nextPartIdx = 0;
+        const worker = async () => {
+          while (nextPartIdx < list.length && !stopDownloading) {
+            const part = list[nextPartIdx++];
+            try {
+              await downloadPart(part);
+            } catch (err) {
+              stopDownloading = true;
+              throw err;
+            }
+          }
+        };
+        // allSettled: a failed worker must not leave sibling rejections unhandled
+        const results = await Promise.allSettled(
+          Array.from(
+            { length: Math.min(concurrency, list.length || 1) },
+            worker,
+          ),
+        );
+        const failed = results.find((r) => r.status === "rejected");
+        if (failed) throw failed.reason;
       };
 
-      const workers = [];
-      const workerCount = Math.min(CONCURRENCY, partsToDownload.length || 1);
-      for (let w = 0; w < workerCount; w++) {
-        workers.push(worker());
+      try {
+        await runPool(partsToDownload, CONCURRENCY);
+      } catch (err) {
+        const isStall = /Timeout of \d+ms exceeded/.test(err.message);
+        if (activeConcurrency <= 1 || !isStall) throw err;
+        const remaining = partsToDownload.filter(
+          (p) => !fs.existsSync(p.partFile),
+        );
+        logger.warn(
+          `[Downloader] Parallel parts stalled (${err.message}); retrying ${remaining.length} remaining part(s) sequentially.`,
+        );
+        this.logProgress(null, 1);
+        await runPool(remaining, 1);
       }
-      await Promise.all(workers);
 
       // Concatenating parts sequentially
       this.logProgress("Concatenating parts...");
@@ -1452,8 +1618,17 @@ class downloader {
       this.headers?.Referer || this.headers?.referer,
     );
 
-    let CONCURRENCY = await getInitialDomainConcurrency(domainName, 8);
-    const MAX_CONCURRENCY = 16;
+    const concurrencyPolicy = getDownloadConcurrencyPolicy(
+      trackUrl || firstSegUrl,
+      this.headers?.Referer || this.headers?.referer,
+      8,
+      16,
+    );
+    let CONCURRENCY = await getInitialDomainConcurrency(
+      domainName,
+      concurrencyPolicy.initial,
+    );
+    const MAX_CONCURRENCY = concurrencyPolicy.max;
     CONCURRENCY = Math.min(CONCURRENCY, MAX_CONCURRENCY);
     const targetSpeedFloorBps = parseSpeedFloorBps(
       this.minDownloadSpeed !== null && this.minDownloadSpeed !== undefined
@@ -1570,15 +1745,23 @@ class downloader {
           throw err;
 
         const status = err?.response?.statusCode ?? err?.response?.status;
+        const isProtectedRejection =
+          concurrencyPolicy.isProtected && status === 403;
         const isServerRateOrError =
-          status === 429 || status === 502 || status === 503 || status === 530;
-        const RETRY_DELAYS = isServerRateOrError
-          ? [2000, 5000, 8000]
-          : [1000, 3000, 5000];
+          isProtectedRejection ||
+          status === 429 ||
+          status === 502 ||
+          status === 503 ||
+          status === 530;
+        const RETRY_DELAYS = isProtectedRejection
+          ? [2000, 5000, 10000, 15000]
+          : isServerRateOrError
+            ? [2000, 5000, 8000]
+            : [1000, 3000, 5000];
 
         if (retryCount >= RETRY_DELAYS.length) {
           logger.error(
-            `[Download] Segment ${index} failed after 3 retries: ${err.message}`,
+            `[Download] Segment ${index} failed after ${RETRY_DELAYS.length} retries: ${err.message}`,
           );
           throw new Error(
             `SCRAPER_TEMPORARY_ERROR: Segment ${index} failed after retries (${err.message})`,
@@ -1587,7 +1770,7 @@ class downloader {
 
         const delay = RETRY_DELAYS[retryCount];
         this.logProgress(
-          `Download error on segment ${index}! Retrying in ${delay / 1000}s (attempt ${retryCount + 2}/4)...`,
+          `Download error on segment ${index}! Retrying in ${delay / 1000}s (attempt ${retryCount + 2}/${RETRY_DELAYS.length + 1})...`,
         );
 
         if (isCircuitOpen(domainName)) {
@@ -1983,13 +2166,18 @@ class downloader {
         try {
           if (!url) return;
           let targetUrl = url;
-          if (targetUrl.startsWith("//")) {
-            targetUrl = "https:" + targetUrl;
-          } else if (
-            !targetUrl.startsWith("http://") &&
-            !targetUrl.startsWith("https://")
-          ) {
-            targetUrl = resolveUrl(targetUrl, this.streamUrl);
+          let subtitleData = null;
+          if (targetUrl.startsWith("data:")) {
+            subtitleData = decodeDataUrl(targetUrl);
+          } else {
+            if (targetUrl.startsWith("//")) {
+              targetUrl = "https:" + targetUrl;
+            } else if (
+              !targetUrl.startsWith("http://") &&
+              !targetUrl.startsWith("https://")
+            ) {
+              targetUrl = resolveUrl(targetUrl, this.streamUrl);
+            }
           }
 
           const normalizedLang =
@@ -2041,29 +2229,30 @@ class downloader {
             return;
           }
 
-          const subHeaders = await this.getMediaRequestHeaders(targetUrl);
-          let subtitleData;
-          try {
-            subtitleData = await this.fetchWithClearanceRetry(targetUrl, () =>
-              this.fetchMediaText(targetUrl, 15000),
-            );
-          } catch (e) {
+          if (subtitleData === null) {
+            const subHeaders = await this.getMediaRequestHeaders(targetUrl);
             try {
-              const cleanHeaders = { ...subHeaders };
-              delete cleanHeaders["Referer"];
-              delete cleanHeaders["referer"];
-              delete cleanHeaders["Origin"];
-              delete cleanHeaders["origin"];
-              subtitleData = await got(targetUrl, {
-                headers: cleanHeaders,
-                http2: false,
-                timeout: { request: 15000 },
-              }).text();
-            } catch (err) {
-              subtitleData = await got(targetUrl, {
-                http2: false,
-                timeout: { request: 15000 },
-              }).text();
+              subtitleData = await this.fetchWithClearanceRetry(targetUrl, () =>
+                this.fetchMediaText(targetUrl, 15000),
+              );
+            } catch (e) {
+              try {
+                const cleanHeaders = { ...subHeaders };
+                delete cleanHeaders["Referer"];
+                delete cleanHeaders["referer"];
+                delete cleanHeaders["Origin"];
+                delete cleanHeaders["origin"];
+                subtitleData = await got(targetUrl, {
+                  headers: cleanHeaders,
+                  http2: false,
+                  timeout: { request: 15000 },
+                }).text();
+              } catch (err) {
+                subtitleData = await got(targetUrl, {
+                  http2: false,
+                  timeout: { request: 15000 },
+                }).text();
+              }
             }
           }
 
@@ -2712,4 +2901,11 @@ async function download(args) {
   }
 }
 
-module.exports = { download, getFfmpegPath, stripPngHeader, downloader };
+module.exports = {
+  download,
+  getFfmpegPath,
+  stripPngHeader,
+  downloader,
+  withRangeCacheBuster,
+  decodeDataUrl,
+};
