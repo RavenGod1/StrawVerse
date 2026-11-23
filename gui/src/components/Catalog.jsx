@@ -1444,6 +1444,62 @@ export default function Catalog({
         },
       },
     },
+    anixo: {
+      type: {
+        label: "Type",
+        options: {
+          All: "",
+          TV: "TV",
+          Movie: "Movie",
+          ONA: "ONA",
+          OVA: "OVA",
+          Special: "Special",
+        },
+      },
+      status: {
+        label: "Status",
+        options: {
+          All: "",
+          Ongoing: "currently-airing",
+          Completed: "finished-airing",
+        },
+      },
+      language: {
+        label: "Language",
+        options: {
+          All: "",
+          Sub: "sub",
+          Dub: "dub",
+        },
+      },
+      sort: {
+        label: "Sort",
+        options: {
+          Latest: "latest-updated",
+          Popular: "most-viewed",
+          Score: "score",
+          "Name A-Z": "name-az",
+        },
+      },
+    },
+    anixohindi: {
+      type: {
+        label: "Type",
+        options: {
+          All: "",
+          TV: "TV",
+          Movie: "Movie",
+        },
+      },
+      sort: {
+        label: "Sort",
+        options: {
+          Latest: "latest-updated",
+          Episodes: "most-viewed",
+          "Name A-Z": "name-az",
+        },
+      },
+    },
   };
 
   const getApiEndpoint = (source = catalogSource) => {
@@ -2606,9 +2662,7 @@ export default function Catalog({
         isFilterOpen={isFilterPanelOpen}
         onToggleFilter={() => setIsFilterPanelOpen((prev) => !prev)}
         activeFilterCount={activeFilterCount}
-        showFilterToggle={
-          type !== "Movies" && (provider === "mal" || provider === "provider")
-        }
+        showFilterToggle={type !== "Movies" && provider === "mal"}
         catalogSource={catalogSource}
         onCatalogSourceChange={handleCatalogSourceChange}
         availableProviders={providerMetadataList}
@@ -2835,10 +2889,10 @@ export default function Catalog({
       )}
 
       {/* Discover Provider-native filter panel: forwards filters to the
-          active provider extension (e.g. MangaKatana genre/status). */}
+          active provider extension (e.g. MangaKatana genre/status). It is
+          inline - the header "Filters" button was removed for extensions. */}
       {provider === "provider" &&
         type !== "Movies" &&
-        isFilterPanelOpen &&
         availableFilters && (
         <div className="filter-panel">
           <div className="filter-panel-header">
@@ -2865,12 +2919,9 @@ export default function Catalog({
                   <span>Reset All</span>
                 </button>
               )}
-              {filterToggleBtn}
             </div>
           </div>
-          <div
-            className={`filter-grid${isFilterPanelOpen ? "" : " is-collapsed"}`}
-          >
+          <div className="filter-grid">
             <div className="filter-group">
               <label className="filter-label">Downloads</label>
               <select

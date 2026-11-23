@@ -212,9 +212,12 @@ const { getKeyValue, setKeyValue } = require(
 const { runStartupCleanup } = require(
   path.join(backendDir, "utils", "ImageCacheManager"),
 );
-const { playInMpv, toProxyUrl } = require(
-  path.join(backendDir, "utils", "mpvPlayer"),
-);
+const {
+  playInMpv,
+  toProxyUrl,
+  getMpvStatus,
+  stopMpvPlayer,
+} = require(path.join(backendDir, "utils", "mpvPlayer"));
 const {
   SettingsLoad,
   patchModulePaths,
@@ -1034,41 +1037,43 @@ ipcMain.handle(
 );
 
 ipcMain.handle("play-in-mpv", async (event, options) => {
-  const win = BrowserWindow.getFocusedWindow() || global.win;
+  // Target the invoking renderer: mpv-* events must go back to the window
+  // that requested playback, not whichever window happens to be focused.
+  const win =
+    BrowserWindow.fromWebContents(event.sender) ||
+    BrowserWindow.getFocusedWindow() ||
+    global.win;
   if (!win) return { success: false, error: "No focused window found." };
   try {
-    await playInMpv(win, options);
-    return { success: true };
+    const result = await playInMpv(win, options);
+    if (result?.aborted) {
+      return { success: false, aborted: true };
+    }
+    if (result?.error) {
+      return { ...result, success: false };
+    }
+    return { ...(result || {}), success: true };
   } catch (err) {
     return { success: false, error: err.message };
   }
 });
 
-ipcMain.handle("control-mpv", (event, command, args) => {
+ipcMain.handle("mpv-status", () => ({
+  success: true,
+  ...getMpvStatus(),
+}));
+
+ipcMain.handle("kill-mpv", async () => {
+  try {
+    return await stopMpvPlayer();
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle("control-mpv", async (event, command, args) => {
   if (command === "quit") {
-    if (global.activeMpvClient && !global.activeMpvClient.destroyed) {
-      try {
-        global.activeMpvClient.write(
-          JSON.stringify({ command: ["quit"] }) + "\n",
-        );
-      } catch (err) {}
-    }
-    setTimeout(() => {
-      if (global.activeMpvProcess && !global.activeMpvProcess.killed) {
-        try {
-          global.activeMpvProcess.kill("SIGKILL");
-        } catch (_) {}
-      }
-      if (global.activeMpvClient) {
-        try {
-          global.activeMpvClient.destroy();
-        } catch (_) {}
-        global.activeMpvClient = null;
-      }
-      global.activeMpvProcess = null;
-      global.activeMpvSession = null;
-    }, 150);
-    return { success: true };
+    return await stopMpvPlayer();
   }
 
   if (global.activeMpvClient && !global.activeMpvClient.destroyed) {

@@ -59,6 +59,13 @@ const activeCaptchaDialogs = new Map();
 const inFlightNativeRequests = new Map();
 const NATIVE_REQUEST_TIMEOUT_MS = 30000;
 
+export function getNativeRequestTimeout(bridgeTimeout) {
+  const timeout = Number(bridgeTimeout);
+  return Number.isFinite(timeout) && timeout > 0
+    ? timeout
+    : NATIVE_REQUEST_TIMEOUT_MS;
+}
+
 function getRequestDomain(url) {
   try {
     return new URL(url).hostname.toLowerCase().replace(/^www\./, "");
@@ -90,12 +97,13 @@ async function dispatchNativeRequest(data) {
     return;
   }
 
+  const bridgeTimeout = getNativeRequestTimeout(data.bridgeTimeout);
   const timeout = setTimeout(() => {
     plugin
       .cancelNativeRequests?.({ requestIds: [String(data.requestId)] })
       .catch(() => {});
     complete(false, null, `Native request timeout for ${data.url}`);
-  }, NATIVE_REQUEST_TIMEOUT_MS);
+  }, bridgeTimeout);
   inFlightNativeRequests.set(data.requestId, { timeout, complete });
 
   try {
@@ -105,6 +113,7 @@ async function dispatchNativeRequest(data) {
       method: data.method || "GET",
       headers: data.headers || {},
       body: data.body ?? null,
+      timeout: bridgeTimeout,
     });
     await complete(true, response, null);
   } catch (error) {

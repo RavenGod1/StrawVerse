@@ -717,6 +717,23 @@ async function checkForMappingUpdates(force = false, type = null, opts = {}) {
   return activeMappingSync;
 }
 
+async function readSyncMetadata(tableName, fallbackCount = 0) {
+  try {
+    const row = await mappingQueryOne(
+      "SELECT timestamp, row_count FROM sync_versions WHERE table_name = ?",
+      [tableName],
+    );
+    if (row) {
+      return {
+        timestamp: Number(row.timestamp) || 0,
+        count:
+          row.row_count == null ? Number(fallbackCount) || 0 : Number(row.row_count) || 0,
+      };
+    }
+  } catch (_) {}
+  return { timestamp: 0, count: Number(fallbackCount) || 0 };
+}
+
 async function runMappingSyncCheck(force, type, opts) {
   const scope =
     type === "Anime"
@@ -770,16 +787,7 @@ async function runMappingSyncCheck(force, type, opts) {
   const reqTables = {};
 
   for (const tbl of tablesToSync) {
-    let storedTs = 0;
     let actualCount = 0;
-    try {
-      const vRow = await mappingQueryOne(
-        "SELECT timestamp, row_count FROM sync_versions WHERE table_name = ?",
-        [tbl],
-      );
-      if (vRow?.timestamp) storedTs = Number(vRow.timestamp);
-    } catch (_) {}
-
     try {
       const cRow = await mappingQueryOne(
         `SELECT COUNT(*) as count FROM "${tbl}"`,
@@ -787,25 +795,14 @@ async function runMappingSyncCheck(force, type, opts) {
       if (cRow?.count != null) actualCount = Number(cRow.count);
     } catch (_) {}
 
-    const effectiveTs = force || actualCount === 0 ? 0 : storedTs;
-    reqTables[tbl] = {
-      timestamp: effectiveTs,
-      count: actualCount,
-    };
+    // A forced sync only bypasses the freshness window. The server still
+    // needs the last applied timestamp/count to return an incremental delta.
+    reqTables[tbl] = await readSyncMetadata(tbl, actualCount);
   }
 
   const reqUnmapped = {};
   for (const prov of installedProviders) {
-    let storedTs = 0;
     let actualCount = 0;
-    try {
-      const vRow = await mappingQueryOne(
-        "SELECT timestamp, row_count FROM sync_versions WHERE table_name = ?",
-        [`unmapped_${prov}`],
-      );
-      if (vRow?.timestamp) storedTs = Number(vRow.timestamp);
-    } catch (_) {}
-
     try {
       const cRow = await mappingQueryOne(
         "SELECT COUNT(*) as count FROM unmapped_items WHERE provider = ? OR provider = ? OR provider LIKE ?",
@@ -814,11 +811,10 @@ async function runMappingSyncCheck(force, type, opts) {
       if (cRow?.count != null) actualCount = Number(cRow.count);
     } catch (_) {}
 
-    const effectiveTs = force || actualCount === 0 ? 0 : storedTs;
-    reqUnmapped[prov] = {
-      timestamp: effectiveTs,
-      count: actualCount,
-    };
+    reqUnmapped[prov] = await readSyncMetadata(
+      `unmapped_${prov}`,
+      actualCount,
+    );
   }
 
   const osName = getOSName();
@@ -975,15 +971,37 @@ async function syncExtensionMapping(extensionName) {
     await ensureMappingTablesExist();
     await ensureProviderTable(cleanProv);
 
+    let providerCount = 0;
+    let unmappedCount = 0;
+    try {
+      const countRow = await mappingQueryOne(
+        `SELECT COUNT(*) as count FROM "${cleanProv}"`,
+      );
+      if (countRow?.count != null) providerCount = Number(countRow.count);
+    } catch (_) {}
+    try {
+      const countRow = await mappingQueryOne(
+        `SELECT COUNT(*) as count FROM unmapped_items WHERE provider = ? OR provider = ? OR provider LIKE ?`,
+        [cleanProv, cleanProv, `%/${cleanProv}`],
+      );
+      if (countRow?.count != null) unmappedCount = Number(countRow.count);
+    } catch (_) {}
+
+    const providerMeta = await readSyncMetadata(cleanProv, providerCount);
+    const unmappedMeta = await readSyncMetadata(
+      `unmapped_${cleanProv}`,
+      unmappedCount,
+    );
+
     const osName = getOSName();
     const res = await mappingClient.post(
       `${MAPPING_API_BASE}/api/mapping/sync`,
       {
         tables: {
-          [cleanProv]: { timestamp: 0, count: 0 },
+          [cleanProv]: providerMeta,
         },
         unmapped: {
-          [cleanProv]: { timestamp: 0, count: 0 },
+          [cleanProv]: unmappedMeta,
         },
       },
       {
@@ -1549,6 +1567,7 @@ module.exports = {
   parseSyncIntervalHours,
   getSyncIntervalHours,
   shouldAutoSyncMapping,
+  readSyncMetadata,
   applyDeltaUpdates,
   syncExtensionMapping,
   cleanupExtensionMapping,

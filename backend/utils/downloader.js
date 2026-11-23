@@ -357,7 +357,7 @@ function parseSpeedFloorBps(speedStr) {
   return Math.round(num);
 }
 
-function isAnixohindiRangeUrl(targetUrl) {
+function isAnixohindiDirectVideoUrl(targetUrl) {
   try {
     const url = new URL(targetUrl);
     return (
@@ -367,16 +367,6 @@ function isAnixohindiRangeUrl(targetUrl) {
   } catch (_) {
     return false;
   }
-}
-
-function withRangeCacheBuster(targetUrl) {
-  if (!isAnixohindiRangeUrl(targetUrl)) return targetUrl;
-  const url = new URL(targetUrl);
-  url.searchParams.set(
-    "cb",
-    `${Date.now()}-${crypto.randomBytes(6).toString("hex")}`,
-  );
-  return url.href;
 }
 
 class downloader {
@@ -472,7 +462,7 @@ class downloader {
         (err?.message && String(err.message).includes("net::ERR_"));
       if (
         isCfOrNetErr &&
-        !isAnixohindiRangeUrl(targetUrl) &&
+        !isAnixohindiDirectVideoUrl(targetUrl) &&
         (await refreshCdnClearance(
           targetUrl,
           this.headers?.Referer || this.headers?.referer,
@@ -928,12 +918,8 @@ class downloader {
     targetUrl,
     rangeHeader = null,
     timeoutMs = 60000,
-    attempt = 0,
   ) {
-    const requestUrl = rangeHeader
-      ? withRangeCacheBuster(targetUrl)
-      : targetUrl;
-    const u = new URL(requestUrl);
+    const u = new URL(targetUrl);
     const isHttps = u.protocol === "https:";
     const transport = isHttps ? https : http;
     const agent = isHttps ? keepAliveAgent.https : keepAliveAgent.http;
@@ -999,22 +985,6 @@ class downloader {
             if (requested > 0 && (!Number.isFinite(cl) || cl > requested)) {
               const err = new Error("Server ignored Range request");
               err.code = "RANGE_IGNORED";
-              if (isAnixohindiRangeUrl(targetUrl) && attempt < 2) {
-                res.destroy();
-                setTimeout(
-                  () =>
-                    resolve(
-                      this.fetchDirectVideoRange(
-                        targetUrl,
-                        rangeHeader,
-                        timeoutMs,
-                        attempt + 1,
-                      ),
-                    ),
-                  400 * (attempt + 1),
-                );
-                return;
-              }
               res.destroy();
               return reject(err);
             }
@@ -1030,26 +1000,6 @@ class downloader {
               statusText,
               headers: res.headers,
             };
-            if (
-              isAnixohindiRangeUrl(targetUrl) &&
-              [403, 429, 502, 503, 504].includes(statusCode) &&
-              attempt < 2
-            ) {
-              res.resume();
-              setTimeout(
-                () =>
-                  resolve(
-                    this.fetchDirectVideoRange(
-                      targetUrl,
-                      rangeHeader,
-                      timeoutMs,
-                      attempt + 1,
-                    ),
-                  ),
-                400 * (attempt + 1),
-              );
-              return;
-            }
             res.resume();
             return reject(err);
           }
@@ -1184,80 +1134,83 @@ class downloader {
       );
     }
 
-    // Step 1: Probe range support and file size
-    this.logProgress("Checking video stream information...");
+    // AniXoHindi's ranged requests share the same bandwidth cap. Probing or
+    // splitting only delays the transfer, so start its single stream immediately.
+    const forceSingleStream = isAnixohindiDirectVideoUrl(this.streamUrl);
+    const subCount =
+      this.subtitles && this.subtitles.length > 0 ? this.subtitles.length : 0;
     let totalBytes = 0;
     let supportsRange = false;
 
-    try {
-      // Slow CDNs (anixohindi) take ~20s to first byte; the old 20s budget
-      // always expired there and mis-routed the download to HEAD/Case B.
-      const probeRes = await this.fetchWithClearanceRetry(this.streamUrl, () =>
-        this.fetchDirectVideoRange(this.streamUrl, "bytes=0-0", 45000),
-      );
-      this.absorbResponseCookies(probeRes?.headers);
+    if (!forceSingleStream) {
+      // Step 1: Probe range support and file size
+      this.logProgress("Checking video stream information...");
 
-      const contentRange =
-        probeRes.headers?.["content-range"] ||
-        probeRes.headers?.["Content-Range"];
-      if (contentRange) {
-        const match = String(contentRange).match(/\/(\d+)$/);
-        if (match) {
-          totalBytes = parseInt(match[1], 10);
-          supportsRange = totalBytes > 0;
-        }
-      } else if (
-        probeRes.headers?.["accept-ranges"] === "bytes" &&
-        probeRes.headers?.["content-length"]
-      ) {
-        const cl = parseInt(probeRes.headers["content-length"], 10);
-        if (cl > 0) {
-          totalBytes = cl;
-          supportsRange = true;
-        }
-      }
-    } catch (probeErr) {
-      logger.warn(
-        `[Downloader] Range probe failed for direct video: ${probeErr.message}`,
-      );
-    }
-
-    // Fallback: If range probe did not reveal totalBytes, try HEAD
-    if (!supportsRange || !totalBytes) {
       try {
-        const client = global.axios || require("axios");
-        const headHeaders = await this.getMediaRequestHeaders(this.streamUrl);
-        const headRes = await this.fetchWithClearanceRetry(this.streamUrl, () =>
-          client.head(this.streamUrl, {
-            headers: headHeaders,
-            timeout: 15000,
-          }),
+        const probeRes = await this.fetchWithClearanceRetry(this.streamUrl, () =>
+          this.fetchDirectVideoRange(this.streamUrl, "bytes=0-0", 45000),
         );
-        this.absorbResponseCookies(headRes?.headers);
+        this.absorbResponseCookies(probeRes?.headers);
 
-        const cl = parseInt(headRes.headers?.["content-length"], 10);
-        const cr =
-          headRes.headers?.["content-range"] ||
-          headRes.headers?.["Content-Range"];
-        const ar = headRes.headers?.["accept-ranges"];
-
-        if (cr) {
-          const match = String(cr).match(/\/(\d+)$/);
+        const contentRange =
+          probeRes.headers?.["content-range"] ||
+          probeRes.headers?.["Content-Range"];
+        if (contentRange) {
+          const match = String(contentRange).match(/\/(\d+)$/);
           if (match) {
             totalBytes = parseInt(match[1], 10);
             supportsRange = totalBytes > 0;
           }
-        } else if (cl && cl > 0) {
-          totalBytes = cl;
-          if (ar === "bytes") {
+        } else if (
+          probeRes.headers?.["accept-ranges"] === "bytes" &&
+          probeRes.headers?.["content-length"]
+        ) {
+          const cl = parseInt(probeRes.headers["content-length"], 10);
+          if (cl > 0) {
+            totalBytes = cl;
             supportsRange = true;
           }
         }
-      } catch (_) {}
-    }
+      } catch (probeErr) {
+        logger.warn(
+          `[Downloader] Range probe failed for direct video: ${probeErr.message}`,
+        );
+      }
 
-    const subCount =
-      this.subtitles && this.subtitles.length > 0 ? this.subtitles.length : 0;
+      // Fallback: If range probe did not reveal totalBytes, try HEAD
+      if (!supportsRange || !totalBytes) {
+        try {
+          const client = global.axios || require("axios");
+          const headHeaders = await this.getMediaRequestHeaders(this.streamUrl);
+          const headRes = await this.fetchWithClearanceRetry(this.streamUrl, () =>
+            client.head(this.streamUrl, {
+              headers: headHeaders,
+              timeout: 15000,
+            }),
+          );
+          this.absorbResponseCookies(headRes?.headers);
+
+          const cl = parseInt(headRes.headers?.["content-length"], 10);
+          const cr =
+            headRes.headers?.["content-range"] ||
+            headRes.headers?.["Content-Range"];
+          const ar = headRes.headers?.["accept-ranges"];
+
+          if (cr) {
+            const match = String(cr).match(/\/(\d+)$/);
+            if (match) {
+              totalBytes = parseInt(match[1], 10);
+              supportsRange = totalBytes > 0;
+            }
+          } else if (cl && cl > 0) {
+            totalBytes = cl;
+            if (ar === "bytes") {
+              supportsRange = true;
+            }
+          }
+        } catch (_) {}
+      }
+    }
 
     const CHUNK_SIZE = 5 * 1024 * 1024; // 5 MB per part
 
@@ -2906,6 +2859,6 @@ module.exports = {
   getFfmpegPath,
   stripPngHeader,
   downloader,
-  withRangeCacheBuster,
+  isAnixohindiDirectVideoUrl,
   decodeDataUrl,
 };

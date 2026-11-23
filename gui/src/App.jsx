@@ -1,7 +1,6 @@
 import {
   useState,
   useEffect,
-  useMemo,
   useCallback,
   useRef,
   lazy,
@@ -86,37 +85,42 @@ export default function App() {
     window.sharedStateAPI?.cancelNativeRequests?.().catch(() => {});
   }, []);
 
+  // Bottom-bar taps reset the history stack, so the stack can't tell you
+  // where you were. Keep the last anime browsing screen separately so the
+  // Downloads header can return to it.
+  const lastAnimeViewRef = useRef({ view: "home", params: {} });
+  const [lastAnimeView, setLastAnimeView] = useState({
+    view: "home",
+    params: {},
+  });
+  const rememberAnimeView = useCallback((view, params = {}) => {
+    if (!["home", "discover", "filters", "info"].includes(view)) return;
+    const target = { view, params };
+    lastAnimeViewRef.current = target;
+    setLastAnimeView(target);
+  }, []);
+
   const navigateTo = useCallback(
     (view, params = {}) => {
       cancelObsoleteNativeRequests();
+      rememberAnimeView(view, params);
       setHistory((prev) => [...prev, { view, params }]);
     },
-    [cancelObsoleteNativeRequests],
+    [cancelObsoleteNativeRequests, rememberAnimeView],
   );
 
   const navigateBack = () => {
     if (history.length > 1) {
       cancelObsoleteNativeRequests();
+      const previous = history[history.length - 2];
+      rememberAnimeView(previous.view, previous.params);
       setHistory((prev) => prev.slice(0, prev.length - 1));
     }
   };
 
-  // Bottom-bar taps reset the history stack, so the stack can't tell you
-  // where you were. Remember the last anime browsing screen instead, so the
-  // Downloads header can offer a button back to it.
-  const lastAnimeView = useMemo(() => {
-    for (let index = history.length - 1; index >= 0; index--) {
-      const item = history[index];
-      if (["home", "discover", "filters", "info"].includes(item.view)) {
-        return item;
-      }
-    }
-    return { view: "discover", params: {} };
-  }, [history]);
-
   const goBackToAnime = () => {
     cancelObsoleteNativeRequests();
-    const target = lastAnimeView;
+    const target = lastAnimeViewRef.current;
     if (target.view === "info") {
       // Keep a Discover entry underneath so the detail page's own
       // "Back to Discover" button still has somewhere to pop to.
@@ -429,6 +433,15 @@ export default function App() {
             return item;
           }),
         );
+        if (
+          lastAnimeViewRef.current.view === "info" &&
+          String(lastAnimeViewRef.current.params?.id) === String(data.oldId)
+        ) {
+          rememberAnimeView("info", {
+            ...lastAnimeViewRef.current.params,
+            id: data.newId,
+          });
+        }
         setActivePlayerParams((prev) => {
           if (prev && String(prev.id) === String(data.oldId)) {
             return {
@@ -440,7 +453,7 @@ export default function App() {
         });
       });
     }
-  }, [navigateTo]);
+  }, [navigateTo, rememberAnimeView]);
 
   useEffect(() => {
     if (!whatsNewData) return;
@@ -503,6 +516,8 @@ export default function App() {
 
           if (historyRef.current.length > 1) {
             cancelObsoleteNativeRequests();
+            const previous = historyRef.current[historyRef.current.length - 2];
+            rememberAnimeView(previous.view, previous.params);
             setHistory((prev) => prev.slice(0, prev.length - 1));
           } else {
             const now = Date.now();
@@ -529,7 +544,7 @@ export default function App() {
         appStateListener.remove();
       }
     };
-  }, [cancelObsoleteNativeRequests]);
+  }, [cancelObsoleteNativeRequests, rememberAnimeView]);
 
   const renderActiveView = () => {
     switch (current.view) {
@@ -671,6 +686,16 @@ export default function App() {
                   return item;
                 }),
               );
+              if (
+                lastAnimeViewRef.current.view === "info" &&
+                String(lastAnimeViewRef.current.params?.id) === String(oldId)
+              ) {
+                rememberAnimeView("info", {
+                  ...lastAnimeViewRef.current.params,
+                  id: newId,
+                  ...(newProvider ? { provider: newProvider } : {}),
+                });
+              }
               setActivePlayerParams((prev) => {
                 if (prev && String(prev.id) === String(oldId)) {
                   return {
@@ -713,6 +738,13 @@ export default function App() {
                   return item;
                 }),
               );
+              if (lastAnimeViewRef.current.view === "info") {
+                rememberAnimeView("info", {
+                  ...lastAnimeViewRef.current.params,
+                  id: animeId,
+                  autoPlay: false,
+                });
+              }
 
               const isMovieItem =
                 current.params.type === "Movies" ||
@@ -862,6 +894,7 @@ export default function App() {
                 setReloadCounter((prev) => prev + 1);
               }
             }
+            rememberAnimeView(view, {});
             setHistory([{ view, params: {} }]);
           }}
           isCollapsed={isSidebarCollapsed}
@@ -907,6 +940,12 @@ export default function App() {
                   return item;
                 }),
               );
+              if (lastAnimeViewRef.current.view === "info") {
+                rememberAnimeView("info", {
+                  ...lastAnimeViewRef.current.params,
+                  autoPlay: false,
+                });
+              }
               setActivePlayerParams(null);
               setPlayerKey((prev) => prev + 1);
             }}

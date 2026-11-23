@@ -469,6 +469,59 @@ async function loadSavedCookiesIntoSession() {
   }
 }
 
+const sessionsWithResponseListener = new WeakSet();
+
+function ensureScrapperResponseListener(targetSession) {
+  if (!targetSession || sessionsWithResponseListener.has(targetSession)) return;
+  sessionsWithResponseListener.add(targetSession);
+
+  targetSession.webRequest.onHeadersReceived(
+    { urls: ["*://*/*"] },
+    (details, callback) => {
+      const responseHeaders = {
+        ...details.responseHeaders,
+        "x-strawverse-final-url": [details.url],
+      };
+      try {
+        if (details.resourceType === "mainFrame") {
+          global.LastScrapperResponseCode = details.statusCode;
+        }
+        const urlLower = details.url.toLowerCase();
+
+        const isMedia =
+          urlLower.includes(".m3u8") ||
+          urlLower.includes(".ts") ||
+          urlLower.includes(".mp4") ||
+          urlLower.includes(".mkv") ||
+          urlLower.includes(".avi") ||
+          urlLower.includes(".css") ||
+          urlLower.includes(".vtt");
+
+        const contentType = String(
+          getHeaderCaseInsensitive(responseHeaders, "content-type") || "",
+        );
+        const isHtml = contentType.toLowerCase().includes("text/html");
+
+        const isErrorOrChallenge = details.statusCode >= 400 || isHtml;
+
+        if (isMedia && !isErrorOrChallenge) {
+          for (const key of Object.keys(responseHeaders)) {
+            if (key.toLowerCase() === "content-disposition") {
+              responseHeaders[key] = ["inline"];
+            }
+            if (key.toLowerCase() === "content-type") {
+              responseHeaders[key] = ["text/plain"];
+            }
+          }
+        }
+        callback({ responseHeaders });
+      } catch (_) {
+        callback({ responseHeaders });
+      }
+    },
+  );
+}
+
 // Create Scrapping Window
 function createScrapperWindow() {
   if (!isElectron || !BrowserWindow) {
@@ -556,13 +609,19 @@ function createScrapperWindow() {
           "Sec-CH-UA-Mobile": secChMobile,
           "Sec-CH-UA-Platform": secChPlatform,
         } = getHeaders(details.url);
+        const requestUserAgent = getHeaderCaseInsensitive(
+          details.requestHeaders,
+          "user-agent",
+        );
         if (proxyReferer) {
           setRefererHeaders(details.requestHeaders, proxyReferer, true);
         } else if (!rawReferer && referer) {
           setRefererHeaders(details.requestHeaders, referer);
         }
-        if (userAgent) {
+        if (requestUserAgent) {
           takeHeaderCaseInsensitive(details.requestHeaders, "user-agent");
+          details.requestHeaders["User-Agent"] = requestUserAgent;
+        } else if (userAgent) {
           details.requestHeaders["User-Agent"] = userAgent;
         }
         if (secChUa) details.requestHeaders["sec-ch-ua"] = secChUa;
@@ -579,48 +638,7 @@ function createScrapperWindow() {
     },
   );
 
-  global.ScrapperWindow.webContents.session.webRequest.onHeadersReceived(
-    { urls: ["*://*/*"] },
-    (details, callback) => {
-      try {
-        if (details.resourceType === "mainFrame") {
-          global.LastScrapperResponseCode = details.statusCode;
-        }
-        const responseHeaders = { ...details.responseHeaders };
-        const urlLower = details.url.toLowerCase();
-
-        const isMedia =
-          urlLower.includes(".m3u8") ||
-          urlLower.includes(".ts") ||
-          urlLower.includes(".mp4") ||
-          urlLower.includes(".mkv") ||
-          urlLower.includes(".avi") ||
-          urlLower.includes(".css") ||
-          urlLower.includes(".vtt");
-
-        const contentType = String(
-          getHeaderCaseInsensitive(responseHeaders, "content-type") || "",
-        );
-        const isHtml = contentType.toLowerCase().includes("text/html");
-
-        const isErrorOrChallenge = details.statusCode >= 400 || isHtml;
-
-        if (isMedia && !isErrorOrChallenge) {
-          for (const key of Object.keys(responseHeaders)) {
-            if (key.toLowerCase() === "content-disposition") {
-              responseHeaders[key] = ["inline"];
-            }
-            if (key.toLowerCase() === "content-type") {
-              responseHeaders[key] = ["text/plain"];
-            }
-          }
-        }
-        callback({ responseHeaders });
-      } catch (_) {
-        callback({ responseHeaders: details.responseHeaders });
-      }
-    },
-  );
+  ensureScrapperResponseListener(global.ScrapperWindow.webContents.session);
 
   global.ScrapperWindow.webContents.on(
     "did-fail-load",
@@ -1388,6 +1406,7 @@ async function androidNativeAdapter(config) {
             method: method.toUpperCase(),
             headers: requestHeaders,
             data: typeof data === "object" ? JSON.stringify(data) : data,
+            timeout,
             responseType: "arraybuffer",
           };
           const res = await global.sendNativeRequest(nativeConfig);
@@ -1422,7 +1441,9 @@ async function androidNativeAdapter(config) {
             statusText: "",
             headers: responseHeaders,
             config,
-            request: null,
+            request: {
+              responseUrl: res.finalUrl || res.url || url,
+            },
           };
 
           if (res.status >= 200 && res.status < 300) {
@@ -1456,7 +1477,9 @@ async function androidNativeAdapter(config) {
               statusText: "",
               headers: responseHeaders,
               config,
-              request: null,
+              request: {
+                responseUrl: res.finalUrl || res.url || url,
+              },
             };
             const error = new Error(
               `Request failed with status code ${res.status}`,
@@ -1538,7 +1561,9 @@ async function androidNativeAdapter(config) {
           statusText: res.statusText,
           headers: responseHeaders,
           config,
-          request: null,
+          request: {
+            responseUrl: res.url || url,
+          },
         };
 
         if (res.status >= 200 && res.status < 300) {
@@ -1691,6 +1716,7 @@ async function electronNetAdapter(config) {
       }
 
       const targetSession = session.fromPartition("persist:scrapper");
+      ensureScrapperResponseListener(targetSession);
       const userAgentToUse =
         requestHeaders["User-Agent"] ||
         requestHeaders["user-agent"] ||
@@ -1701,7 +1727,6 @@ async function electronNetAdapter(config) {
 
       const options = {
         method: method.toUpperCase(),
-        session: targetSession,
         credentials: "include",
         headers: requestHeaders,
       };
@@ -1733,7 +1758,7 @@ async function electronNetAdapter(config) {
       }
 
       try {
-        const res = await net.fetch(url, options);
+        const res = await targetSession.fetch(url, options);
         if (timeoutId) clearTimeout(timeoutId);
 
         const responseHeaders = {};
@@ -1775,7 +1800,10 @@ async function electronNetAdapter(config) {
           statusText: res.statusText,
           headers: responseHeaders,
           config,
-          request: null,
+          request: {
+            responseUrl:
+              responseHeaders["x-strawverse-final-url"] || res.url || url,
+          },
         };
 
         if (res.status >= 200 && res.status < 300) {

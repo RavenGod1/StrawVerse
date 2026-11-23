@@ -24,13 +24,10 @@ public class WebViewRequestHelper {
      * request — instead we sync cookies into CookieManager and let the
      * WebView (which has the matching fingerprint) fetch natively.
      */
-    private static boolean isCloudflareProtectedHost(String host) {
+    static boolean isCloudflareProtectedHost(String host) {
         if (host == null) return false;
         host = host.toLowerCase();
-        if (host.contains("animepahe")) {
-            return true;
-        }
-        return false;
+        return host.contains("animepahe") || host.contains("manhwatop");
     }
 
     /**
@@ -105,7 +102,7 @@ public class WebViewRequestHelper {
 
             String dbUA = AppDatabase.getStoredUserAgent(context, url);
             if (dbUA != null && !dbUA.isEmpty()) {
-                conn.setRequestProperty("User-Agent", CloudflareBypassPlugin.cleanUserAgent(dbUA));
+                conn.setRequestProperty("User-Agent", dbUA);
             } else if (!hasUserAgent) {
                 String defaultUA = CloudflareBypassPlugin.cleanUserAgent(android.webkit.WebSettings.getDefaultUserAgent(context));
                 conn.setRequestProperty("User-Agent", defaultUA);
@@ -113,11 +110,8 @@ public class WebViewRequestHelper {
 
             for (Map.Entry<String, String> header : customHeaders.entrySet()) {
                 if (!header.getKey().equalsIgnoreCase("cookie")) {
-                    String val = header.getValue();
-                    if (header.getKey().equalsIgnoreCase("user-agent")) {
-                        val = CloudflareBypassPlugin.cleanUserAgent(val);
-                    }
-                    conn.setRequestProperty(header.getKey(), val);
+                    // Preserve extension-supplied browser identities verbatim.
+                    conn.setRequestProperty(header.getKey(), header.getValue());
                 }
             }
 

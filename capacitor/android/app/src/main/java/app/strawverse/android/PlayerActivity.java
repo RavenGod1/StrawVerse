@@ -933,7 +933,7 @@ public class PlayerActivity extends Activity {
         return false;
     }
 
-    private JSONArray filterSubtitlesByPreference(JSONArray input) {
+    private JSONArray orderSubtitlesByPreference(JSONArray input) {
         if (input == null || input.length() == 0) return new JSONArray();
         if (preferredSubtitleLanguagesExplicitlyLoaded && preferredSubtitleLanguagesList.isEmpty()) {
             return new JSONArray();
@@ -943,7 +943,11 @@ public class PlayerActivity extends Activity {
             prefs = java.util.Collections.singletonList(preferredSubtitleLang);
         }
 
-        JSONArray filtered = new JSONArray();
+        // Keep every track and only order them: the preference decides what is
+        // auto-selected, so a Japanese-only track stays listed in the subtitle
+        // picker instead of the picker showing "No subtitles available".
+        JSONArray preferred = new JSONArray();
+        JSONArray others = new JSONArray();
         for (int i = 0; i < input.length(); i++) {
             JSONObject subObj = input.optJSONObject(i);
             if (subObj == null) continue;
@@ -951,10 +955,15 @@ public class PlayerActivity extends Activity {
             String url = subObj.optString("url", "");
             String formattedLabel = formatSubtitleLabel(rawLang, url, i);
             if (isLanguagePreferred(formattedLabel, prefs) || (rawLang != null && isLanguagePreferred(rawLang, prefs))) {
-                filtered.put(subObj);
+                preferred.put(subObj);
+            } else {
+                others.put(subObj);
             }
         }
-        return filtered;
+        JSONArray ordered = new JSONArray();
+        for (int i = 0; i < preferred.length(); i++) ordered.put(preferred.optJSONObject(i));
+        for (int i = 0; i < others.length(); i++) ordered.put(others.optJSONObject(i));
+        return ordered;
     }
 
     private void applyPreferredSubtitleLanguage() {
@@ -988,7 +997,9 @@ public class PlayerActivity extends Activity {
 
         if (matchedIdx != -1) {
             selectedSubtitleIndex = matchedIdx;
-        } else if (subtitlesArray.length() > 0 && !preferredSubtitleLanguagesExplicitlyLoaded) {
+        } else if (subtitlesArray.length() > 0) {
+            // No track matches the preference (e.g. a Japanese-only release with
+            // English preferred): show the available track instead of nothing.
             selectedSubtitleIndex = 0;
         } else {
             selectedSubtitleIndex = -1;
@@ -1064,7 +1075,7 @@ public class PlayerActivity extends Activity {
             if (rawSubtitlesArray == null) {
                 rawSubtitlesArray = new JSONArray();
             }
-            subtitlesArray = filterSubtitlesByPreference(rawSubtitlesArray);
+            subtitlesArray = orderSubtitlesByPreference(rawSubtitlesArray);
             skipTimesArray = data.optJSONArray("skipTimes");
 
             if (sourcesArray == null) {
@@ -1233,7 +1244,7 @@ public class PlayerActivity extends Activity {
                                         JSONArray resSubs = resolved.optJSONArray("subtitles");
                                         if (resSubs != null && resSubs.length() > 0) {
                                             rawSubtitlesArray = resSubs;
-                                            subtitlesArray = filterSubtitlesByPreference(rawSubtitlesArray);
+                                            subtitlesArray = orderSubtitlesByPreference(rawSubtitlesArray);
                                             applyPreferredSubtitleLanguage();
                                         }
                                     } catch (Exception ignored) {}
@@ -1477,7 +1488,7 @@ public class PlayerActivity extends Activity {
             DataSource.Factory kwikFactory = () -> new KwikDataSource(resolvingFactory.createDataSource());
 
             List<MediaItem.SubtitleConfiguration> subtitleConfigurations = getSubtitleConfigurations();
-            boolean isHls = (videoUrl != null && videoUrl.contains(".m3u8")) || (playUrl != null && playUrl.contains("/m3u8"));
+            boolean isHls = isHlsUrl(videoUrl);
 
             MediaItem.Builder mediaItemBuilder = new MediaItem.Builder()
                     .setUri(Uri.parse(playUrl))
@@ -1516,6 +1527,19 @@ public class PlayerActivity extends Activity {
         }
     }
 
+    static boolean isHlsUrl(String url) {
+        if (url == null) return false;
+        try {
+            String path = new java.net.URI(url).getPath();
+            if (path == null) return false;
+            String normalized = path.toLowerCase(java.util.Locale.ROOT);
+            return normalized.endsWith(".m3u8") || normalized.endsWith("/m3u8");
+        } catch (Exception e) {
+            String path = url.split("[?#]", 2)[0].toLowerCase(java.util.Locale.ROOT);
+            return path.endsWith(".m3u8") || path.endsWith("/m3u8");
+        }
+    }
+
     private String toProxyUrl(String url) {
         return toProxyUrl(url, null);
     }
@@ -1550,7 +1574,7 @@ public class PlayerActivity extends Activity {
         }
         String base = "http://127.0.0.1:9545/api/stream";
         String refParam = "&referer=" + Uri.encode(ref);
-        if (url.contains(".m3u8")) {
+        if (isHlsUrl(url)) {
             return base + "/m3u8?url=" + Uri.encode(url) + refParam;
         }
         return base + "/segment?url=" + Uri.encode(url) + refParam;
@@ -1682,7 +1706,7 @@ public class PlayerActivity extends Activity {
         try {
             final String[] items = new String[sourcesArray.length()];
             for (int i = 0; i < sourcesArray.length(); i++) {
-                items[i] = sourcesArray.getJSONObject(i).optString("quality", "Source " + (i + 1));
+                items[i] = getServerLabel(sourcesArray.getJSONObject(i), i);
             }
 
             AlertDialog.Builder builder = new AlertDialog.Builder(this);
@@ -1792,7 +1816,7 @@ public class PlayerActivity extends Activity {
             DataSource.Factory kwikFactory = () -> new KwikDataSource(resolvingFactory.createDataSource());
 
             List<MediaItem.SubtitleConfiguration> subtitleConfigurations = getSubtitleConfigurations();
-            boolean isHls = (newUrl != null && newUrl.contains(".m3u8")) || (playUrl != null && playUrl.contains("/m3u8"));
+            boolean isHls = isHlsUrl(newUrl);
 
             MediaItem.Builder mediaItemBuilder = new MediaItem.Builder()
                     .setUri(Uri.parse(playUrl))
@@ -2406,24 +2430,32 @@ public class PlayerActivity extends Activity {
         }
     }
 
-    private boolean isResolutionOnly(String text) {
+    private static boolean isResolutionOnly(String text) {
         if (text == null) return false;
         String lower = text.trim().toLowerCase();
         return lower.matches("^(auto|\\d{3,4}p?|hd|sd)$");
     }
 
     private String getServerLabel(JSONObject sourceObj, int index) {
-        if (downloaded) {
+        String server = "";
+        String quality = "";
+        if (sourceObj != null) {
+            server = sourceObj.optString("server",
+                    sourceObj.optString("provider", sourceObj.optString("name", "")));
+            quality = sourceObj.optString("quality", "");
+        }
+        return buildServerLabel(server, quality, index, downloaded, provider);
+    }
+
+    static String buildServerLabel(String server, String quality, int index, boolean isDownloaded, String providerName) {
+        if (isDownloaded) {
             return "Local";
         }
-        if (sourceObj == null) return "Server " + (index + 1);
-
-        String server = sourceObj.optString("server", sourceObj.optString("provider", ""));
-        String quality = sourceObj.optString("quality", "");
-
+        if (server == null) server = "";
+        if (quality == null) quality = "";
         if (!server.isEmpty()) {
             if (server.equalsIgnoreCase("Local")) return "Local";
-            if (!quality.isEmpty() && !isResolutionOnly(quality)) {
+            if (!quality.isEmpty() && !server.toLowerCase().contains(quality.toLowerCase())) {
                 return server + " (" + quality + ")";
             }
             return server;
@@ -2431,8 +2463,8 @@ public class PlayerActivity extends Activity {
 
         if (!quality.isEmpty()) {
             if (isResolutionOnly(quality)) {
-                String prov = provider != null && !provider.isEmpty()
-                        ? provider.substring(0, 1).toUpperCase() + provider.substring(1)
+                String prov = providerName != null && !providerName.isEmpty()
+                        ? providerName.substring(0, 1).toUpperCase() + providerName.substring(1)
                         : "Server";
                 return prov + " " + (index + 1) + " (" + quality + ")";
             }
@@ -2880,7 +2912,7 @@ public class PlayerActivity extends Activity {
                                     public void run() {
                                         if (isActivityDead()) return;
                                         if (rawSubtitlesArray != null && rawSubtitlesArray.length() > 0) {
-                                            JSONArray filtered = filterSubtitlesByPreference(rawSubtitlesArray);
+                                            JSONArray filtered = orderSubtitlesByPreference(rawSubtitlesArray);
                                             if (filtered.length() > 0 || (preferredSubtitleLanguagesExplicitlyLoaded && preferredSubtitleLanguagesList.isEmpty())) {
                                                 subtitlesArray = filtered;
                                             }

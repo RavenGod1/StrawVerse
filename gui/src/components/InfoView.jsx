@@ -2370,10 +2370,17 @@ export default function InfoView({
           });
         });
         if (availableLangs.length === 0) availableLangs.push("sub");
-        const showLanguageChoice = hasLanguageChoice(availableLangs);
-        const selectedLangDefault = availableLangs.includes(dubSelect)
+        // Downloads only offer the app's standard versions (sub/dub); a
+        // provider-specific name like "Hindi" is not a separate download
+        // choice - the language stays switchable inside the player.
+        const downloadLangs = availableLangs.filter(
+          (lang) => lang === "sub" || lang === "dub",
+        );
+        const shownLangs = downloadLangs.length ? downloadLangs : availableLangs;
+        const showLanguageChoice = hasLanguageChoice(shownLangs);
+        const selectedLangDefault = shownLangs.includes(dubSelect)
           ? dubSelect
-          : availableLangs[0];
+          : shownLangs[0];
 
         let defaultQuality = "1080p";
         try {
@@ -2516,7 +2523,7 @@ export default function InfoView({
                 ? `
               <div class="swal-dl-section-label">Language Version</div>
               <div class="swal-pill-group" id="swal-lang-pills">
-                ${availableLangs
+                ${shownLangs
                   .map(
                     (lang) => `
                   <button type="button" class="swal-pill-btn swal-lang-btn ${lang === selectedLangDefault ? "active" : ""}" data-value="${lang}">

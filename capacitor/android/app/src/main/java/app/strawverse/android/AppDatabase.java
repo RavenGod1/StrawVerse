@@ -200,8 +200,8 @@ public class AppDatabase {
                     domain = "kwik.cx";
                 }
                 cursor = db.rawQuery(
-                    "SELECT value FROM cookie WHERE id = ? LIMIT 1",
-                    new String[]{domain + "-user_agent"}
+                    "SELECT value FROM cookie WHERE id IN (?, ?) LIMIT 1",
+                    new String[]{domain + "-user_agent", domain + "-cf_user_agent"}
                 );
                 if (cursor.moveToFirst()) {
                     return cursor.getString(0);
@@ -212,8 +212,8 @@ public class AppDatabase {
                     String mainDomain = parts[parts.length - 2] + "." + parts[parts.length - 1];
                     if (cursor != null) cursor.close();
                     cursor = db.rawQuery(
-                        "SELECT value FROM cookie WHERE id = ? LIMIT 1",
-                        new String[]{mainDomain + "-user_agent"}
+                        "SELECT value FROM cookie WHERE id IN (?, ?) LIMIT 1",
+                        new String[]{mainDomain + "-user_agent", mainDomain + "-cf_user_agent"}
                     );
                     if (cursor.moveToFirst()) {
                         return cursor.getString(0);

@@ -3,6 +3,16 @@ import { useEffect, useRef, useState } from "react";
 import Swal from "sweetalert2";
 import { Loader2 } from "lucide-react";
 
+const actionButtonStyle = {
+  border: "1px solid #52525b",
+  borderRadius: "6px",
+  background: "#27272a",
+  color: "#f4f4f5",
+  cursor: "pointer",
+  padding: "4px 8px",
+  fontSize: "12px",
+};
+
 export default function VideoPlayer({
   id,
   episodeNumOrId,
@@ -29,10 +39,89 @@ export default function VideoPlayer({
   const [loading, setLoading] = useState(true);
   const [statusMsg, setStatusMsg] = useState("Initializing MPV player...");
   const [currentEpNumOrId, setCurrentEpNumOrId] = useState(episodeNumOrId);
+  const [mpvStatus, setMpvStatus] = useState({
+    running: false,
+    connected: false,
+    ready: false,
+    started: false,
+  });
+  const [launchError, setLaunchError] = useState("");
+  const [restartToken, setRestartToken] = useState(0);
+  const [stopping, setStopping] = useState(false);
+  // Bumped on every next/prev request so the launch effect re-fires even if
+  // the episode state resolves to an unchanged launchKey (auto-next then
+  // hangs on "Loading ..." forever without this).
+  const [navToken, setNavToken] = useState(0);
   // Same-episode relaunch guard: identical params must not fire playInMpv
   // twice (double effect runs / rapid state churn spawned two players).
   const launchedRef = useRef(null);
+  const startupTimerRef = useRef(null);
+  const mountGenerationRef = useRef(0);
   const [currentSeason, setCurrentSeason] = useState(season);
+
+  const refreshMpvStatus = async () => {
+    try {
+      const status = await window.sharedStateAPI?.getMpvStatus?.();
+      if (status) setMpvStatus(status);
+      return status;
+    } catch {
+      return null;
+    }
+  };
+
+  const killCurrentMpv = async () => {
+    const result = await window.sharedStateAPI?.killMpv?.();
+    if (!result || result.success === false) {
+      throw new Error(result?.error || "Failed to stop MPV player.");
+    }
+    return result;
+  };
+
+  const stopMpv = async () => {
+    if (stopping) return;
+    setStopping(true);
+    try {
+      clearTimeout(startupTimerRef.current);
+      await killCurrentMpv();
+      setMpvStatus({
+        running: false,
+        connected: false,
+        ready: false,
+        started: false,
+      });
+      setLoading(false);
+      setLaunchError("");
+      setStatusMsg("MPV stopped.");
+    } catch (err) {
+      setLaunchError(err.message || "Failed to stop MPV player.");
+    } finally {
+      setStopping(false);
+    }
+  };
+
+  const relaunchMpv = async () => {
+    if (stopping) return;
+    setStopping(true);
+    try {
+      clearTimeout(startupTimerRef.current);
+      await killCurrentMpv();
+      launchedRef.current = null;
+      setMpvStatus({
+        running: false,
+        connected: false,
+        ready: false,
+        started: false,
+      });
+      setLaunchError("");
+      setLoading(true);
+      setStatusMsg("Restarting MPV player...");
+      setRestartToken((value) => value + 1);
+    } catch (err) {
+      setLaunchError(err.message || "Failed to restart MPV player.");
+    } finally {
+      setStopping(false);
+    }
+  };
 
   useEffect(() => {
     setCurrentEpNumOrId(episodeNumOrId);
@@ -40,6 +129,34 @@ export default function VideoPlayer({
       setCurrentSeason(season);
     }
   }, [episodeNumOrId, season]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const pollStatus = async () => {
+      try {
+        const status = await window.sharedStateAPI?.getMpvStatus?.();
+        if (!cancelled && status) setMpvStatus(status);
+      } catch {}
+    };
+    pollStatus();
+    const interval = setInterval(pollStatus, 1500);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, []);
+
+  useEffect(() => {
+    const generation = ++mountGenerationRef.current;
+    return () => {
+      clearTimeout(startupTimerRef.current);
+      setTimeout(() => {
+        if (mountGenerationRef.current !== generation) return;
+        const kill = window.sharedStateAPI?.killMpv?.();
+        Promise.resolve(kill).catch(() => {});
+      }, 0);
+    };
+  }, []);
 
   useEffect(() => {
     const isElectronMpvAvailable =
@@ -128,66 +245,6 @@ export default function VideoPlayer({
         ? `Season ${targetSeason} Episode ${targetEpNum}`
         : `Episode ${targetEpNum}`;
 
-    setLoading(true);
-    setStatusMsg(`Opening MPV player for ${epLabel}...`);
-
-    const launchKey = `${id}|${targetEpNum}|${subdub || playerSubDub}`;
-    if (launchedRef.current === launchKey) return;
-    launchedRef.current = launchKey;
-
-    window.sharedStateAPI
-      .playInMpv({
-        mediaId: id,
-        episodeId: targetEpId,
-        episode: targetEpNum,
-        season: targetSeason,
-        isDownloaded: !!isDownloaded,
-        title: animeTitle,
-        image: image,
-        provider: provider,
-        malid: type === "Movies" ? null : malid,
-        subdub: subdub || playerSubDub,
-        episodes: sortedEpisodes,
-        hasNext,
-        hasPrev,
-        type: type || "Anime",
-      })
-      .then((res) => {
-        if (res && res.error) {
-          setLoading(false);
-          Swal.fire({
-            icon: "error",
-            title: "MPV Launch Error",
-            text: res.error,
-            background: "#18181b",
-            color: "#fff",
-            confirmButtonText: "OK",
-          }).then(() => {
-            if (onBack) onBack();
-          });
-        } else if (res && res.reused) {
-          // In-place loadfile — overlay will hide when mpv-started fires on file-loaded
-        } else {
-          setTimeout(() => {
-            setLoading(false);
-          }, 1200);
-        }
-      })
-      .catch((err) => {
-        setLoading(false);
-        const msg = err.message || "Failed to launch MPV player.";
-        Swal.fire({
-          icon: "error",
-          title: "MPV Launch Error",
-          text: msg,
-          background: "#18181b",
-          color: "#fff",
-          confirmButtonText: "OK",
-        }).then(() => {
-          if (onBack) onBack();
-        });
-      });
-
     const handleNextEpisode = () => {
       let nextEp;
       if (currentIdx !== -1 && currentIdx < sortedEpisodes.length - 1) {
@@ -209,6 +266,7 @@ export default function VideoPlayer({
         setStatusMsg(`Loading ${nextEpLabel}...`);
         setCurrentSeason(nextSeason);
         setCurrentEpNumOrId(nextEp.id || nextEp.number);
+        setNavToken((value) => value + 1);
       } else if (onBack) {
         onBack();
       }
@@ -238,13 +296,18 @@ export default function VideoPlayer({
         setStatusMsg(`Loading ${prevEpLabel}...`);
         setCurrentSeason(prevSeason);
         setCurrentEpNumOrId(prevEp.id || prevEp.number);
+        setNavToken((value) => value + 1);
       }
     };
 
     const removeMpvStartedListener = window.sharedStateAPI.on(
       "mpv-started",
       () => {
+        clearTimeout(startupTimerRef.current);
+        setLaunchError("");
         setLoading(false);
+        setStatusMsg("MPV is running.");
+        refreshMpvStatus();
       },
     );
 
@@ -252,6 +315,7 @@ export default function VideoPlayer({
     const removeMpvLoadingListener = window.sharedStateAPI.on(
       "mpv-loading",
       (data) => {
+        clearTimeout(startupTimerRef.current);
         setLoading(true);
         setStatusMsg(
           data?.episode
@@ -275,6 +339,7 @@ export default function VideoPlayer({
     const removeMpvCloseListener = window.sharedStateAPI.on(
       "mpv-closed",
       (data) => {
+        clearTimeout(startupTimerRef.current);
         setLoading(false);
         if (data?.action === "next") {
           handleNextEpisode();
@@ -289,35 +354,125 @@ export default function VideoPlayer({
     const removeMpvErrorListener = window.sharedStateAPI.on(
       "mpv-error",
       (data) => {
+        clearTimeout(startupTimerRef.current);
+        const message = data?.message || "MPV player encountered an error.";
+        setLaunchError(message);
         setLoading(false);
+        setStatusMsg(message);
+        refreshMpvStatus();
         Swal.fire({
           icon: "error",
           title: "MPV Player Error",
-          text: data?.message || "MPV player encountered an error.",
+          text: message,
           background: "#18181b",
           color: "#fff",
           confirmButtonText: "OK",
-        }).then(() => {
-          if (onBack) onBack();
         });
       },
     );
 
-    return () => {
-      try {
-        if (window.sharedStateAPI?.controlMpv) {
-          window.sharedStateAPI.controlMpv("quit", []);
+    const launchKey = `${id}|${targetEpId}|${subdub || playerSubDub}|${navToken}`;
+    if (launchedRef.current !== launchKey) {
+      launchedRef.current = launchKey;
+      setLoading(true);
+      setLaunchError("");
+      setStatusMsg(`Opening MPV player for ${epLabel}...`);
+
+      const launch = async () => {
+        try {
+          await refreshMpvStatus();
+          const res = await window.sharedStateAPI.playInMpv({
+            mediaId: id,
+            episodeId: targetEpId,
+            episode: targetEpNum,
+            season: targetSeason,
+            isDownloaded: !!isDownloaded,
+            title: animeTitle,
+            image: image,
+            provider: provider,
+            malid: type === "Movies" ? null : malid,
+            subdub: subdub || playerSubDub,
+            episodes: sortedEpisodes,
+            hasNext,
+            hasPrev,
+            type: type || "Anime",
+          });
+          if (launchedRef.current !== launchKey) return;
+          if (res?.aborted) return;
+          if (res?.error) {
+            setLaunchError(res.error);
+            setLoading(false);
+            setStatusMsg(res.error);
+            refreshMpvStatus();
+            Swal.fire({
+              icon: "error",
+              title: "MPV Launch Error",
+              text: res.error,
+              background: "#18181b",
+              color: "#fff",
+              confirmButtonText: "OK",
+            });
+            return;
+          }
+          if (res?.ipcConnected === false) {
+            const message =
+              "MPV started, but its control connection failed. Stop or restart it below.";
+            setLaunchError(message);
+            setLoading(false);
+            setStatusMsg(message);
+            refreshMpvStatus();
+            return;
+          }
+
+          setStatusMsg("Waiting for MPV to begin playback...");
+          clearTimeout(startupTimerRef.current);
+          startupTimerRef.current = setTimeout(async () => {
+            if (launchedRef.current !== launchKey) return;
+            const status = await refreshMpvStatus();
+            if (status?.started) return;
+            const message = status?.running
+              ? "MPV is running, but playback did not start. Stop or restart it below."
+              : "MPV did not start. Launch it again below.";
+            setLaunchError(message);
+            setLoading(false);
+            setStatusMsg(message);
+          }, 20000);
+        } catch (err) {
+          if (launchedRef.current !== launchKey) return;
+          const message = err.message || "Failed to launch MPV player.";
+          setLaunchError(message);
+          setLoading(false);
+          setStatusMsg(message);
+          refreshMpvStatus();
+          Swal.fire({
+            icon: "error",
+            title: "MPV Launch Error",
+            text: message,
+            background: "#18181b",
+            color: "#fff",
+            confirmButtonText: "OK",
+          });
         }
-      } catch {}
+      };
+      launch();
+    }
+
+    return () => {
       removeMpvStartedListener();
       removeMpvLoadingListener();
       removeMpvActionListener();
       removeMpvCloseListener();
       removeMpvErrorListener();
     };
-  }, [id, currentEpNumOrId, currentSeason, playerSubDub, provider]);
-
-  if (!loading) return null;
+  }, [
+    id,
+    currentEpNumOrId,
+    currentSeason,
+    playerSubDub,
+    provider,
+    restartToken,
+    navToken,
+  ]);
 
   return (
     <>
@@ -361,25 +516,92 @@ export default function VideoPlayer({
           color: #f4f4f5;
         }
       `}</style>
-      <div className="mpv-top-progress-bar" />
-      <div className="mpv-blocker-overlay">
-        <div className="mpv-blocker-card">
-          <Loader2 className="animate-spin text-blue-500" size={28} />
-          <div>
-            <h4 style={{ margin: 0, fontWeight: 600, fontSize: "15px" }}>
-              Opening MPV Player
-            </h4>
-            <p
-              style={{
-                margin: "4px 0 0 0",
-                fontSize: "13px",
-                color: "#a1a1aa",
-              }}
-            >
-              {statusMsg}
-            </p>
+      {loading && (
+        <>
+          <div className="mpv-top-progress-bar" />
+          <div className="mpv-blocker-overlay">
+            <div className="mpv-blocker-card">
+              <Loader2 className="animate-spin text-blue-500" size={28} />
+              <div>
+                <h4 style={{ margin: 0, fontWeight: 600, fontSize: "15px" }}>
+                  Opening MPV Player
+                </h4>
+                <p
+                  style={{
+                    margin: "4px 0 0 0",
+                    fontSize: "13px",
+                    color: "#a1a1aa",
+                  }}
+                >
+                  {statusMsg}
+                </p>
+              </div>
+            </div>
           </div>
-        </div>
+        </>
+      )}
+      <div
+        role="status"
+        style={{
+          position: "fixed",
+          top: "12px",
+          right: "12px",
+          zIndex: 100000,
+          display: "flex",
+          alignItems: "center",
+          gap: "8px",
+          padding: "8px 10px",
+          border: "1px solid #3f3f46",
+          borderRadius: "8px",
+          background: "#18181b",
+          color: "#f4f4f5",
+          boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
+          fontSize: "12px",
+        }}
+      >
+        <span>
+          {mpvStatus.running
+            ? mpvStatus.started
+              ? "MPV running"
+              : "MPV running (starting)"
+            : loading
+              ? "MPV starting"
+              : "MPV stopped"}
+        </span>
+        {launchError && (
+          <span title={launchError} style={{ color: "#f87171" }}>
+            !
+          </span>
+        )}
+        {mpvStatus.running ? (
+          <button
+            type="button"
+            onClick={stopMpv}
+            disabled={stopping}
+            style={actionButtonStyle}
+          >
+            Stop MPV
+          </button>
+        ) : loading ? (
+          <button
+            type="button"
+            onClick={stopMpv}
+            disabled={stopping}
+            style={actionButtonStyle}
+          >
+            Cancel
+          </button>
+        ) : null}
+        {(!loading || mpvStatus.running) && (
+          <button
+            type="button"
+            onClick={relaunchMpv}
+            disabled={stopping}
+            style={actionButtonStyle}
+          >
+            {mpvStatus.running ? "Restart MPV" : "Launch MPV"}
+          </button>
+        )}
       </div>
     </>
   );

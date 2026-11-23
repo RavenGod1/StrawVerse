@@ -25,6 +25,12 @@ const {
 } = require("./AnimeManga");
 const { verifyStreamReachability } = require("./streamVerifier");
 const { sortSourcesByPreferredQuality } = require("./constants");
+const {
+  materializeSubtitleDataUrl,
+  isMpvProcessAlive,
+  isMpvClientAlive,
+  getMpvPlayerStatus,
+} = require("./mpvPlayerUtils");
 
 async function fetchSkipTimes(malid, epNum, durationSecs = 1440) {
   if (!malid || !epNum) return null;
@@ -94,7 +100,22 @@ async function prepareSubtitles(validSubs, activeReferer) {
   const results = await Promise.allSettled(
     validSubs.map(async (sub, idx) => {
       const cleanLang = formatSubtitleLabel(sub, idx);
-      let rawUrl = resolvePathOrUrl(sub.url);
+      const safeName = `track_${idx}_${cleanLang.replace(/[^a-zA-Z0-9_-]/g, "_")}.vtt`;
+      const sourceUrl = String(sub.url || "");
+      if (sourceUrl.startsWith("data:")) {
+        try {
+          const filePath = path.join(tempDir, safeName);
+          materializeSubtitleDataUrl(sourceUrl, filePath);
+          return { lang: cleanLang, path: filePath };
+        } catch (err) {
+          logger.warn(
+            `[MPV] Failed to materialize data subtitle for ${cleanLang}: ${err.message}`,
+          );
+          return { lang: cleanLang, path: "" };
+        }
+      }
+
+      const rawUrl = resolvePathOrUrl(sourceUrl);
       if (rawUrl && rawUrl.startsWith("/subtitles?file=")) {
         const decodedPath = decodeURIComponent(
           rawUrl.slice("/subtitles?file=".length),
@@ -118,7 +139,6 @@ async function prepareSubtitles(validSubs, activeReferer) {
           typeof resp.data === "string" &&
           resp.data.trim().length > 0
         ) {
-          const safeName = `track_${idx}_${cleanLang.replace(/[^a-zA-Z0-9_-]/g, "_")}.vtt`;
           const filePath = path.join(tempDir, safeName);
           fs.writeFileSync(filePath, resp.data, "utf8");
           return { lang: cleanLang, path: filePath };
@@ -139,20 +159,26 @@ async function prepareSubtitles(validSubs, activeReferer) {
     }),
   );
 
-  return results.map((r, i) => {
-    if (r.status === "fulfilled") return r.value;
-    const cleanLang = formatSubtitleLabel(validSubs[i], i);
-    const rawUrl = resolvePathOrUrl(validSubs[i].url);
-    const customHeaders = activeReferer
-      ? { Referer: activeReferer }
-      : undefined;
-    return {
-      lang: cleanLang,
-      path: rawUrl.startsWith("http")
-        ? toProxyUrl(rawUrl, customHeaders)
-        : rawUrl,
-    };
-  });
+  return results
+    .map((r, i) => {
+      if (r.status === "fulfilled") return r.value;
+      const cleanLang = formatSubtitleLabel(validSubs[i], i);
+      const sourceUrl = String(validSubs[i].url || "");
+      if (sourceUrl.startsWith("data:")) {
+        return { lang: cleanLang, path: "" };
+      }
+      const rawUrl = resolvePathOrUrl(sourceUrl);
+      const customHeaders = activeReferer
+        ? { Referer: activeReferer }
+        : undefined;
+      return {
+        lang: cleanLang,
+        path: rawUrl.startsWith("http")
+          ? toProxyUrl(rawUrl, customHeaders)
+          : rawUrl,
+      };
+    })
+    .filter((subtitle) => subtitle.path);
 }
 
 const getMpvPath = () => {
@@ -565,10 +591,8 @@ async function playInMpv(window, options) {
   );
 
   if (
-    global.activeMpvClient &&
-    !global.activeMpvClient.destroyed &&
-    global.activeMpvProcess &&
-    !global.activeMpvProcess.killed
+    isMpvClientAlive(global.activeMpvClient) &&
+    isMpvProcessAlive(global.activeMpvProcess)
   ) {
     try {
       global.activeMpvClient.write(
@@ -1094,22 +1118,23 @@ async function playInMpv(window, options) {
       );
       activeSubtitles = [];
     } else {
-      const filtered = activeSubtitles.filter((sub) => {
+      // Keep every track: the preference only decides which one is picked
+      // automatically, so a Japanese-only track stays listed in the player
+      // instead of disappearing from the subtitle selector.
+      const preferredTracks = [];
+      const otherTracks = [];
+      activeSubtitles.forEach((sub) => {
         const sLang = formatSubtitleLabel(sub);
-        return isLanguagePreferred(sLang, preferredSubLangs);
+        if (isLanguagePreferred(sLang, preferredSubLangs)) {
+          preferredTracks.push(sub);
+        } else {
+          otherTracks.push(sub);
+        }
       });
-
-      if (filtered.length > 0) {
-        logger.info(
-          `[MPV] Filtered ${filtered.length} subtitle tracks (from ${activeSubtitles.length}) matching preferred languages: [${preferredSubLangs.join(", ")}]`,
-        );
-        activeSubtitles = filtered;
-      } else {
-        logger.info(
-          `[MPV] No subtitle tracks matched preferred languages: [${preferredSubLangs.join(", ")}]`,
-        );
-        activeSubtitles = [];
-      }
+      logger.info(
+        `[MPV] Subtitle tracks: ${preferredTracks.length} preferred, ${otherTracks.length} other (preferred languages: [${preferredSubLangs.join(", ")}])`,
+      );
+      activeSubtitles = [...preferredTracks, ...otherTracks];
     }
   }
 
@@ -1121,13 +1146,12 @@ async function playInMpv(window, options) {
 
   const resolvedUrl = resolvePathOrUrl(playTargetUrl);
   const isExternal = resolvedUrl.startsWith("http");
-  const isDirectVideo = Boolean(
-    resolvedUrl.split("?")[0].match(/\.(mp4|mkv|webm|mov|avi)$/i),
-  );
-  const playUrl =
-    isExternal && !isDirectVideo
-      ? toProxyUrl(resolvedUrl, activeSources[0]?.headers)
-      : resolvedUrl;
+  // External URLs go through the local proxy: it normalizes origins that
+  // ignore Range (200 + full body), which otherwise make MPV seeks fail
+  // and the player stop mid-episode.
+  const playUrl = isExternal
+    ? toProxyUrl(resolvedUrl, activeSources[0]?.headers)
+    : resolvedUrl;
   const ipcPath = getIpcPath();
   const configDir = getMpvConfigDir();
   let shortTitle = title || (mediaType === "Movies" ? "Movie" : "Anime");
@@ -1342,26 +1366,21 @@ async function playInMpv(window, options) {
       scriptOpts.push(`modernx-subtitles=${subsStr}`);
     }
 
-    preparedSubs.forEach((ps, idx) => {
-      validSubs[idx].lang = ps.lang;
-      validSubs[idx].label = ps.lang;
+    preparedSubs.forEach((ps) => {
       args.push(`--sub-file=${ps.path}`);
     });
 
-    if (validSubs.length > 0 && options.subsEnabled !== false) {
+    if (preparedSubs.length > 0 && options.subsEnabled !== false) {
       let selectedIndex = 0;
       if (
         options.selectedSubIndex !== undefined &&
         options.selectedSubIndex >= 0 &&
-        options.selectedSubIndex < validSubs.length
+        options.selectedSubIndex < preparedSubs.length
       ) {
         selectedIndex = options.selectedSubIndex;
       } else {
-        const matchedIndex = validSubs.findIndex((sub) =>
-          isLanguagePreferred(
-            sub.lang || sub.label || sub.name,
-            preferredSubLangs,
-          ),
+        const matchedIndex = preparedSubs.findIndex((sub) =>
+          isLanguagePreferred(sub.lang, preferredSubLangs),
         );
         if (matchedIndex !== -1) {
           selectedIndex = matchedIndex;
@@ -1401,6 +1420,19 @@ async function playInMpv(window, options) {
 
   args.push(playUrl);
 
+  let hasStartedSent = false;
+  const sendStarted = () => {
+    if (global.activePlayRequestId !== currentRequestId) return;
+    if (hasStartedSent) return;
+    if (window && window.webContents) {
+      window.webContents.send("mpv-started");
+    }
+    if (global.activeMpvSession) {
+      global.activeMpvSession.started = true;
+    }
+    hasStartedSent = true;
+  };
+
   if (global.activePlayRequestId !== currentRequestId) {
     logger.info(
       `[MPV] Launch request #${currentRequestId} superseded by #${global.activePlayRequestId}, aborting.`,
@@ -1408,13 +1440,8 @@ async function playInMpv(window, options) {
     return { success: false, aborted: true };
   }
 
-  const isProcessAlive =
-    global.activeMpvProcess &&
-    !global.activeMpvProcess.killed &&
-    global.activeMpvProcess.exitCode === null &&
-    global.activeMpvProcess.signalCode === null;
-  const isClientAlive =
-    global.activeMpvClient && !global.activeMpvClient.destroyed;
+  const isProcessAlive = isMpvProcessAlive(global.activeMpvProcess);
+  const isClientAlive = isMpvClientAlive(global.activeMpvClient);
 
   if (isProcessAlive && isClientAlive) {
     logger.info(
@@ -1442,6 +1469,9 @@ async function playInMpv(window, options) {
       global.activeMpvSession.episodes = options.episodes;
       global.activeMpvSession.autoPlayNextEpisode = autoPlayNextEpisode;
       global.activeMpvSession.hasTriggeredAutoNext = false;
+      global.activeMpvSession.requestId = currentRequestId;
+      global.activeMpvSession.started = false;
+      global.activeMpvSession.notifyStarted = sendStarted;
       global.activeMpvSession.options = options;
     }
 
@@ -1735,7 +1765,7 @@ async function playInMpv(window, options) {
         JSON.stringify({ command: ["set_property", "pause", false] }) + "\n",
       );
 
-      return { success: true, reused: true };
+      return { success: true, reused: true, requestId: currentRequestId };
     } catch (e) {
       logger.warn(
         `[MPV] In-place loadfile failed, falling back to spawn: ${e.message}`,
@@ -1777,6 +1807,9 @@ async function playInMpv(window, options) {
     episodes: options.episodes,
     autoPlayNextEpisode,
     hasTriggeredAutoNext: false,
+    requestId: currentRequestId,
+    started: false,
+    notifyStarted: sendStarted,
     options,
   };
 
@@ -1801,6 +1834,7 @@ async function playInMpv(window, options) {
   );
 
   let mpvProcess;
+  let startupComplete = false;
   try {
     mpvProcess = spawn(mpvExe, args, {
       env: {
@@ -1905,18 +1939,39 @@ async function playInMpv(window, options) {
     }
     mpvProcess.on("error", (err) => {
       logger.error(`[MPV Spawn Error] ${err.message}`, err);
-      if (window && window.webContents) {
+      if (startupComplete && window && window.webContents) {
         window.webContents.send("mpv-error", {
-          message: `Failed to launch MPV executable: ${err.message}`,
+          message: `MPV player error: ${err.message}`,
         });
       }
     });
+
+    await new Promise((resolve, reject) => {
+      const onSpawn = () => {
+        mpvProcess.off("error", onSpawnError);
+        resolve();
+      };
+      const onSpawnError = (err) => {
+        mpvProcess.off("spawn", onSpawn);
+        reject(err);
+      };
+      mpvProcess.once("spawn", onSpawn);
+      mpvProcess.once("error", onSpawnError);
+    });
+    startupComplete = true;
   } catch (err) {
     logger.error(`[MPV Spawn Exception] ${err.message}`, err);
+    if (global.activeMpvProcess === mpvProcess) {
+      global.activeMpvProcess = null;
+    }
+    if (global.activeMpvSession?.requestId === currentRequestId) {
+      global.activeMpvSession = null;
+    }
     return { error: `Failed to spawn MPV process: ${err.message}` };
   }
 
   let client = null;
+  let ipcConnected = false;
   let duration = 0;
   let currentTime = startSeek;
   // Genuinely-played seconds: sum of small positive position advances.
@@ -1929,24 +1984,11 @@ async function playInMpv(window, options) {
   let buffer = "";
   let pendingAction = null;
   let pendingSeekOnLoad = null;
-  let hasStartedSent = false;
   let hasTriggeredAutoNext = false;
-
-  const sendStarted = () => {
-    if (global.activePlayRequestId !== currentRequestId) return;
-    if (!hasStartedSent) {
-      if (window && window.webContents) {
-        window.webContents.send("mpv-started");
-      }
-      hasStartedSent = true;
-    }
-  };
-
-  sendStarted();
-  setTimeout(sendStarted, 500);
 
   try {
     client = await connectIpc(ipcPath, 0, currentRequestId);
+    ipcConnected = true;
     global.activeMpvClient = client;
     logger.info(`[MPV IPC] Successfully connected to IPC socket: ${ipcPath}`);
     client.write(
@@ -2115,6 +2157,11 @@ async function playInMpv(window, options) {
         saveProgressToDb(currentTime);
         if (window && window.webContents && !window.isDestroyed()) {
           window.webContents.send("mpv-action", { action: "next" });
+          logger.info(`[MPV] Sent mpv-action next to renderer window.`);
+        } else {
+          logger.warn(
+            `[MPV] mpv-action next NOT sent: renderer window unavailable.`,
+          );
         }
       }
     };
@@ -2161,6 +2208,15 @@ async function playInMpv(window, options) {
       lastPeriodicSave = Date.now();
     };
 
+    const notifyStarted = () => {
+      const activeNotify = global.activeMpvSession?.notifyStarted;
+      if (typeof activeNotify === "function") {
+        activeNotify();
+      } else {
+        sendStarted();
+      }
+    };
+
     const handleIpcMessage = (dataStr) => {
       try {
         const msg = JSON.parse(dataStr);
@@ -2169,7 +2225,7 @@ async function playInMpv(window, options) {
           if (global.activeMpvSession) {
             global.activeMpvSession.hasTriggeredAutoNext = false;
           }
-          sendStarted();
+          notifyStarted();
           if (pendingSeekOnLoad !== null && pendingSeekOnLoad > 0) {
             const seekPos = Math.floor(pendingSeekOnLoad);
             pendingSeekOnLoad = null;
@@ -2426,6 +2482,9 @@ async function playInMpv(window, options) {
             }
 
             hasStartedSent = false;
+            if (global.activeMpvSession) {
+              global.activeMpvSession.started = false;
+            }
 
             const actionTimeSpent = Math.max(0, currentTime - lastSavedTime);
             lastSavedTime = currentTime;
@@ -2528,7 +2587,7 @@ async function playInMpv(window, options) {
             if (prevTime > 0 && msg.data > prevTime) {
               advancedSecs += Math.min(msg.data - prevTime, 10);
             }
-            sendStarted();
+            if (msg.data > 0) notifyStarted();
 
             const now = Date.now();
             const timeDiff = Math.abs(currentTime - prevTime);
@@ -2601,6 +2660,16 @@ async function playInMpv(window, options) {
     }
   }
 
+  if (!isMpvProcessAlive(mpvProcess)) {
+    if (global.activeMpvProcess === mpvProcess) {
+      global.activeMpvProcess = null;
+    }
+    if (global.activeMpvSession?.requestId === currentRequestId) {
+      global.activeMpvSession = null;
+    }
+    return { error: "MPV exited before playback could start." };
+  }
+
   let terminated = false;
   const handleTermination = async (code, signal, eventSource) => {
     if (terminated) return;
@@ -2610,13 +2679,15 @@ async function playInMpv(window, options) {
       `[MPV] Native player ${eventSource} with code ${code}${signal ? `, signal ${signal}` : ""}`,
     );
 
-    if (global.activeMpvProcess === mpvProcess) {
+    const ownsActiveProcess = global.activeMpvProcess === mpvProcess;
+    const didStart = Boolean(global.activeMpvSession?.started);
+    if (ownsActiveProcess) {
       global.activeMpvProcess = null;
+      global.activeMpvSession = null;
     }
     if (global.activeMpvClient === client) {
       global.activeMpvClient = null;
     }
-    global.activeMpvSession = null;
     if (client && !client.destroyed) {
       client.destroy();
     }
@@ -2654,16 +2725,18 @@ async function playInMpv(window, options) {
       } catch (e) {}
     }
 
-    for (const dir of activeTempSubDirs) {
-      try {
-        fs.rmSync(dir, { recursive: true, force: true });
-      } catch (e) {}
+    if (ownsActiveProcess || !global.activeMpvProcess) {
+      for (const dir of activeTempSubDirs) {
+        try {
+          fs.rmSync(dir, { recursive: true, force: true });
+        } catch (e) {}
+      }
+      activeTempSubDirs.clear();
     }
-    activeTempSubDirs.clear();
 
-    if (global.activePlayRequestId !== currentRequestId) {
+    if (!ownsActiveProcess) {
       logger.info(
-        `[MPV] Player process superseded by request ${global.activePlayRequestId}, suppressing close IPC.`,
+        `[MPV] Player process ${eventSource} was superseded or explicitly stopped, suppressing close IPC.`,
       );
       return;
     }
@@ -2677,7 +2750,7 @@ async function playInMpv(window, options) {
 
     if (targetWin) {
       const isNormalExit =
-        hasStartedSent || code === 0 || code === 4 || signal !== null;
+        didStart || code === 0 || code === 4 || signal !== null;
 
       if (!isNormalExit) {
         targetWin.webContents.send("mpv-error", {
@@ -2701,22 +2774,79 @@ async function playInMpv(window, options) {
     handleTermination(code, signal, "close"),
   );
 
-  mpvProcess.on("error", (spawnErr) => {
-    logger.error(
-      `[MPV] Failed to spawn native MPV process: ${spawnErr.message}`,
-    );
-    const targetWin =
-      window && !window.isDestroyed() && window.webContents
-        ? window
-        : global.win && !global.win.isDestroyed() && global.win.webContents
-          ? global.win
-          : null;
-    if (targetWin) {
-      targetWin.webContents.send("mpv-error", {
-        message: `MPV could not be launched. Make sure it is installed and added to your system PATH. Error: ${spawnErr.message}`,
-      });
-    }
-  });
+  return {
+    success: true,
+    pid: mpvProcess.pid,
+    ipcConnected,
+    requestId: currentRequestId,
+  };
 }
 
-module.exports = { playInMpv, toProxyUrl };
+function getMpvStatus() {
+  return getMpvPlayerStatus(
+    global.activeMpvProcess,
+    global.activeMpvClient,
+    global.activeMpvSession,
+  );
+}
+
+async function stopMpvPlayer() {
+  const mpvProcess = global.activeMpvProcess;
+  const mpvClient = global.activeMpvClient;
+  const session = global.activeMpvSession;
+
+  global.activePlayRequestId = (global.activePlayRequestId || 0) + 1;
+  global.__inFlightMpvLaunch = null;
+  if (global.activeMpvProcess === mpvProcess) {
+    global.activeMpvProcess = null;
+  }
+  if (global.activeMpvClient === mpvClient) {
+    global.activeMpvClient = null;
+  }
+  if (global.activeMpvSession === session) {
+    global.activeMpvSession = null;
+  }
+
+  if (isMpvClientAlive(mpvClient)) {
+    try {
+      mpvClient.write(JSON.stringify({ command: ["quit"] }) + "\n");
+    } catch (_) {}
+  }
+
+  if (isMpvProcessAlive(mpvProcess)) {
+    await new Promise((resolve) => {
+      let settled = false;
+      let timer = null;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        resolve();
+      };
+      timer = setTimeout(finish, 250);
+      mpvProcess.once("exit", finish);
+      mpvProcess.once("close", finish);
+    });
+
+    if (isMpvProcessAlive(mpvProcess)) {
+      try {
+        mpvProcess.kill("SIGKILL");
+      } catch (_) {}
+    }
+  }
+
+  if (mpvClient && !mpvClient.destroyed) {
+    try {
+      mpvClient.destroy();
+    } catch (_) {}
+  }
+
+  return { success: true, status: getMpvStatus() };
+}
+
+module.exports = {
+  playInMpv,
+  toProxyUrl,
+  getMpvStatus,
+  stopMpvPlayer,
+};

@@ -82,6 +82,13 @@ public class CloudflareBypassPlugin extends Plugin {
         return cleaned;
     }
 
+    static String resolveUserAgent(String explicitUserAgent, String fallbackUserAgent) {
+        if (explicitUserAgent != null && !explicitUserAgent.isEmpty()) {
+            return explicitUserAgent;
+        }
+        return cleanUserAgent(fallbackUserAgent);
+    }
+
     @PluginMethod
     public void openSystemBrowser(PluginCall call) {
         String url = call.getString("url");
@@ -167,7 +174,7 @@ public class CloudflareBypassPlugin extends Plugin {
             call.reject("URL is required");
             return;
         }
-        final String userAgent = cleanUserAgent(call.getString("userAgent"));
+        final String userAgent = call.getString("userAgent");
         final String referer = call.getString("referer");
 
         Log.i("StrawVerseBypass", "bypass() called with URL: " + url + " UA: " + userAgent + " Ref: " + referer);
@@ -188,43 +195,24 @@ public class CloudflareBypassPlugin extends Plugin {
             Uri challengeUri = Uri.parse(finalChallengeUrl);
             String host = challengeUri.getHost();
             if (host != null) {
-                String baseDomain = host.startsWith("www.") ? host.substring(4) : host;
                 String[] targetUrls = { finalChallengeUrl, finalUrl, "https://" + host + "/" };
                 
                 for (String tUrl : targetUrls) {
-                    Log.i("StrawVerseBypass", "Cookies BEFORE clear for URL " + tUrl + ": " + CookieManager.getInstance().getCookie(tUrl));
+                    Log.i("StrawVerseBypass", "Cookies before challenge for URL " + tUrl + ": " + CookieManager.getInstance().getCookie(tUrl));
                 }
 
-                String[] cookieStrings = {
-                    "cf_clearance=; Max-Age=0; Path=/; Domain=" + baseDomain + "; Secure; HttpOnly; SameSite=None",
-                    "cf_clearance=; Max-Age=0; Path=/; Domain=." + baseDomain + "; Secure; HttpOnly; SameSite=None",
-                    "cf_clearance=; Max-Age=0; Path=/; Secure; HttpOnly; SameSite=None",
-                    "cf_clearance=; Max-Age=0; Path=/; Domain=" + baseDomain + "; Secure; HttpOnly",
-                    "cf_clearance=; Max-Age=0; Path=/; Domain=." + baseDomain + "; Secure; HttpOnly",
-                    "cf_clearance=; Max-Age=0; Path=/; HttpOnly",
-                    "cf_clearance=; Max-Age=0; HttpOnly",
-                    "cf_clearance=; Max-Age=0; Path=/; Domain=" + baseDomain + "; Secure; SameSite=None",
-                    "cf_clearance=; Max-Age=0; Path=/; Domain=." + baseDomain + "; Secure; SameSite=None",
-                    "cf_clearance=; Max-Age=0; Path=/; Secure; SameSite=None",
-                    "cf_clearance=; Max-Age=0; Path=/; Domain=" + baseDomain,
-                    "cf_clearance=; Max-Age=0; Path=/; Domain=." + baseDomain,
-                    "cf_clearance=; Max-Age=0; Path=/",
-                    "cf_clearance=; Max-Age=0"
-                };
-                for (String tUrl : targetUrls) {
-                    for (String cookieStr : cookieStrings) {
-                        CookieManager.getInstance().setCookie(tUrl, cookieStr);
-                    }
-                }
+                // Keep the persisted clearance. It is bound to this WebView's
+                // TLS identity and matching User-Agent; deleting it forces a
+                // new challenge for every request.
                 CookieManager.getInstance().flush();
 
                 // Log after state
                 for (String tUrl : targetUrls) {
-                    Log.i("StrawVerseBypass", "Cookies AFTER clear for URL " + tUrl + ": " + CookieManager.getInstance().getCookie(tUrl));
+                    Log.i("StrawVerseBypass", "Cookies after challenge for URL " + tUrl + ": " + CookieManager.getInstance().getCookie(tUrl));
                 }
             }
         } catch (Exception e) {
-            Log.w("StrawVerseBypass", "Failed to clear old cf_clearance cookie", e);
+            Log.w("StrawVerseBypass", "Failed to inspect existing cookies before challenge", e);
         }
 
         getActivity().runOnUiThread(new Runnable() {
@@ -292,9 +280,14 @@ public class CloudflareBypassPlugin extends Plugin {
                     webView.getSettings().setJavaScriptEnabled(true);
                     webView.getSettings().setDomStorageEnabled(true);
                     
-                    final String effectiveUserAgent = cleanUserAgent((userAgent != null && !userAgent.isEmpty())
-                        ? userAgent
-                        : webView.getSettings().getUserAgentString());
+                    String challengeUserAgent = userAgent;
+                    if (challengeUserAgent == null || challengeUserAgent.isEmpty()) {
+                        challengeUserAgent = AppDatabase.getStoredUserAgent(getContext(), finalUrl);
+                    }
+                    final String effectiveUserAgent = resolveUserAgent(
+                        challengeUserAgent,
+                        webView.getSettings().getUserAgentString()
+                    );
                     webView.getSettings().setUserAgentString(effectiveUserAgent);
                     
                     // Enable desktop mode viewport settings
@@ -486,12 +479,12 @@ public class CloudflareBypassPlugin extends Plugin {
                     webView.loadUrl(finalChallengeUrl, extraHeaders);
                     handler.post(cookiePoller);
 
-                    // 15-second safety fallback timer
+                    // 30-second safety fallback timer
                     handler.postDelayed(new Runnable() {
                         @Override
                         public void run() {
                             if (finished[0]) return;
-                            Log.w("StrawVerseBypass", "Bypass 15s safety timer expired. Resolving with current cookies.");
+                            Log.w("StrawVerseBypass", "Bypass 30s safety timer expired. Resolving with current cookies.");
                             finished[0] = true;
                             handler.removeCallbacks(cookiePoller);
                             CookieManager.getInstance().flush();
@@ -511,7 +504,7 @@ public class CloudflareBypassPlugin extends Plugin {
                             if (dialog.isShowing()) dialog.dismiss();
                             webView.destroy();
                         }
-                    }, 15000);
+                    }, 30000);
 
                 } catch (Exception e) {
                     Log.e("StrawVerseBypass", "Error building dialog", e);
@@ -956,15 +949,26 @@ public class CloudflareBypassPlugin extends Plugin {
         }
 
         final JSObject headers = call.getObject("headers");
+        final String method = call.getString("method", "GET");
+        final String body = call.getString("body");
+        final int requestTimeout = Math.max(1000, call.getInt("timeout", 30000));
+
+        String requestHost = null;
+        try {
+            requestHost = Uri.parse(rawUrl).getHost();
+        } catch (Exception ignored) {}
+        if (WebViewRequestHelper.isCloudflareProtectedHost(requestHost)) {
+            Log.i("StrawVerseBypass", "Using WebView TLS path for protected host: " + requestHost);
+            executeWebViewRequest(rawUrl, method, headers, body, call);
+            return;
+        }
 
         new Thread(new Runnable() {
             @Override
             public void run() {
                 final String initialUrl = call.getString("url");
                 String currentUrl = initialUrl;
-                String method = call.getString("method");
-                if (method == null) method = "GET";
-                String body = call.getString("body");
+                String requestMethod = method;
 
                 java.net.HttpURLConnection conn = null;
                 java.io.InputStream is = null;
@@ -974,12 +978,12 @@ public class CloudflareBypassPlugin extends Plugin {
                     final int MAX_REDIRECTS = 5;
 
                     while (redirectCount < MAX_REDIRECTS) {
-                        Log.i("StrawVerseBypass", "nativeRequest: " + method + " -> " + currentUrl);
+                        Log.i("StrawVerseBypass", "nativeRequest: " + requestMethod + " -> " + currentUrl);
                         java.net.URL urlObj = new java.net.URL(currentUrl);
                         conn = (java.net.HttpURLConnection) urlObj.openConnection();
-                        conn.setRequestMethod(method.toUpperCase());
-                        conn.setConnectTimeout(25000);
-                        conn.setReadTimeout(30000);
+                        conn.setRequestMethod(requestMethod.toUpperCase());
+                        conn.setConnectTimeout(Math.min(25000, requestTimeout));
+                        conn.setReadTimeout(requestTimeout);
                         conn.setDoInput(true);
                         conn.setInstanceFollowRedirects(false); // Manually handle cross-protocol & cookie updates
                         conn.setRequestProperty("Accept-Encoding", "identity");
@@ -1025,7 +1029,7 @@ public class CloudflareBypassPlugin extends Plugin {
                             conn.setRequestProperty("Cookie", mergedCookies);
                             Log.i("StrawVerseBypass", "nativeRequest cookies: " + AppDatabase.cookieNames(mergedCookies));
                         }
-                        if (("POST".equalsIgnoreCase(method) || "PUT".equalsIgnoreCase(method)) && redirectCount == 0) {
+                        if (("POST".equalsIgnoreCase(requestMethod) || "PUT".equalsIgnoreCase(requestMethod)) && redirectCount == 0) {
                             if (body != null) {
                                 conn.setDoOutput(true);
                                 try (java.io.OutputStream os = conn.getOutputStream()) {
@@ -1056,7 +1060,7 @@ public class CloudflareBypassPlugin extends Plugin {
                                 java.net.URL targetUrl = new java.net.URL(urlObj, location);
                                 currentUrl = targetUrl.toString();
                                 if (responseCode == 303) {
-                                    method = "GET";
+                                    requestMethod = "GET";
                                 }
                                 redirectCount++;
                                 conn.disconnect();
@@ -1104,6 +1108,7 @@ public class CloudflareBypassPlugin extends Plugin {
 
                     JSObject ret = new JSObject();
                     ret.put("status", responseCode);
+                    ret.put("finalUrl", currentUrl);
                     ret.put("data", base64Data);
                     ret.put("isBase64", true);
                     ret.put("headers", resHeaders);
@@ -1294,6 +1299,7 @@ public class CloudflareBypassPlugin extends Plugin {
             }
             
             int status = responseObj.getInt("status");
+            String finalUrl = responseObj.optString("finalUrl", "");
             String responseData = responseObj.optString("data", "");
             JSONObject resHeaders = responseObj.getJSONObject("headers");
             
@@ -1316,6 +1322,7 @@ public class CloudflareBypassPlugin extends Plugin {
             
             JSObject ret = new JSObject();
             ret.put("status", status);
+            ret.put("finalUrl", finalUrl);
             ret.put("data", base64Data);
             ret.put("isBase64", true);
             ret.put("headers", jsResHeaders);
@@ -1364,12 +1371,12 @@ public class CloudflareBypassPlugin extends Plugin {
                     if (reqUA == null || reqUA.isEmpty()) {
                         reqUA = AppDatabase.getStoredUserAgent(getContext(), url);
                     }
-                    if (reqUA != null && !reqUA.isEmpty()) {
-                        backgroundWebView.getSettings().setUserAgentString(cleanUserAgent(reqUA));
-                    } else {
-                        String webViewUA = cleanUserAgent(android.webkit.WebSettings.getDefaultUserAgent(getContext()));
-                        backgroundWebView.getSettings().setUserAgentString(webViewUA);
-                    }
+                    backgroundWebView.getSettings().setUserAgentString(
+                        resolveUserAgent(
+                            reqUA,
+                            android.webkit.WebSettings.getDefaultUserAgent(getContext())
+                        )
+                    );
 
                     String cookieVal = null;
                     if (headers != null) {
@@ -1473,6 +1480,7 @@ public class CloudflareBypassPlugin extends Plugin {
                         "          var base64data = reader.result.split(',')[1] || '';\n" +
                         "          AndroidFetchBridge.onFetchResponse(reqId, JSON.stringify({\n" +
                         "            status: res.status,\n" +
+                        "            finalUrl: res.url || url,\n" +
                         "            headers: headers,\n" +
                         "            data: base64data,\n" +
                         "            isBase64: true\n" +

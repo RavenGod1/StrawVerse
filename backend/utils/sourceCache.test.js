@@ -1,9 +1,55 @@
 const test = require("node:test");
 const assert = require("node:assert");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+
+const tempDir = fs.mkdtempSync(
+  path.join(os.tmpdir(), "strawverse-source-cache-"),
+);
+process.env.STRAWVERSE_PROVIDER_CACHE_DIR = tempDir;
+
 const {
+  animeinfo: fetchProviderAnimeInfo,
   fetchEpisodeSources: fetchProviderEpisodeSources,
   fetchMovieSources: fetchProviderMovieSources,
 } = require("./AnimeManga");
+
+test.after(() => {
+  fs.rmSync(tempDir, {
+    recursive: true,
+    force: true,
+    maxRetries: 5,
+    retryDelay: 50,
+  });
+  delete process.env.STRAWVERSE_PROVIDER_CACHE_DIR;
+});
+
+test("identical anime detail requests share one provider call", async () => {
+  let calls = 0;
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const provider = {
+    provider_name: `coalesced-anime-info-${Date.now()}`,
+    provider: {
+      async AnimeInfo() {
+        calls++;
+        await gate;
+        return { id: "anime-1", title: "Anime" };
+      },
+    },
+  };
+
+  const first = fetchProviderAnimeInfo(provider, null, "anime-1");
+  const second = fetchProviderAnimeInfo(provider, null, "anime-1");
+  release();
+  const [a, b] = await Promise.all([first, second]);
+
+  assert.equal(calls, 1);
+  assert.deepEqual(a, b);
+});
 
 test("empty anime source results are not cached", async () => {
   let calls = 0;

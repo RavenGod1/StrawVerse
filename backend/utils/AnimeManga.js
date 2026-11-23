@@ -14,6 +14,11 @@ const { verifyStreamReachability } = require("./streamVerifier");
 const { normalizeSourceRequest, hasMediaSources } = require("./mediaSource");
 const { getMangaAssetExtension } = require("./mangaAssets");
 const {
+  coalesceProviderRequest,
+  getCachedProviderResponse,
+  removeDurableProviderResponse,
+} = require("./providerCache");
+const {
   hasLocalMediaFiles,
   cleanAlphanumeric,
   SEASON_FOLDER_RE,
@@ -122,17 +127,10 @@ async function latestAnime(provider, filters) {
     `latestanime_${provider.provider_name}_${JSON.stringify(filters)}`,
   );
 
-  const cachedData = cache.get(cacheKey);
-
-  if (cachedData) {
-    if (cachedData.results)
-      await enrichWithLibraryTags("Anime", cachedData.results);
-    return cachedData;
-  }
-
-  const data = await provider.provider.fetchRecentEpisodes(filters);
+  const data = await getCachedProviderResponse(cacheKey, () =>
+    provider.provider.fetchRecentEpisodes(filters),
+  );
   if (data?.results) await enrichWithLibraryTags("Anime", data.results);
-  cache.set(cacheKey, data, 60);
   return data;
 }
 
@@ -196,35 +194,20 @@ async function findanime(provider, Anime_NAME, filters) {
     )}`,
   );
 
-  const cachedData = cache.get(cacheKey);
-
-  if (cachedData) {
-    if (cachedData.data) await enrichWithLibraryTags("Anime", cachedData.data);
-    return cachedData;
-  }
-
-  const data = await provider.provider.SearchAnime(Anime_NAME, filters);
-
-  if (data.results.length <= 0) {
-    throw new Error(`No Anime Found With This Name`);
-  } else {
-    await enrichWithLibraryTags("Anime", data.results);
-    cache.set(
-      cacheKey,
-      {
-        data: data.results,
-        hasNextPage: data.hasNextPage,
-        currentPage: data.currentPage,
-      },
-      60,
-    );
-
+  const data = await getCachedProviderResponse(cacheKey, async () => {
+    const result = await provider.provider.SearchAnime(Anime_NAME, filters);
+    if (!result?.results?.length) {
+      throw new Error(`No Anime Found With This Name`);
+    }
     return {
-      data: data.results,
-      hasNextPage: data.hasNextPage,
-      currentPage: data.currentPage,
+      data: result.results,
+      hasNextPage: result.hasNextPage,
+      currentPage: result.currentPage,
     };
-  }
+  });
+
+  if (data?.data) await enrichWithLibraryTags("Anime", data.data);
+  return data;
 }
 
 // anime info
@@ -238,14 +221,9 @@ async function animeinfo(provider, dir, animeId) {
     `animeinfo_${provider.provider_name}_${animeId}`,
   );
 
-  const cachedData = cache.get(cacheKey);
-  if (cachedData) {
-    return cachedData;
-  }
-
-  const data = await provider.provider.AnimeInfo(animeId);
-  cache.set(cacheKey, data, 60);
-  return data;
+  return getCachedProviderResponse(cacheKey, () =>
+    provider.provider.AnimeInfo(animeId),
+  );
 }
 
 // anime fetch ep list
@@ -260,15 +238,14 @@ async function fetchEpisode(provider, id, page = 1) {
       `animeplaylist_${provider.provider_name}_${id}_${page}`,
     );
 
-    const cachedData = cache.get(cacheKey);
-    if (cachedData) {
-      return cachedData;
-    }
-    const data = await provider.provider.fetchEpisode(id, page);
-    if (data?.episodes && data.episodes.length > 0) {
-      cache.set(cacheKey, data, 60);
-    }
-    return data;
+    return getCachedProviderResponse(
+      cacheKey,
+      () => provider.provider.fetchEpisode(id, page),
+      {
+        cacheable: (data) =>
+          Array.isArray(data?.episodes) && data.episodes.length > 0,
+      },
+    );
   } catch (err) {
     throw err;
   }
@@ -302,13 +279,16 @@ async function fetchEpisodeSources(provider, episodeId, category = null) {
     }
   }
   if (!sources) {
-    sources = await provider.provider.fetchEpisodeSources(
-      cleanEpisodeId,
-      category,
-    );
-    if (hasMediaSources(sources)) {
-      cache.set(cacheKey, sources, 60);
-    }
+    sources = await coalesceProviderRequest(cacheKey, async () => {
+      const fetched = await provider.provider.fetchEpisodeSources(
+        cleanEpisodeId,
+        category,
+      );
+      if (hasMediaSources(fetched)) {
+        cache.set(cacheKey, fetched, 60);
+      }
+      return fetched;
+    });
   }
 
   if (sources && global.setDynamicReferer) {
@@ -355,19 +335,11 @@ async function latestMangas(provider, Page = 1, filters = {}) {
     `latestmanga_${provider.provider_name}_${Page}_${JSON.stringify(filters)}`,
   );
 
-  const cachedData = cache.get(cacheKey);
-
-  if (cachedData) {
-    if (cachedData.results)
-      await enrichWithLibraryTags("Manga", cachedData.results);
-    if (cachedData.data) await enrichWithLibraryTags("Manga", cachedData.data);
-    return cachedData;
-  }
-
-  let data = await provider.provider.latestManga(Page, filters);
+  const data = await getCachedProviderResponse(cacheKey, () =>
+    provider.provider.latestManga(Page, filters),
+  );
   if (data?.results) await enrichWithLibraryTags("Manga", data.results);
   if (data?.data) await enrichWithLibraryTags("Manga", data.data);
-  cache.set(cacheKey, data, 60);
   return data;
 }
 
@@ -383,20 +355,11 @@ async function MangaSearch(provider, MANGA_NAME, PAGE = 1, filters = {}) {
       `mangasearch_${provider.provider_name}_${MANGA_NAME}_${PAGE}_${JSON.stringify(filters)}`,
     );
 
-    const cachedData = cache.get(cacheKey);
-
-    if (cachedData) {
-      if (cachedData.results)
-        await enrichWithLibraryTags("Manga", cachedData.results);
-      if (cachedData.data)
-        await enrichWithLibraryTags("Manga", cachedData.data);
-      return cachedData;
-    }
-
-    const data = await provider.provider.searchManga(MANGA_NAME, PAGE, filters);
+    const data = await getCachedProviderResponse(cacheKey, () =>
+      provider.provider.searchManga(MANGA_NAME, PAGE, filters),
+    );
     if (data?.results) await enrichWithLibraryTags("Manga", data.results);
     if (data?.data) await enrichWithLibraryTags("Manga", data.data);
-    cache.set(cacheKey, data, 60);
     return data;
   } catch (err) {
     throw new Error(`No Manga found.. ${err}`);
@@ -414,15 +377,9 @@ async function MangaInfo(provider, MANGA_ID) {
     `mangainfo${provider.provider_name}_${MANGA_ID}`,
   );
 
-  const cachedData = cache.get(cacheKey);
-
-  if (cachedData) {
-    return cachedData;
-  }
-
-  let info = await provider.provider.fetchMangaInfo(MANGA_ID);
-  cache.set(cacheKey, info, 60);
-  return info;
+  return getCachedProviderResponse(cacheKey, () =>
+    provider.provider.fetchMangaInfo(MANGA_ID),
+  );
 }
 
 // Manga
@@ -436,15 +393,9 @@ async function fetchChapters(provider, MANGA_ID, page = 1) {
     `mangachapters${provider.provider_name}_${MANGA_ID}_${page}`,
   );
 
-  const cachedData = cache.get(cacheKey);
-
-  if (cachedData) {
-    return cachedData;
-  }
-
-  let info = await provider.provider.fetchChapters(MANGA_ID, page);
-  cache.set(cacheKey, info, 60);
-  return info;
+  return getCachedProviderResponse(cacheKey, () =>
+    provider.provider.fetchChapters(MANGA_ID, page),
+  );
 }
 
 // Chapters Fetch
@@ -482,34 +433,29 @@ async function latestMovies(provider, filters = {}) {
     `latestmovies_${provider.provider_name}_${JSON.stringify(filters)}`,
   );
 
-  const cachedData = cache.get(cacheKey);
-  if (cachedData) {
-    if (cachedData.results)
-      await enrichWithLibraryTags("Movies", cachedData.results);
-    return cachedData;
-  }
+  const data = await getCachedProviderResponse(cacheKey, async () => {
+    const fetchFn =
+      provider.provider.latestMovies ||
+      provider.provider.fetchRecentEpisodes ||
+      provider.provider.fetchRecent ||
+      provider.provider.latest;
 
-  const fetchFn =
-    provider.provider.latestMovies ||
-    provider.provider.fetchRecentEpisodes ||
-    provider.provider.fetchRecent ||
-    provider.provider.latest;
+    if (typeof fetchFn !== "function") {
+      throw new Error(
+        `Provider '${provider.provider_name}' does not implement a recent/latest releases function.`,
+      );
+    }
 
-  if (typeof fetchFn !== "function") {
-    throw new Error(
-      `Provider '${provider.provider_name}' does not implement a recent/latest releases function.`,
-    );
-  }
-
-  const rawData = await fetchFn.call(provider.provider, filters);
-  const data = Array.isArray(rawData)
-    ? { results: rawData }
-    : rawData || { results: [] };
-  if (!data.results && Array.isArray(data.data)) {
-    data.results = data.data;
-  }
+    const rawData = await fetchFn.call(provider.provider, filters);
+    const normalized = Array.isArray(rawData)
+      ? { results: rawData }
+      : rawData || { results: [] };
+    if (!normalized.results && Array.isArray(normalized.data)) {
+      normalized.results = normalized.data;
+    }
+    return normalized;
+  });
   if (data?.results) await enrichWithLibraryTags("Movies", data.results);
-  cache.set(cacheKey, data, 60);
   return data;
 }
 
@@ -525,43 +471,39 @@ async function movieSearch(provider, query, filters = {}) {
     `moviesearch_${provider.provider_name}_${query}_${JSON.stringify(filters)}`,
   );
 
-  const cachedData = cache.get(cacheKey);
-  if (cachedData) {
-    if (cachedData.results)
-      await enrichWithLibraryTags("Movies", cachedData.results);
-    return cachedData;
+  const normalized = await getCachedProviderResponse(cacheKey, async () => {
+    const searchFn =
+      provider.provider.SearchMovies ||
+      provider.provider.searchMovies ||
+      provider.provider.SearchMedia ||
+      provider.provider.searchMedia ||
+      provider.provider.SearchAnime ||
+      provider.provider.search;
+
+    if (typeof searchFn !== "function") {
+      throw new Error(
+        `Provider '${provider.provider_name}' does not implement a search function.`,
+      );
+    }
+
+    const rawData = await searchFn.call(provider.provider, query, filters);
+    const results = Array.isArray(rawData)
+      ? rawData
+      : rawData?.results || rawData?.data || [];
+    if (results.length <= 0) {
+      throw new Error(`No Movies or Series Found With This Name`);
+    }
+
+    return {
+      results,
+      data: results,
+      hasNextPage: rawData?.hasNextPage || false,
+      currentPage: rawData?.currentPage || 1,
+    };
+  });
+  if (normalized?.results) {
+    await enrichWithLibraryTags("Movies", normalized.results);
   }
-
-  const searchFn =
-    provider.provider.SearchMovies ||
-    provider.provider.searchMovies ||
-    provider.provider.SearchMedia ||
-    provider.provider.searchMedia ||
-    provider.provider.SearchAnime ||
-    provider.provider.search;
-
-  if (typeof searchFn !== "function") {
-    throw new Error(
-      `Provider '${provider.provider_name}' does not implement a search function.`,
-    );
-  }
-
-  const rawData = await searchFn.call(provider.provider, query, filters);
-  const results = Array.isArray(rawData)
-    ? rawData
-    : rawData?.results || rawData?.data || [];
-  if (results.length <= 0) {
-    throw new Error(`No Movies or Series Found With This Name`);
-  }
-
-  await enrichWithLibraryTags("Movies", results);
-  const normalized = {
-    results,
-    data: results,
-    hasNextPage: rawData?.hasNextPage || false,
-    currentPage: rawData?.currentPage || 1,
-  };
-  cache.set(cacheKey, normalized, 60);
   return normalized;
 }
 
@@ -577,11 +519,6 @@ async function movieInfo(provider, dir, movieId) {
     `movieinfo_${provider.provider_name}_${movieId}`,
   );
 
-  const cachedData = cache.get(cacheKey);
-  if (cachedData) {
-    return cachedData;
-  }
-
   const infoFn =
     provider.provider.MovieInfo ||
     provider.provider.fetchMovieInfo ||
@@ -595,19 +532,20 @@ async function movieInfo(provider, dir, movieId) {
     );
   }
 
-  const data = await infoFn.call(provider.provider, movieId);
-  if (data && (!Array.isArray(data.episodes) || data.episodes.length === 0)) {
-    data.episodes = [
-      {
-        id: data.id || movieId,
-        episode: 1,
-        number: 1,
-        title: data.title || "Full Movie",
-      },
-    ];
-  }
-  cache.set(cacheKey, data, 60);
-  return data;
+  return getCachedProviderResponse(cacheKey, async () => {
+    const data = await infoFn.call(provider.provider, movieId);
+    if (data && (!Array.isArray(data.episodes) || data.episodes.length === 0)) {
+      data.episodes = [
+        {
+          id: data.id || movieId,
+          episode: 1,
+          number: 1,
+          title: data.title || "Full Movie",
+        },
+      ];
+    }
+    return data;
+  });
 }
 
 // fetch movie stream sources
@@ -639,10 +577,17 @@ async function fetchMovieSources(provider, episodeId, category = null) {
   );
   let sources = cache.get(cacheKey);
   if (!sources) {
-    sources = await sourcesFn.call(provider.provider, cleanEpisodeId, category);
-    if (hasMediaSources(sources)) {
-      cache.set(cacheKey, sources, 60);
-    }
+    sources = await coalesceProviderRequest(cacheKey, async () => {
+      const fetched = await sourcesFn.call(
+        provider.provider,
+        cleanEpisodeId,
+        category,
+      );
+      if (hasMediaSources(fetched)) {
+        cache.set(cacheKey, fetched, 60);
+      }
+      return fetched;
+    });
   }
 
   if (sources && global.setDynamicReferer) {
@@ -864,6 +809,7 @@ function invalidateCache(type, providerName, id) {
         : `mangainfo${providerName}_${id}`;
   const cacheKey = CreateHashKey(key);
   cache.del(cacheKey);
+  removeDurableProviderResponse(cacheKey).catch(() => {});
 }
 
 async function getProviderOrThrow(type, name) {

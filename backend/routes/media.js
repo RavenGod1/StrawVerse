@@ -43,6 +43,7 @@ const ImageCacheManager = require("../utils/ImageCacheManager");
 const { getHeaders } = require("../utils/proxyHeaders");
 const { isAdSegmentUrl } = require("../utils/adSegments");
 const { resolvePlaylistUri } = require("../utils/mediaSource");
+const { pipeRangeSlice } = require("../utils/rangeSlice");
 const { getMangaAssetMimeType } = require("../utils/mangaAssets");
 const {
   resolveMalIdFromMapping,
@@ -5607,6 +5608,52 @@ router.get(
             } else if (attempts >= 2) {
               throw err;
             }
+          }
+        }
+
+        // Origins like anixohindi's stream host advertise Accept-Ranges but
+        // answer every range request with 200 + the full body from byte 0
+        // (their CDN caches the full-body response and then ignores Range),
+        // so lavf's seek fails ("Seek failed", "Invalid data found") and MPV
+        // stops. A unique query param misses that cached entry and gets a
+        // real 206; if the origin rejects the extra param (signed URLs) fall
+        // back to slicing the requested bytes out of the full body.
+        let ignoredRange =
+          req.headers.range &&
+          Number(resp.status || 200) === 200 &&
+          !resp.headers?.["content-range"];
+        if (ignoredRange) {
+          try {
+            const busted = `${url}${url.includes("?") ? "&" : "?"}_cb=${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+            const retry = await global.axios.get(busted, {
+              headers: reqHeaders,
+              responseType: "stream",
+              timeout: 30000,
+              validateStatus: (s) => s < 400,
+            });
+            if (retry.status === 206 && retry.headers?.["content-range"]) {
+              resp = retry;
+              ignoredRange = false;
+            } else {
+              retry.data?.destroy?.();
+            }
+          } catch (_) {}
+        }
+        if (ignoredRange) {
+          const rangeMatch = req.headers.range.match(/^bytes=(\d+)-(\d*)$/);
+          if (
+            rangeMatch &&
+            pipeRangeSlice(resp.data, res, {
+              start: parseInt(rangeMatch[1], 10),
+              end: rangeMatch[2]
+                ? parseInt(rangeMatch[2], 10)
+                : parseInt(resp.headers["content-length"] || "", 10) - 1,
+              total: parseInt(resp.headers["content-length"] || "", 10),
+              contentType: resp.headers["content-type"],
+              headOnly: req.method === "HEAD",
+            })
+          ) {
+            return;
           }
         }
 

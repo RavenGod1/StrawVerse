@@ -21,6 +21,28 @@ function formatSubLabel(sub) {
   return sub?.lang || sub?.label || sub?.name || "";
 }
 
+function formatSourceLabel(source) {
+  // Extensions often report quality as "default"; fall back to the server
+  // name so the picker shows "Ani-HD" instead of three identical "default"
+  // entries. When both are known show both, otherwise several servers of the
+  // same quality become indistinguishable buttons.
+  const rawQuality = String(source?.quality || "").trim();
+  const quality =
+    rawQuality && rawQuality.toLowerCase() !== "default" ? rawQuality : "";
+  const name = String(source?.name || "").trim();
+  const language = String(source?.lang || source?.language || "").trim();
+  const sameAsQuality =
+    quality && name && name.toLowerCase() === quality.toLowerCase();
+  let label =
+    quality && name && !sameAsQuality
+      ? `${quality} · ${name}`
+      : quality || name || language || "Auto";
+  if (language && !label.toLowerCase().includes(language.toLowerCase())) {
+    return `${label} ${language}`.trim();
+  }
+  return label;
+}
+
 function normalizeLangCode(str) {
   if (!str) return "";
   const s = String(str).toLowerCase().trim();
@@ -1637,12 +1659,7 @@ export default function VideoPlayer({
           {!loading && sources.length > 0 && (
             <div className="player-quality-selector">
               <span className="u-style-98">
-                {sources.some((s) => {
-                  const q = String(s?.quality || "").toLowerCase();
-                  return (
-                    !/^\d+p$/.test(q) && !/^auto$/.test(q) && !/\d+p/.test(q)
-                  );
-                })
+                {sources.some((s) => String(s?.name || "").trim())
                   ? "Servers:"
                   : "Quality:"}
               </span>
@@ -1653,7 +1670,7 @@ export default function VideoPlayer({
                     onClick={() => setSelectedSource(s)}
                     className={`player-quality-btn ${selectedSource === s ? "active" : ""}`}
                   >
-                    {s.quality || "Default"}
+                    {formatSourceLabel(s)}
                   </button>
                 ))}
               </div>

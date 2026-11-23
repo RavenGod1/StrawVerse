@@ -263,23 +263,9 @@ async function boot() {
     "[android] Booting StrawVerse backend (sqlite backend: native Java bridge)",
   );
 
-  const { initDatabase, run } = require("../../../backend/utils/db");
+  const { initDatabase } = require("../../../backend/utils/db");
   await initDatabase();
   logger.info("[android] Database initialized via Java bridge");
-
-  try {
-    await run(
-      "DELETE FROM cookie WHERE name = 'user_agent' OR name = 'client_hints'",
-    );
-    logger.info(
-      "[android] Cleared stale User-Agent and Client Hints from database",
-    );
-  } catch (dbCleanupErr) {
-    logger.error(
-      "[android] Failed to clear stale cookies on startup: " +
-        dbCleanupErr.message,
-    );
-  }
 
   try {
     const proxyHeaders = require("../../../backend/utils/proxyHeaders");
@@ -341,7 +327,10 @@ async function boot() {
           global.pendingRequests.delete(requestId);
           callback(value);
         };
-        const reqTimeout = config.bridgeTimeout || 10000;
+        const requestedTimeout = Number(config.timeout) || 0;
+        const explicitBridgeTimeout = Number(config.bridgeTimeout) || 0;
+        const reqTimeout = explicitBridgeTimeout ||
+          (requestedTimeout ? requestedTimeout + 5000 : 10000);
         const timeout = setTimeout(() => {
           broadcast("native-cancel", { requestIds: [requestId] });
           finish(reject, new Error(`Native request timeout for ${config.url}`));
@@ -359,6 +348,7 @@ async function boot() {
           method: config.method || "GET",
           headers: config.headers || {},
           body: config.data || null,
+          bridgeTimeout: reqTimeout,
         });
       });
 
@@ -378,6 +368,15 @@ async function boot() {
         }
       });
     }
+
+    const isCloudflareProtectedUrl = (url) => {
+      try {
+        const host = new URL(url).hostname.toLowerCase();
+        return host.includes("animepahe") || host.includes("manhwatop");
+      } catch (_) {
+        return false;
+      }
+    };
 
     const nativeAxiosAdapter = async (config) => {
       if (
@@ -432,7 +431,9 @@ async function boot() {
             statusText: "",
             headers: parsedHeaders,
             config: config,
-            request: {},
+            request: {
+              responseUrl: res.finalUrl || config.url,
+            },
           };
 
           if (res.status >= 200 && res.status < 300) {
@@ -446,6 +447,9 @@ async function boot() {
             throw error;
           }
         } catch (err) {
+          // A protected host must keep the WebView TLS identity. Falling back
+          // to Node's HTTP stack repeats the request and creates another 403.
+          if (isCloudflareProtectedUrl(config.url)) throw err;
           try {
             return await defaultAdapter(config);
           } catch (fallbackErr) {
@@ -545,6 +549,7 @@ async function boot() {
       const ref = (refererStr || "").toLowerCase();
       return (
         url.includes("animepahe") ||
+        url.includes("manhwatop") ||
         url.includes("kwik.cx") ||
         url.includes("anikoto") ||
         url.includes("anineko") ||
@@ -653,15 +658,16 @@ async function boot() {
     }
 
     const bypassPromise = (async () => {
+      let previousClearance = null;
+      let previousSavedAt = 0;
       try {
-        await dbRun(
-          "DELETE FROM cookie WHERE id IN (?, ?) OR ((name IN ('cf_clearance', 'cf_user_agent') OR name LIKE 'sec-ch-ua%') AND LTRIM(?, '.') = LTRIM(domain, '.'))",
-          [`${domain}-cf_clearance`, `${domain}-cf-user-agent`, domain],
+        const previous = await queryOne(
+          "SELECT value, local_saved_at FROM cookie WHERE id = ? OR (name = 'cf_clearance' AND LTRIM(?, '.') = LTRIM(domain, '.')) ORDER BY CAST(expirationDate AS REAL) DESC LIMIT 1",
+          [`${domain}-cf_clearance`, domain],
         );
-        if (global.clearCookieCache) global.clearCookieCache(domain);
-      } catch (e) {
-        console.error("[main] Failed to clear stale cookies:", e.message);
-      }
+        previousClearance = previous?.value || null;
+        previousSavedAt = Number(previous?.local_saved_at) || 0;
+      } catch (_) {}
 
       const request = { url: targetUrl, userAgent, referer };
       pendingBypassRequest = request;
@@ -671,10 +677,14 @@ async function boot() {
         for (let i = 0; i < BYPASS_WAIT_SECONDS; i++) {
           await new Promise((resolve) => setTimeout(resolve, 1000));
           const row = await queryOne(
-            "SELECT value FROM cookie WHERE id = ? OR (name = 'cf_clearance' AND LTRIM(?, '.') = LTRIM(domain, '.')) ORDER BY CAST(expirationDate AS REAL) DESC LIMIT 1",
+            "SELECT value, local_saved_at FROM cookie WHERE id = ? OR (name = 'cf_clearance' AND LTRIM(?, '.') = LTRIM(domain, '.')) ORDER BY CAST(expirationDate AS REAL) DESC LIMIT 1",
             [`${domain}-cf_clearance`, domain],
           );
-          if (row?.value) {
+          const clearanceChanged =
+            row?.value &&
+            (row.value !== previousClearance ||
+              Number(row.local_saved_at) > previousSavedAt);
+          if (clearanceChanged) {
             bypassCooldowns.delete(domain);
             try {
               const proxyHeaders = require("../../../backend/utils/proxyHeaders");
@@ -1133,9 +1143,15 @@ async function boot() {
       const domain = normalizeHostname(
         new URL(targetUrl).hostname,
       ).toLowerCase();
+      const previous = await queryOne(
+        "SELECT value, local_saved_at FROM cookie WHERE id = ? OR (name = 'cf_clearance' AND LTRIM(?, '.') = LTRIM(domain, '.')) ORDER BY CAST(expirationDate AS REAL) DESC LIMIT 1",
+        [`${domain}-cf_clearance`, domain],
+      );
+      const previousValue = previous?.value || null;
+      const previousSavedAt = Number(previous?.local_saved_at) || 0;
       broadcast("cf-bypass-request", { url: targetUrl, referer, userAgent });
 
-      for (let i = 0; i < 15; i++) {
+      for (let i = 0; i < 30; i++) {
         await new Promise((resolve) => setTimeout(resolve, 1000));
         const row = await queryOne(
           "SELECT value, expirationDate, local_saved_at FROM cookie WHERE id = ? OR (name = 'cf_clearance' AND LTRIM(?, '.') = LTRIM(domain, '.')) ORDER BY CAST(expirationDate AS REAL) DESC LIMIT 1",
@@ -1144,6 +1160,8 @@ async function boot() {
         const now = Date.now();
         const isCurrent =
           row?.value &&
+          (row.value !== previousValue ||
+            Number(row.local_saved_at) > previousSavedAt) &&
           (Number(row.expirationDate) > now ||
             (Number(row.local_saved_at) > 0 &&
               now - Number(row.local_saved_at) < 2 * 60 * 60 * 1000));

@@ -93,6 +93,8 @@ contextBridge.exposeInMainWorld("sharedStateAPI", {
   selectDirectory: (currentPath) =>
     ipcRenderer.invoke("select-directory", currentPath),
   playInMpv: (options) => ipcRenderer.invoke("play-in-mpv", options),
+  getMpvStatus: () => ipcRenderer.invoke("mpv-status"),
+  killMpv: () => ipcRenderer.invoke("kill-mpv"),
   controlMpv: (command, args) =>
     ipcRenderer.invoke("control-mpv", command, args),
 });

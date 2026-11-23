@@ -1,5 +1,32 @@
 # Changelog
 
+# [12.1.8] - 2026-11-22
+
+### Android Reliability
+
+- **Cloudflare Sessions Stick:** Android now keeps and reuses the solved clearance cookie and matching browser identity, sends protected provider requests through the WebView's TLS identity, and waits for a newly solved challenge instead of repeating blocked requests.
+- **ManhwaTop Browsing:** Catalogue, search, details, chapters, and page images now use one protected request path without duplicate 403 retries.
+
+### Player & Downloads
+
+- **Seeking No Longer Stops MPV:** Skipping forward no longer freezes the player. Video requests are answered with the exact byte range the player asks for, so the seek succeeds instead of restarting the file from the beginning.
+- **Next Episode Actually Starts:** Automatic playback moves to the following episode and keeps going, and the player window now shows Stop and Restart controls plus the real reason when a stream cannot be opened.
+- **Every Subtitle Track Stays Visible:** Japanese, English and other subtitle tracks are all listed in the selector and ordered by your preferred language, on both desktop and Android, instead of being dropped or hidden.
+- **Language Choice in the Player:** Downloads ask for SUB or DUB only; provider languages such as Hindi stay switchable inside the player, where the track actually exists.
+- **PirateXPlay Hindi Audio:** PirateXPlay now exposes each available HLS audio language as its own source, including Hindi, with the language shown in the desktop and Android server lists.
+- **AniXoHindi Starts Faster:** Direct video downloads begin one continuous transfer immediately instead of spending time on range probes and multipart requests.
+
+### Catalog Performance
+
+- **Fewer Provider Requests:** Identical catalogue and detail requests are shared, safe metadata is cached between launches, and mapping updates continue from their last timestamp and row count even when a manual sync is forced.
+
+### Interface Polish
+
+- **No More Filters Button:** The Discover header's Filters button is gone; AniXo and AniXoHindi now show their own filters (type, status, language, sort) inline, under the catalogue.
+- **Real Quality Labels:** Sources list their actual resolution and server (for example "1080p · Server 1 (Sora Edge)") instead of three identical "default" entries.
+
+- Version bump to 12.1.8 (versionCode 40).
+
 # [12.1.7] - 2026-11-22
 
 ### Android Reliability

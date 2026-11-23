@@ -4,6 +4,7 @@ const http = require("node:http");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { Readable } = require("node:stream");
 const Module = require("node:module");
 
 // The backend's runtime deps live in electron/node_modules — electron-builder
@@ -19,7 +20,7 @@ Module._initPaths();
 
 const {
   downloader,
-  withRangeCacheBuster,
+  isAnixohindiDirectVideoUrl,
   decodeDataUrl,
 } = require("./downloader");
 
@@ -45,19 +46,16 @@ function listen(handler) {
   });
 }
 
-test("cache-busts AniXoHindi range requests without changing other hosts", () => {
-  const source =
-    "https://embed.anixohindi.cc/stream/v/token/part/play.mp4?md5=abc";
-  const first = new URL(withRangeCacheBuster(source));
-  const second = new URL(withRangeCacheBuster(source));
-
-  assert.equal(first.pathname, "/stream/v/token/part/play.mp4");
-  assert.equal(first.searchParams.get("md5"), "abc");
-  assert.ok(first.searchParams.get("cb"));
-  assert.notEqual(first.searchParams.get("cb"), second.searchParams.get("cb"));
+test("recognizes AniXoHindi direct video URLs", () => {
   assert.equal(
-    withRangeCacheBuster("https://example.com/video.mp4"),
-    "https://example.com/video.mp4",
+    isAnixohindiDirectVideoUrl(
+      "https://embed.anixohindi.cc/stream/v/token/part/play.mp4?md5=abc",
+    ),
+    true,
+  );
+  assert.equal(
+    isAnixohindiDirectVideoUrl("https://example.com/video.mp4"),
+    false,
   );
 });
 
@@ -79,6 +77,55 @@ test("rejects a ranged request the server answers with the whole file", async ()
     );
   } finally {
     server.close();
+  }
+});
+
+test("AniXoHindi direct video skips range probes and uses one stream", async () => {
+  const d = Object.create(downloader.prototype);
+  Object.assign(d, {
+    headers: {},
+    streamUrl:
+      "https://embed.anixohindi.cc/stream/v/token/part/play.mp4?md5=abc",
+    subtitles: [],
+    EpID: "ep-anixohindi",
+    caption: "Downloading AniXoHindi test",
+    currentSegments: 0,
+    totalSegments: 0,
+    downloadedTotalBytes: 0,
+    logProgress: () => {},
+    absorbResponseCookies: () => {},
+  });
+
+  let rangeCalls = 0;
+  let streamCalls = 0;
+  d.fetchDirectVideoRange = async () => {
+    rangeCalls++;
+    throw new Error("range requests must not be made");
+  };
+  d.fetchDirectVideoStream = async () => {
+    streamCalls++;
+    return {
+      status: 200,
+      headers: { "content-length": String(BODY.length) },
+      data: Readable.from([BODY]),
+    };
+  };
+
+  const directory = await fs.promises.mkdtemp(
+    path.join(os.tmpdir(), "strawverse-anixohindi-"),
+  );
+  try {
+    const targetFile = path.join(directory, "out.mp4");
+    await d.downloadDirectVideoMultiPart(
+      targetFile,
+      `${targetFile}.downloading`,
+      path.join(directory, ".temp_out"),
+    );
+    assert.equal(rangeCalls, 0);
+    assert.equal(streamCalls, 1);
+    assert.deepEqual(await fs.promises.readFile(targetFile), BODY);
+  } finally {
+    await fs.promises.rm(directory, { recursive: true, force: true });
   }
 });
 
