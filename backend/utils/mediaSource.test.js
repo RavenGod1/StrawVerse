@@ -4,6 +4,7 @@ const {
   normalizeSourceRequest,
   resolvePlaylistUri,
   hasMediaSources,
+  isDirectVideoUrl,
 } = require("./mediaSource");
 
 test("normalizeSourceRequest removes a category suffix from episode ids", () => {
@@ -32,6 +33,22 @@ test("hasMediaSources ignores empty provider results", () => {
   assert.strictEqual(hasMediaSources({ sources: [{ url: "https://cdn.test/a" }] }), true);
   assert.strictEqual(hasMediaSources({ dub: { sources: [{ url: "https://cdn.test/b" }] } }), true);
   assert.strictEqual(hasMediaSources({ hsub: [{ url: "https://cdn.test/c" }] }), true);
+});
+
+test("isDirectVideoUrl recognizes Abyss range-stream URLs", () => {
+  assert.strictEqual(
+    isDirectVideoUrl("https://weifxopsn26.sssrr.org/sora/708094739/token"),
+    true,
+  );
+  assert.strictEqual(
+    isDirectVideoUrl("https://cdn.example/video.mp4?token=abc"),
+    true,
+  );
+  assert.strictEqual(
+    isDirectVideoUrl("https://cdn.example/sora/708094739/token"),
+    false,
+  );
+  assert.strictEqual(isDirectVideoUrl("not a url"), false);
 });
 
 test("resolvePlaylistUri resolves root-relative HLS URIs from the origin", () => {

@@ -2662,7 +2662,9 @@ export default function Catalog({
         isFilterOpen={isFilterPanelOpen}
         onToggleFilter={() => setIsFilterPanelOpen((prev) => !prev)}
         activeFilterCount={activeFilterCount}
-        showFilterToggle={type !== "Movies" && provider === "mal"}
+        showFilterToggle={
+          type !== "Movies" && (provider === "mal" || provider === "provider")
+        }
         catalogSource={catalogSource}
         onCatalogSourceChange={handleCatalogSourceChange}
         availableProviders={providerMetadataList}
@@ -2889,10 +2891,10 @@ export default function Catalog({
       )}
 
       {/* Discover Provider-native filter panel: forwards filters to the
-          active provider extension (e.g. MangaKatana genre/status). It is
-          inline - the header "Filters" button was removed for extensions. */}
+          active provider extension (e.g. MangaKatana genre/status). */}
       {provider === "provider" &&
         type !== "Movies" &&
+        isFilterPanelOpen &&
         availableFilters && (
         <div className="filter-panel">
           <div className="filter-panel-header">

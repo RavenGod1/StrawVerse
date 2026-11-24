@@ -17,6 +17,19 @@ function resolvePlaylistUri(uri, playlistUrl) {
   }
 }
 
+function isDirectVideoUrl(url) {
+  try {
+    const parsed = new URL(url);
+    if (/\.(mp4|mkv|webm|mov|avi)$/i.test(parsed.pathname)) return true;
+    return (
+      /\.sssrr\.org$/i.test(parsed.hostname) &&
+      /^\/sora\/\d+\//.test(parsed.pathname)
+    );
+  } catch (_) {
+    return false;
+  }
+}
+
 function hasMediaSources(result) {
   if (!result) return false;
   if (Array.isArray(result)) return result.length > 0;
@@ -34,4 +47,9 @@ function hasMediaSources(result) {
   );
 }
 
-module.exports = { normalizeSourceRequest, resolvePlaylistUri, hasMediaSources };
+module.exports = {
+  normalizeSourceRequest,
+  resolvePlaylistUri,
+  hasMediaSources,
+  isDirectVideoUrl,
+};

@@ -42,7 +42,7 @@ const {
 const ImageCacheManager = require("../utils/ImageCacheManager");
 const { getHeaders } = require("../utils/proxyHeaders");
 const { isAdSegmentUrl } = require("../utils/adSegments");
-const { resolvePlaylistUri } = require("../utils/mediaSource");
+const { resolvePlaylistUri, isDirectVideoUrl } = require("../utils/mediaSource");
 const { pipeRangeSlice } = require("../utils/rangeSlice");
 const { getMangaAssetMimeType } = require("../utils/mangaAssets");
 const {
@@ -5570,9 +5570,7 @@ router.get(
         reqHeaders.Referer = customReferer;
       }
 
-      const isDirectVideo = Boolean(
-        url.split("?")[0].match(/\.(mp4|mkv|webm|mov|avi)$/i),
-      );
+      const isDirectVideo = isDirectVideoUrl(url);
 
       if (isDirectVideo) {
         if (req.headers.range) {

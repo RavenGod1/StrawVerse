@@ -1,5 +1,18 @@
 # Changelog
 
+# [12.1.9] - 2026-11-24
+
+### Provider Playback
+
+- **Anime World India Fallback:** Daemons of the Shadow Realm, Grand Blue Dreaming, TRIGUN STAMPEDE, and BLACK TORCH now resolve playable sources through Anime Salt when the primary catalogue has no episodes. BLACK TORCH uses its AbyssPlayer embeds with Hindi, English, and Japanese 1080p MP4 sources.
+- **Direct MP4 Range Streaming:** AbyssPlayer's extensionless `/sora/` media URLs are now streamed with exact byte ranges instead of buffering the whole video in memory.
+
+### Interface Polish
+
+- **Filters Button Returns:** Discover again shows a Filters button for extension providers, and the provider-native filters open and close from the header.
+
+- Version bump to 12.1.9 (versionCode 41).
+
 # [12.1.8] - 2026-11-22
 
 ### Android Reliability
