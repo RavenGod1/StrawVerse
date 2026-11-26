@@ -141,6 +141,7 @@ export default function VideoPlayer({
   onBack,
   malid,
   hideExit = false,
+  sourceHint = null,
   type: propType = "Anime",
 }) {
   const type =
@@ -1123,7 +1124,21 @@ export default function VideoPlayer({
       }
 
       if (fetchedSources.length > 0) {
+        // The Play button may have picked a server and a resolution.
+        const hinted = sourceHint
+          ? fetchedSources.find((s) => {
+              const quality = String(s.quality || "").trim();
+              const server = String(
+                s.server || s.provider || s.name || "",
+              ).trim();
+              return (
+                quality === String(sourceHint.quality || "").trim() &&
+                (!sourceHint.server || server === sourceHint.server)
+              );
+            })
+          : null;
         const preferred =
+          hinted ||
           fetchedSources.find((s) => s.quality === "1080p") ||
           fetchedSources.find((s) => s.quality === "720p") ||
           fetchedSources[0];
@@ -1159,7 +1174,7 @@ export default function VideoPlayer({
         abortControllerRef.current.abort();
       }
     };
-  }, [id, currentEpisode, isCurrentDownloaded, playerSubDub]);
+  }, [id, currentEpisode, isCurrentDownloaded, playerSubDub, sourceHint]);
 
   useEffect(() => {
     return () => {

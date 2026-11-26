@@ -38,6 +38,7 @@ import {
 import { getProxiedImageUrl } from "../utils/imageUrl";
 import { getDownloadProgress } from "../utils/downloadProgress";
 import { parseLangRequest, langRequest } from "../utils/otherLanguages";
+import { isMobileApp } from "../utils/nativeBridge";
 import Dropdown from "./common/Dropdown";
 import "./css/InfoView.css";
 
@@ -2439,72 +2440,259 @@ export default function InfoView({
     }
   `;
 
-  const handlePlayOthers = async (item) => {
-    const probeId = item?.id || item?.number;
-    setProbingOthersId(probeId);
-    try {
-      const languages = mergeOtherLanguages(
-        await fetchOtherLanguages(probeId),
+  const AMP = String.fromCharCode(38);
+  const escapeHtml = (value) =>
+    String(value ?? "")
+      .replace(/&/g, AMP + "amp;")
+      .replace(/</g, AMP + "lt;")
+      .replace(/>/g, AMP + "gt;")
+      .replace(/"/g, AMP + "quot;");
+
+
+  // One group of choices: pills while there are three or fewer, a drop-down
+  // when there are more.
+  const playOptionGroup = (kind, options, activeValue) => {
+    if (!options.length) return "";
+    if (options.length > 3) {
+      return `<select class="swal-opt-select" data-opt-kind="${kind}">${options
+        .map(
+          (opt) =>
+            `<option value="${escapeHtml(opt.value)}" ${
+              opt.value === activeValue ? "selected" : ""
+            }>${escapeHtml(opt.label)}</option>`,
+        )
+        .join("")}</select>`;
+    }
+    return `<div class="swal-pill-group">${options
+      .map(
+        (opt) =>
+          `<button type="button" class="swal-pill-btn ${
+            opt.value === activeValue ? "active" : ""
+          }" data-opt-kind="${kind}" data-value="${escapeHtml(opt.value)}">${escapeHtml(
+            opt.label,
+          )}</button>`,
+      )
+      .join("")}</div>`;
+  };
+
+  // The Play button of a multi-language provider: server, then language, then
+  // resolution.
+  const showPlayOptions = async (languages, item) => {
+    const serverNames = [];
+    languages.forEach((lang) =>
+      (lang.servers || []).forEach((server) => {
+        if (!serverNames.includes(server.name)) serverNames.push(server.name);
+      }),
+    );
+
+    const languagesFor = (serverName) =>
+      languages.filter((lang) =>
+        (lang.servers || []).some((server) => server.name === serverName),
       );
+
+    const resolutionsFor = (serverName, langKey) => {
+      const lang = languages.find((entry) => entry.key === langKey);
+      const server = (lang?.servers || []).find(
+        (entry) => entry.name === serverName,
+      );
+      return server?.resolutions || [];
+    };
+
+    const showServers = !isMobileApp();
+    const state = { server: serverNames[0] || "", lang: "", quality: "" };
+    state.lang = languagesFor(state.server)[0]?.key || languages[0]?.key || "";
+    state.quality = resolutionsFor(state.server, state.lang)[0] || "";
+
+    const serverOptions = () =>
+      serverNames.map((name) => ({ value: name, label: name }));
+    const languageOptions = () =>
+      (showServers ? languagesFor(state.server) : languages).map((lang) => ({
+        value: lang.key,
+        label: lang.label,
+      }));
+    const qualityOptions = () =>
+      resolutionsFor(state.server, state.lang).map((quality) => ({
+        value: quality,
+        label: quality || "Auto",
+      }));
+
+    const result = await Swal.fire({
+      title: `Play Episode ${item?.number ?? ""}`.trim(),
+      html: `
+        <style>
+          .swal2-html-container {
+            overflow: visible !important;
+            z-index: 20 !important;
+            text-align: left !important;
+          }
+          .swal2-popup {
+            overflow: visible !important;
+            border-radius: 12px !important;
+          }
+          .swal-opt-label {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-main, #ffffff);
+            margin: 14px 0 8px;
+          }
+          .swal-pill-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+          }
+          .swal-pill-btn {
+            flex: 1 1 auto;
+            min-width: 80px;
+            padding: 8px 12px;
+            border-radius: 8px;
+            border: 1px solid var(--border, rgba(255, 255, 255, 0.15));
+            background: var(--bg-tertiary, #222222);
+            color: var(--text-muted, #aaaaaa);
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+          }
+          .swal-pill-btn:hover {
+            background: var(--bg-hover, #333333);
+            color: var(--text-main, #ffffff);
+          }
+          .swal-pill-btn.active {
+            background: var(--accent, #e50914) !important;
+            border-color: var(--accent, #e50914) !important;
+            color: #ffffff !important;
+          }
+          .swal-opt-select {
+            width: 100%;
+            padding: 8px 10px;
+            border-radius: 8px;
+            border: 1px solid var(--border, rgba(255, 255, 255, 0.15));
+            background: var(--bg-tertiary, #222222);
+            color: var(--text-main, #ffffff);
+            font-size: 13px;
+          }
+        </style>
+        ${
+          showServers
+            ? `<div class="swal-opt-label">Server</div>
+               <div id="swal-opt-server">${playOptionGroup(
+                 "server",
+                 serverOptions(),
+                 state.server,
+               )}</div>`
+            : ""
+        }
+        <div class="swal-opt-label">Language</div>
+        <div id="swal-opt-lang">${playOptionGroup(
+          "lang",
+          languageOptions(),
+          state.lang,
+        )}</div>
+        ${
+          showServers
+            ? `<div class="swal-opt-label">Resolution</div>
+               <div id="swal-opt-quality">${playOptionGroup(
+                 "quality",
+                 qualityOptions(),
+                 state.quality,
+               )}</div>`
+            : ""
+        }
+      `,
+      showCancelButton: true,
+      confirmButtonText: "Play",
+      cancelButtonText: "Cancel",
+      background: "var(--bg-secondary)",
+      color: "var(--text-main)",
+      confirmButtonColor: "var(--accent)",
+      cancelButtonColor: "var(--bg-tertiary)",
+      didOpen: () => {
+        const popup = Swal.getHtmlContainer();
+        const rerender = () => {
+          const serverBox = popup.querySelector("#swal-opt-server");
+          if (serverBox) {
+            serverBox.innerHTML = playOptionGroup(
+              "server",
+              serverOptions(),
+              state.server,
+            );
+          }
+          const langBox = popup.querySelector("#swal-opt-lang");
+          if (langBox) {
+            langBox.innerHTML = playOptionGroup(
+              "lang",
+              languageOptions(),
+              state.lang,
+            );
+          }
+          const qualityBox = popup.querySelector("#swal-opt-quality");
+          if (qualityBox) {
+            qualityBox.innerHTML = playOptionGroup(
+              "quality",
+              qualityOptions(),
+              state.quality,
+            );
+          }
+        };
+        const apply = (kind, value) => {
+          if (kind === "server") {
+            state.server = value;
+            const langs = languagesFor(value);
+            if (!langs.some((lang) => lang.key === state.lang)) {
+              state.lang = langs[0]?.key || "";
+            }
+            state.quality = resolutionsFor(value, state.lang)[0] || "";
+          } else if (kind === "lang") {
+            state.lang = value;
+            state.quality = resolutionsFor(state.server, value)[0] || "";
+          } else if (kind === "quality") {
+            state.quality = value;
+          }
+          rerender();
+        };
+        popup.addEventListener("click", (event) => {
+          const button = event.target.closest?.("[data-opt-kind]");
+          if (!button) return;
+          apply(button.dataset.optKind, button.dataset.value);
+        });
+        popup.addEventListener("change", (event) => {
+          const select = event.target.closest?.("select[data-opt-kind]");
+          if (!select) return;
+          apply(select.dataset.optKind, select.value);
+        });
+      },
+      preConfirm: () => ({ ...state }),
+    });
+
+    return result?.value || null;
+  };
+
+  const handlePlayWithOptions = async (item) => {
+    setProbingOthersId(item?.id || item?.number);
+    try {
+      const data = await apiPost("/api/watch/options", {
+        ep: item?.id,
+        animeId: id,
+        provider: details?.provider,
+        type: type || "Anime",
+      });
+      const languages = Array.isArray(data?.languages) ? data.languages : [];
       if (!languages.length) {
         swalInfo(
-          "No Other Languages",
-          `This episode has no other language tracks on ${details?.provider || "this provider"}.`,
+          "No Sources Found",
+          `This episode has no playable sources on ${details?.provider || "this provider"}.`,
         );
         return;
       }
 
-      const langButtons = languages
-        .map((lang, idx) => {
-          const label = String(lang.label ?? "");
-          return `<button type="button" class="swal-other-lang-btn ${idx === 0 ? "active" : ""}" data-value="${encodeURIComponent(label)}">${label}</button>`;
-        })
-        .join("");
-
-      const result = await Swal.fire({
-        title: "Other Languages",
-        html: `
-          <style>${OTHER_LANG_PILL_STYLE}</style>
-          <div style="margin-bottom: 14px; font-size: 14px; color: var(--text-muted); line-height: 1.5; text-align: center;">
-            Pick a language for Episode <strong>${item?.number}</strong>. SUB and DUB stay as they are.
-          </div>
-          <div class="swal-other-lang-group">${langButtons}</div>
-        `,
-        showCancelButton: true,
-        confirmButtonText: "Play",
-        cancelButtonText: "Cancel",
-        background: "var(--bg-secondary)",
-        color: "var(--text-main)",
-        confirmButtonColor: "var(--accent)",
-        cancelButtonColor: "var(--bg-tertiary)",
-        didOpen: () => {
-          const popup = Swal.getHtmlContainer();
-          popup.querySelectorAll(".swal-other-lang-btn").forEach((btn) => {
-            btn.addEventListener("click", () => {
-              popup
-                .querySelectorAll(".swal-other-lang-btn")
-                .forEach((b) => b.classList.remove("active"));
-              btn.classList.add("active");
-            });
-          });
-        },
-        preConfirm: () => {
-          const popup = Swal.getHtmlContainer();
-          const raw = popup
-            .querySelector(".swal-other-lang-btn.active")
-            ?.getAttribute("data-value");
-          return raw ? decodeURIComponent(raw) : null;
-        },
-      });
-
-      const chosen = result?.value;
-      if (!chosen) return;
+      const choice = await showPlayOptions(languages, item);
+      if (!choice) return;
 
       onWatch(
         details?.id || id,
         item?.id,
         false,
-        langRequest(chosen),
+        choice.lang,
         episodesOrChapters,
         details?.DownloadedEpisodes,
         details?.title,
@@ -2512,10 +2700,11 @@ export default function InfoView({
         details?.image,
         undefined,
         item?.season || 1,
+        { server: choice.server, quality: choice.quality },
       );
     } catch (err) {
       console.error(err);
-      swalError("Error", err?.message || "Failed to load other languages.");
+      swalError("Error", err?.message || "Failed to load the playback options.");
     } finally {
       setProbingOthersId(null);
     }
@@ -5142,6 +5331,24 @@ export default function InfoView({
                                     <Play size={11} fill="currentColor" />
                                     <span>PLAY</span>
                                   </button>
+                                ) : providerHasOtherLanguages ? (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handlePlayWithOptions(item);
+                                    }}
+                                    className="badge-subdub sub"
+                                    title="Play (pick language, server and resolution)"
+                                    disabled={probingOthersId !== null}
+                                  >
+                                    <Play size={11} fill="currentColor" />
+                                    <span>
+                                      {probingOthersId ===
+                                      (item.id || item.number)
+                                        ? "CHECKING..."
+                                        : "PLAY"}
+                                    </span>
+                                  </button>
                                 ) : (
                                   itemLangs.map((langKey) => {
                                     let label = langKey.toUpperCase();
@@ -5186,25 +5393,6 @@ export default function InfoView({
                                       </button>
                                     );
                                   })
-                                )}
-                                {providerHasOtherLanguages && (
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handlePlayOthers(item);
-                                    }}
-                                    className="badge-subdub others"
-                                    title="Play in another language (Hindi, French, ...)"
-                                    disabled={probingOthersId !== null}
-                                  >
-                                    <Captions size={11} />
-                                    <span>
-                                      {probingOthersId ===
-                                      (item.id || item.number)
-                                        ? "CHECKING..."
-                                        : "OTHERS"}
-                                    </span>
-                                  </button>
                                 )}
                                 <button
                                   onClick={(e) => {

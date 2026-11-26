@@ -3000,8 +3000,9 @@ export default function SettingsView({
                       Other Languages (Others)
                     </div>
                     <div className="settings-row-hint">
-                      Show the OTHERS button for providers that offer extra
-                      languages (Hindi, French, Spanish, ...) next to SUB/DUB.
+                      Use the single PLAY button (language, server and
+                      resolution) for providers that offer extra languages
+                      (Hindi, French, Spanish, ...) instead of SUB/DUB.
                     </div>
                   </div>
                   <div className="settings-row-control">

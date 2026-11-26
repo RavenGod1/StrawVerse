@@ -27,6 +27,7 @@ export default function VideoPlayer({
   onBack,
   playerSubDub = "sub",
   subdub,
+  sourceHint = null,
   type: propType = "Anime",
 }) {
   const type =
@@ -392,6 +393,7 @@ export default function VideoPlayer({
             provider: provider,
             malid: type === "Movies" ? null : malid,
             subdub: subdub || playerSubDub,
+            sourceHint: sourceHint || undefined,
             episodes: sortedEpisodes,
             hasNext,
             hasPrev,

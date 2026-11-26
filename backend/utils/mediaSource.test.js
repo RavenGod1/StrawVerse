@@ -10,6 +10,7 @@ const {
   sourceLangLabel,
   filterSourcesByLang,
   collectOtherLanguages,
+  collectPlaybackOptions,
   providerDeclaresOtherLanguages,
 } = require("./mediaSource");
 
@@ -33,6 +34,34 @@ test("providerDeclaresOtherLanguages reads the extension statuses", () => {
   assert.strictEqual(providerDeclaresOtherLanguages(["English"]), false);
   assert.strictEqual(providerDeclaresOtherLanguages([]), false);
   assert.strictEqual(providerDeclaresOtherLanguages(undefined), false);
+});
+
+test("collectPlaybackOptions lists language, server and resolution", () => {
+  const options = collectPlaybackOptions({
+    sources: [
+      { url: "a", quality: "1080p", name: "Anime Salt Abyss (Hindi)", lang: "Hindi" },
+      { url: "b", quality: "720p", name: "Anime Salt Abyss (Hindi)", lang: "Hindi" },
+      { url: "c", quality: "1080p", name: "PirateXPlay English", server: "PirateXPlay", type: "dub" },
+      { url: "d", quality: "720p", name: "Anime Salt Abyss HLS (SUB)", type: "sub" },
+    ],
+  });
+  const byKey = new Map(options.languages.map((lang) => [lang.key, lang]));
+  // A source that names its language belongs to that language only, a source
+  // without one belongs to the app's own version.
+  assert.ok(byKey.has("lang:Hindi"));
+  assert.ok(byKey.has("dub"));
+  assert.ok(byKey.has("sub"));
+  assert.deepStrictEqual(byKey.get("lang:Hindi").servers, [
+    { name: "Anime Salt Abyss (Hindi)", resolutions: ["1080p", "720p"] },
+  ]);
+  assert.deepStrictEqual(byKey.get("dub").servers, [
+    { name: "PirateXPlay", resolutions: ["1080p"] },
+  ]);
+  assert.deepStrictEqual(byKey.get("sub").servers, [
+    { name: "Anime Salt Abyss HLS (SUB)", resolutions: ["720p"] },
+  ]);
+  // A provider without sources offers nothing.
+  assert.deepStrictEqual(collectPlaybackOptions({}).languages, []);
 });
 
 test("normalizeSourceRequest removes a category suffix from episode ids", () => {

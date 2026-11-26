@@ -49,6 +49,7 @@ const {
   stripCategorySuffix,
   filterSourcesByLang,
   collectOtherLanguages,
+  collectPlaybackOptions,
   providerDeclaresOtherLanguages,
 } = require("../utils/mediaSource");
 const { pipeRangeSlice } = require("../utils/rangeSlice");
@@ -4926,6 +4927,27 @@ router.post("/api/watch/languages", async (req, res) => {
     return res.json({ languages: collectOtherLanguages(sourcesArray) });
   } catch (err) {
     logger.error(`Error fetching other languages: ${err.message}`);
+    return res.status(200).json({ languages: [] });
+  }
+});
+
+// What the Play button offers: language, server and resolution per language
+router.post("/api/watch/options", async (req, res) => {
+  const { ep, provider = null, type } = req.body || {};
+  try {
+    if (!ep) throw new Error("Episode ID Not Found");
+    const isMovieProv = isMovieProvider(provider);
+    const mediaType = type === "Movies" || isMovieProv ? "Movies" : "Anime";
+    const safeProvider = mediaType === "Movies" && !isMovieProv ? null : provider;
+    const Animeprovider = await providerFetch(mediaType, safeProvider);
+    const sourceEpisodeId = stripCategorySuffix(ep);
+    const sourcesArray =
+      mediaType === "Movies"
+        ? await fetchMovieSources(Animeprovider, sourceEpisodeId, null)
+        : await fetchEpisodeSources(Animeprovider, sourceEpisodeId, null);
+    return res.json(collectPlaybackOptions(sourcesArray));
+  } catch (err) {
+    logger.error(`Error fetching playback options: ${err.message}`);
     return res.status(200).json({ languages: [] });
   }
 });

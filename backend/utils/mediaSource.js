@@ -247,6 +247,70 @@ function collectOtherLanguages(sourcesArray) {
   return [...found.values()];
 }
 
+// The app's own version of a source: sub / dub / hsub.
+function sourceVersion(source) {
+  const quality = String(source?.quality || "").toLowerCase();
+  if (
+    source?.isHsub ||
+    source?.type === "hsub" ||
+    quality.includes("hsub")
+  ) {
+    return "hsub";
+  }
+  if (source?.isDub || source?.type === "dub" || quality.includes("dub")) {
+    return "dub";
+  }
+  return "sub";
+}
+
+// What the Play button offers: the languages (the app's own versions plus the
+// provider's other languages) with the servers and resolutions each one has.
+function collectPlaybackOptions(sourcesArray) {
+  const groups =
+    sourcesArray && typeof sourcesArray === "object" ? sourcesArray : {};
+  const sources = [
+    ...(Array.isArray(groups.sources) ? groups.sources : []),
+    ...(Array.isArray(groups.sub?.sources) ? groups.sub.sources : []),
+    ...(Array.isArray(groups.dub?.sources) ? groups.dub.sources : []),
+    ...(Array.isArray(groups.hsub?.sources) ? groups.hsub.sources : []),
+  ];
+
+  const byKey = new Map();
+  for (const source of sources) {
+    const server = String(
+      source?.server || source?.provider || source?.name || "Auto",
+    ).trim();
+    const quality = String(source?.quality || "").trim();
+    const lang = sourceLangLabel(source);
+    // A source that names its language belongs to that language only, a source
+    // without one belongs to the app's own version (SUB / DUB / HSUB).
+    const key = lang ? `lang:${lang}` : sourceVersion(source);
+    const label = lang || key.toUpperCase();
+
+    const entry = byKey.get(key) || { key, label, servers: new Map() };
+    const serverEntry = entry.servers.get(server) || {
+      name: server,
+      resolutions: [],
+    };
+    if (!serverEntry.resolutions.includes(quality)) {
+      serverEntry.resolutions.push(quality);
+    }
+    entry.servers.set(server, serverEntry);
+    byKey.set(key, entry);
+  }
+
+  return {
+    languages: [...byKey.values()].map((entry) => ({
+      key: entry.key,
+      label: entry.label,
+      servers: [...entry.servers.values()].map((server) => ({
+        name: server.name,
+        resolutions: server.resolutions,
+      })),
+    })),
+  };
+}
+
 // Does the extension declare languages beyond SUB/DUB? The statuses are the
 // ones the provider publishes ("Multi Audio", "Hindi Dub", "Sub & Dub", ...).
 function providerDeclaresOtherLanguages(statuses) {
@@ -322,5 +386,6 @@ module.exports = {
   subtitleMatchesLang,
   filterSourcesByLang,
   collectOtherLanguages,
+  collectPlaybackOptions,
   providerDeclaresOtherLanguages,
 };

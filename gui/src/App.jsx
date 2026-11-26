@@ -718,6 +718,7 @@ export default function App() {
               image,
               malid,
               season,
+              sourceHint,
             ) => {
               setHistory((prev) =>
                 prev.map((item, idx) => {
@@ -769,6 +770,7 @@ export default function App() {
                 malid,
                 type: detectedType,
                 season: season || 1,
+                sourceHint: sourceHint || null,
               });
             }}
             onRead={(
@@ -916,6 +918,7 @@ export default function App() {
             season={activePlayerParams.season}
             isDownloaded={activePlayerParams.isDownloaded}
             subdub={activePlayerParams.subdub}
+            sourceHint={activePlayerParams.sourceHint}
             episodesList={activePlayerParams.episodesList || []}
             downloadedEpisodes={activePlayerParams.downloadedEpisodes}
             animeTitle={activePlayerParams.animeTitle || ""}

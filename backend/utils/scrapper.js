@@ -924,7 +924,11 @@ global.cloudflarebypass = async (targetUrl, force = false, referer = null) => {
           )?.value || null;
       } catch (_) {}
 
-      for (let i = 0; i < 60; i++) {
+      // A challenge that Cloudflare accepts clears in a few seconds. 30
+      // seconds is enough; waiting longer only leaves a stuck "Verifying..."
+      // window on screen.
+      let stuckRounds = 0;
+      for (let i = 0; i < 30; i++) {
         const sessionCookies =
           await global.ScrapperWindow.webContents.session.cookies.get({});
         const clearanceCookie = sessionCookies.find(
@@ -979,6 +983,7 @@ global.cloudflarebypass = async (targetUrl, force = false, referer = null) => {
         const isExtLoaded = isPageLoadedForDomain(domain, title, html);
 
         if (!isChallenge && !isHttpBlocked) {
+          stuckRounds = 0;
           if (hasFreshClearance || clearanceCookie) {
             console.log(
               `[Bypass] Solved challenge and obtained cf_clearance for ${domain}: "${title}"`,
@@ -1011,6 +1016,17 @@ global.cloudflarebypass = async (targetUrl, force = false, referer = null) => {
           if (pageLooksLikeError(title, html, domain) && i >= 5) {
             console.warn(
               `[Bypass] Non-challenge error encountered on ${navUrl} ("${title}"). Aborting bypass.`,
+            );
+            break;
+          }
+        } else {
+          // The challenge page is still up and the last response was a
+          // block. Cloudflare reloads its check in a loop when it does not
+          // accept the browser, so stop early instead of waiting it out.
+          stuckRounds += 1;
+          if (stuckRounds >= 20) {
+            console.warn(
+              `[Bypass] Cloudflare check for ${domain} is looping (${stuckRounds}s, status ${global.LastScrapperResponseCode}). The embedded browser was not accepted - this site usually needs a real browser. Aborting bypass.`,
             );
             break;
           }
@@ -1061,7 +1077,7 @@ global.cloudflarebypass = async (targetUrl, force = false, referer = null) => {
       } else {
         bypassCooldowns[domain] = Date.now() + 15 * 1000;
         console.warn(
-          `[Bypass] Failed to solve challenge for ${domain}. Cooldown set for 15s.`,
+          `[Bypass] Failed to solve challenge for ${domain} (title: "${title}", status ${global.LastScrapperResponseCode}, clearance: ${gotClearance ? "yes" : "no"}). The app's embedded browser was not accepted by Cloudflare - this site usually needs a real browser. Cooldown set for 15s.`,
         );
         if (global.ScrapperWindow && !global.ScrapperWindow.isDestroyed()) {
           global.ScrapperWindow.loadURL("about:blank").catch(() => {});

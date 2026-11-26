@@ -1,5 +1,19 @@
 # Changelog
 
+# [12.1.13] - 2026-11-26
+
+### Play Button
+
+- **One PLAY Button for Multi-Audio Providers:** When a provider offers more than SUB/DUB (Anime World India, PirateXPlay, AniXoHindi), the episode row now shows a single **PLAY** button instead of SUB, DUB and OTHERS. It opens a chooser with the server, then the language (SUB, DUB, Hindi, ...), then the resolution. A group with more than three entries becomes a drop-down instead of buttons.
+- **The Choice Is Used:** The language, server and resolution that were picked are the ones the player starts with.
+- On Android the chooser only asks for the language, because the Android player already has its own "Select Server / Quality" picker.
+
+### Fixes
+
+- **Cloudflare Verification No Longer Hangs:** When Cloudflare's check does not accept the app's embedded browser, the verification now stops after 20 seconds with a log line that says what happened, instead of leaving a stuck "Verifying..." window on screen for a minute. Cloudflare accepts a real browser but not the embedded one on some sites (animepahe.pw), and no app setting can change that.
+
+- Version bump to 12.1.13 (versionCode 45).
+
 # [12.1.12] - 2026-11-26
 
 ### Other Languages
