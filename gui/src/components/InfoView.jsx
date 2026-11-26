@@ -2381,6 +2381,32 @@ export default function InfoView({
     return Array.isArray(data?.languages) ? data.languages : [];
   };
 
+  // Languages the extension declares for this title ("Hindi", ...) merged with
+  // what the episode probe found - the picker must never offer an empty list
+  // for a provider that says it has other languages.
+  const declaredOtherLanguages = useMemo(() => {
+    const list = Array.isArray(details?.otherLanguages)
+      ? details.otherLanguages
+      : [];
+    return list.map((label) => String(label || "").trim()).filter(Boolean);
+  }, [details]);
+
+  const mergeOtherLanguages = (probed) => {
+    const merged = new Map();
+    for (const item of Array.isArray(probed) ? probed : []) {
+      const label = String(item?.label ?? "").trim();
+      if (!label) continue;
+      merged.set(label.toLowerCase(), { ...item, label });
+    }
+    for (const label of declaredOtherLanguages) {
+      const key = label.toLowerCase();
+      if (!merged.has(key)) {
+        merged.set(key, { key, label, sources: 0, subtitles: 0 });
+      }
+    }
+    return [...merged.values()];
+  };
+
   const OTHER_LANG_PILL_STYLE = `
     .swal-other-lang-btn {
       flex: 1 1 auto;
@@ -2417,7 +2443,9 @@ export default function InfoView({
     const probeId = item?.id || item?.number;
     setProbingOthersId(probeId);
     try {
-      const languages = await fetchOtherLanguages(probeId);
+      const languages = mergeOtherLanguages(
+        await fetchOtherLanguages(probeId),
+      );
       if (!languages.length) {
         swalInfo(
           "No Other Languages",
@@ -2608,10 +2636,10 @@ export default function InfoView({
             }
           } catch (_) {}
 
-          if (othersEnabled) {
+          if (othersEnabled && providerHasOtherLanguages) {
             try {
-              otherLanguages = await fetchOtherLanguages(
-                probeEp.id || probeEp.number,
+              otherLanguages = mergeOtherLanguages(
+                await fetchOtherLanguages(probeEp.id || probeEp.number),
               );
             } catch (_) {}
           }

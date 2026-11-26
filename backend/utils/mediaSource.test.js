@@ -10,7 +10,30 @@ const {
   sourceLangLabel,
   filterSourcesByLang,
   collectOtherLanguages,
+  providerDeclaresOtherLanguages,
 } = require("./mediaSource");
+
+test("providerDeclaresOtherLanguages reads the extension statuses", () => {
+  // "Multi Audio" and a named language mean the provider has more than SUB/DUB.
+  assert.strictEqual(
+    providerDeclaresOtherLanguages(["Multi Audio", "HLS"]),
+    true,
+  );
+  assert.strictEqual(providerDeclaresOtherLanguages(["Hindi Dub"]), true);
+  assert.strictEqual(providerDeclaresOtherLanguages(["French"]), true);
+  // Sub/Dub-only providers never show the OTHERS button.
+  assert.strictEqual(
+    providerDeclaresOtherLanguages(["Sub & Dub", "HLS"]),
+    false,
+  );
+  assert.strictEqual(
+    providerDeclaresOtherLanguages(["Sub & Dub", "Hardsub"]),
+    false,
+  );
+  assert.strictEqual(providerDeclaresOtherLanguages(["English"]), false);
+  assert.strictEqual(providerDeclaresOtherLanguages([]), false);
+  assert.strictEqual(providerDeclaresOtherLanguages(undefined), false);
+});
 
 test("normalizeSourceRequest removes a category suffix from episode ids", () => {
   assert.deepStrictEqual(

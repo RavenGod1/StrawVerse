@@ -49,6 +49,7 @@ const {
   stripCategorySuffix,
   filterSourcesByLang,
   collectOtherLanguages,
+  providerDeclaresOtherLanguages,
 } = require("../utils/mediaSource");
 const { pipeRangeSlice } = require("../utils/rangeSlice");
 const { getMangaAssetMimeType } = require("../utils/mangaAssets");
@@ -2946,6 +2947,15 @@ router.post(
                   `Failed to update local metadata for Anime ${id}: ${dbErr.message}`,
                 );
               }
+            }
+            // The OTHERS picker shows only when the extension declares
+            // languages beyond SUB/DUB ("Multi Audio", "Hindi Dub", ...).
+            // The provider's statuses win, the title's own list may add more.
+            if (providerDeclaresOtherLanguages(Animeprovider?.statuses)) {
+              data.hasOtherLanguages = true;
+            }
+            if (!Array.isArray(data.otherLanguages)) {
+              data.otherLanguages = [];
             }
             data.provider = Animeprovider.provider_name;
 

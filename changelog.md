@@ -1,5 +1,14 @@
 # Changelog
 
+# [12.1.12] - 2026-11-26
+
+### Other Languages
+
+- **OTHERS Button Needs a Provider That Has Them:** The OTHERS button now appears only when the extension itself declares extra languages ("Multi Audio", or a named language such as AniXoHindi's "Hindi Dub"). Providers that only do SUB/DUB never show it.
+- **Declared Languages Show Up:** A provider that says it has another language offers it in the picker, even when the episode probe does not find a track for it.
+
+- Version bump to 12.1.12 (versionCode 44).
+
 # [12.1.11] - 2026-11-26
 
 ### Player & Settings

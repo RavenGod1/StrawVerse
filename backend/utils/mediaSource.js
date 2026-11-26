@@ -247,6 +247,23 @@ function collectOtherLanguages(sourcesArray) {
   return [...found.values()];
 }
 
+// Does the extension declare languages beyond SUB/DUB? The statuses are the
+// ones the provider publishes ("Multi Audio", "Hindi Dub", "Sub & Dub", ...).
+function providerDeclaresOtherLanguages(statuses) {
+  const list = Array.isArray(statuses) ? statuses : [statuses];
+  for (const status of list) {
+    const key = normalizeLangKey(status);
+    if (!key) continue;
+    // "Multi Audio" / "Multi Language"
+    if (/\bmulti\b/.test(key)) return true;
+    // "Hindi Dub", "French", ... - a named language is not the app's own dub.
+    for (const token of key.split(/\s+/)) {
+      if (LANGUAGE_LABELS.has(token)) return true;
+    }
+  }
+  return false;
+}
+
 function resolvePlaylistUri(uri, playlistUrl) {
   try {
     return new URL(uri, playlistUrl).href;
@@ -305,4 +322,5 @@ module.exports = {
   subtitleMatchesLang,
   filterSourcesByLang,
   collectOtherLanguages,
+  providerDeclaresOtherLanguages,
 };
