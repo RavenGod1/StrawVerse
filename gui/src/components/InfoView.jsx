@@ -37,6 +37,7 @@ import {
 } from "../utils/mediaBadges";
 import { getProxiedImageUrl } from "../utils/imageUrl";
 import { getDownloadProgress } from "../utils/downloadProgress";
+import { parseLangRequest, langRequest } from "../utils/otherLanguages";
 import Dropdown from "./common/Dropdown";
 import "./css/InfoView.css";
 
@@ -145,6 +146,25 @@ export default function InfoView({
     };
   }, [type, msShowKey, details?.title]);
 
+  // The "Others" (other languages) picker is optional - the user can turn it
+  // off in Settings. Off means no OTHERS button and no others download.
+  const [othersEnabled, setOthersEnabled] = useState(true);
+  useEffect(() => {
+    if (!window.sharedStateAPI?.getSettings) return;
+    let cancelled = false;
+    window.sharedStateAPI
+      .getSettings(["enableOtherLanguages"])
+      .then((res) => {
+        if (cancelled) return;
+        const val = res?.settings?.enableOtherLanguages;
+        if (val !== undefined) setOthersEnabled(Boolean(val));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const saveMsShow = async (next) => {
     const merged = { ...msShow, ...next };
     setMsShow(merged);
@@ -168,6 +188,7 @@ export default function InfoView({
   const [isSearchingMapping, setIsSearchingMapping] = useState(false);
   const [isLinkingMapping, setIsLinkingMapping] = useState(false);
   const [probingDownloadId, setProbingDownloadId] = useState(null);
+  const [probingOthersId, setProbingOthersId] = useState(null);
 
   const handleMappingSearch = async (overrideQuery) => {
     if (type === "Movies") return;
@@ -382,6 +403,12 @@ export default function InfoView({
         : type === "Movies"
           ? "Movies"
           : "Anime";
+
+      // An "others" session starts on that language's subtitle track.
+      const { lang: requestedLang } = parseLangRequest(subdub);
+      if (requestedLang) {
+        currentPreferredSubLangs = [requestedLang, ...currentPreferredSubLangs];
+      }
 
       window.Capacitor.Plugins.CloudflareBypass.playVideo({
         type: finalType,
@@ -1811,6 +1838,12 @@ export default function InfoView({
   const detailHasDub = details?.hasDub;
   const detailHasHsub = details?.hasHsub;
   const detailSubOrDub = details?.subOrDub;
+  // The provider opts into the "Others" picker per title (extensions declare
+  // hasOtherLanguages). Without that flag the button is not shown at all.
+  const providerHasOtherLanguages =
+    type === "Anime" &&
+    othersEnabled &&
+    Boolean(details?.hasOtherLanguages);
   const providerLangs = [];
   if (type === "Anime") {
     const merged = new Set();
@@ -2335,6 +2368,131 @@ export default function InfoView({
     }
   }, [autoPlay, loading, itemsLoading, historyLoading, isCaughtUp]);
 
+  // Other languages (Hindi, French, ...) a provider offers for one episode.
+  // They live next to SUB/DUB but never replace them: the player gets its own
+  // language, the app's SUB/DUB choice stays untouched.
+  const fetchOtherLanguages = async (epId) => {
+    const data = await apiPost("/api/watch/languages", {
+      ep: epId,
+      animeId: id,
+      provider: details?.provider,
+      type: type || "Anime",
+    });
+    return Array.isArray(data?.languages) ? data.languages : [];
+  };
+
+  const OTHER_LANG_PILL_STYLE = `
+    .swal-other-lang-btn {
+      flex: 1 1 auto;
+      min-width: 90px;
+      padding: 8px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--border, rgba(255, 255, 255, 0.15));
+      background: var(--bg-tertiary, #222222);
+      color: var(--text-muted, #aaaaaa);
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      text-align: center;
+      transition: all 0.2s ease;
+    }
+    .swal-other-lang-btn:hover {
+      background: var(--bg-hover, #333333);
+      color: var(--text-main, #ffffff);
+    }
+    .swal-other-lang-btn.active {
+      background: var(--accent, #e50914) !important;
+      border-color: var(--accent, #e50914) !important;
+      color: #ffffff !important;
+    }
+    .swal-other-lang-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: center;
+    }
+  `;
+
+  const handlePlayOthers = async (item) => {
+    const probeId = item?.id || item?.number;
+    setProbingOthersId(probeId);
+    try {
+      const languages = await fetchOtherLanguages(probeId);
+      if (!languages.length) {
+        swalInfo(
+          "No Other Languages",
+          `This episode has no other language tracks on ${details?.provider || "this provider"}.`,
+        );
+        return;
+      }
+
+      const langButtons = languages
+        .map((lang, idx) => {
+          const label = String(lang.label ?? "");
+          return `<button type="button" class="swal-other-lang-btn ${idx === 0 ? "active" : ""}" data-value="${encodeURIComponent(label)}">${label}</button>`;
+        })
+        .join("");
+
+      const result = await Swal.fire({
+        title: "Other Languages",
+        html: `
+          <style>${OTHER_LANG_PILL_STYLE}</style>
+          <div style="margin-bottom: 14px; font-size: 14px; color: var(--text-muted); line-height: 1.5; text-align: center;">
+            Pick a language for Episode <strong>${item?.number}</strong>. SUB and DUB stay as they are.
+          </div>
+          <div class="swal-other-lang-group">${langButtons}</div>
+        `,
+        showCancelButton: true,
+        confirmButtonText: "Play",
+        cancelButtonText: "Cancel",
+        background: "var(--bg-secondary)",
+        color: "var(--text-main)",
+        confirmButtonColor: "var(--accent)",
+        cancelButtonColor: "var(--bg-tertiary)",
+        didOpen: () => {
+          const popup = Swal.getHtmlContainer();
+          popup.querySelectorAll(".swal-other-lang-btn").forEach((btn) => {
+            btn.addEventListener("click", () => {
+              popup
+                .querySelectorAll(".swal-other-lang-btn")
+                .forEach((b) => b.classList.remove("active"));
+              btn.classList.add("active");
+            });
+          });
+        },
+        preConfirm: () => {
+          const popup = Swal.getHtmlContainer();
+          const raw = popup
+            .querySelector(".swal-other-lang-btn.active")
+            ?.getAttribute("data-value");
+          return raw ? decodeURIComponent(raw) : null;
+        },
+      });
+
+      const chosen = result?.value;
+      if (!chosen) return;
+
+      onWatch(
+        details?.id || id,
+        item?.id,
+        false,
+        langRequest(chosen),
+        episodesOrChapters,
+        details?.DownloadedEpisodes,
+        details?.title,
+        details?.provider,
+        details?.image,
+        undefined,
+        item?.season || 1,
+      );
+    } catch (err) {
+      console.error(err);
+      swalError("Error", err?.message || "Failed to load other languages.");
+    } finally {
+      setProbingOthersId(null);
+    }
+  };
+
   // Download Trigger
   const handleDownload = async (singleItem = null) => {
     const probeId = singleItem ? singleItem.id || singleItem.number : "bulk";
@@ -2370,9 +2528,9 @@ export default function InfoView({
           });
         });
         if (availableLangs.length === 0) availableLangs.push("sub");
-        // Downloads only offer the app's standard versions (sub/dub); a
-        // provider-specific name like "Hindi" is not a separate download
-        // choice - the language stays switchable inside the player.
+        // The app's own versions (sub/dub) are the normal download choices;
+        // provider languages like "Hindi" live behind the OTHERS button so
+        // they never replace SUB/DUB.
         const downloadLangs = availableLangs.filter(
           (lang) => lang === "sub" || lang === "dub",
         );
@@ -2390,9 +2548,12 @@ export default function InfoView({
           }
         } catch (_) {}
 
-        // Probe first episode for available qualities
+        // Probe first episode for available qualities and other languages.
+        // "all" asks the provider for every track it has, so a language the
+        // provider adds later shows up here too.
         const probeEp = singleItem || targetEpisodes[0];
         let availableQualities = [];
+        let otherLanguages = [];
         if (probeEp?.id) {
           try {
             const probeController = new AbortController();
@@ -2406,6 +2567,7 @@ export default function InfoView({
                 Downloaded: false,
                 provider: details?.provider,
                 type: type || "Anime",
+                subdub: "all",
               },
               { signal: probeController.signal },
             );
@@ -2445,6 +2607,14 @@ export default function InfoView({
               });
             }
           } catch (_) {}
+
+          if (othersEnabled) {
+            try {
+              otherLanguages = await fetchOtherLanguages(
+                probeEp.id || probeEp.number,
+              );
+            } catch (_) {}
+          }
         }
 
         if (availableQualities.length === 0) {
@@ -2510,6 +2680,7 @@ export default function InfoView({
                 color: #ffffff !important;
                 box-shadow: 0 2px 10px rgba(229, 9, 20, 0.4);
               }
+              ${OTHER_LANG_PILL_STYLE}
             </style>
             <div style="margin-bottom: 16px; font-size: 14px; color: var(--text-muted); line-height: 1.5; text-align: center;">
               ${
@@ -2519,7 +2690,7 @@ export default function InfoView({
               }
             </div>
             ${
-              type === "Anime" && showLanguageChoice
+              type === "Anime" && (showLanguageChoice || otherLanguages.length > 0)
                 ? `
               <div class="swal-dl-section-label">Language Version</div>
               <div class="swal-pill-group" id="swal-lang-pills">
@@ -2532,7 +2703,24 @@ export default function InfoView({
                 `,
                   )
                   .join("")}
+                ${
+                  otherLanguages.length > 0
+                    ? `<button type="button" class="swal-pill-btn swal-others-btn" data-value="others">OTHERS</button>`
+                    : ""
+                }
               </div>
+              ${
+                otherLanguages.length > 0
+                  ? `<div class="swal-pill-group swal-other-lang-group" id="swal-other-langs" style="display: none; margin-top: -8px;">
+                      ${otherLanguages
+                        .map(
+                          (lang) => `
+                        <button type="button" class="swal-pill-btn swal-other-lang-btn" data-value="${encodeURIComponent(lang.label)}">${lang.label}</button>`,
+                        )
+                        .join("")}
+                    </div>`
+                  : ""
+              }
             `
                 : ""
             }
@@ -2575,12 +2763,49 @@ export default function InfoView({
           didOpen: () => {
             const popup = Swal.getHtmlContainer();
             const langBtns = popup.querySelectorAll(".swal-lang-btn");
+            const otherBtns = popup.querySelectorAll(".swal-other-lang-btn");
+            const othersToggle = popup.querySelector(".swal-others-btn");
+            const otherGroup = popup.querySelector("#swal-other-langs");
+            const clearActive = (nodes) =>
+              nodes.forEach((b) => b.classList.remove("active"));
+
             langBtns.forEach((btn) => {
               btn.addEventListener("click", () => {
-                langBtns.forEach((b) => b.classList.remove("active"));
+                clearActive(langBtns);
+                clearActive(otherBtns);
                 btn.classList.add("active");
+                if (othersToggle) othersToggle.classList.remove("active");
+                if (otherGroup) otherGroup.style.display = "none";
               });
             });
+
+            otherBtns.forEach((btn) => {
+              btn.addEventListener("click", () => {
+                clearActive(langBtns);
+                clearActive(otherBtns);
+                btn.classList.add("active");
+                if (othersToggle) othersToggle.classList.add("active");
+              });
+            });
+
+            if (othersToggle && otherGroup) {
+              othersToggle.addEventListener("click", () => {
+                if (otherGroup.style.display !== "none") {
+                  otherGroup.style.display = "none";
+                  othersToggle.classList.remove("active");
+                  clearActive(otherBtns);
+                  const first = langBtns[0];
+                  if (first) first.classList.add("active");
+                  return;
+                }
+                otherGroup.style.display = "flex";
+                othersToggle.classList.add("active");
+                clearActive(langBtns);
+                clearActive(otherBtns);
+                if (otherBtns[0]) otherBtns[0].classList.add("active");
+              });
+            }
+
             const qualBtns = popup.querySelectorAll(".swal-quality-btn");
             qualBtns.forEach((btn) => {
               btn.addEventListener("click", () => {
@@ -2592,15 +2817,24 @@ export default function InfoView({
           preConfirm: () => {
             const popup = Swal.getHtmlContainer();
             const activeLangBtn = popup.querySelector(".swal-lang-btn.active");
+            const activeOtherBtn = popup.querySelector(
+              ".swal-other-lang-btn.active",
+            );
             const activeQualBtn = popup.querySelector(
               ".swal-quality-btn.active",
             );
-            const selLang = activeLangBtn
-              ? activeLangBtn.getAttribute("data-value")
-              : selectedLangDefault;
             const selQual = activeQualBtn
               ? activeQualBtn.getAttribute("data-value")
               : selectedQualityDefault;
+            if (activeOtherBtn) {
+              const label = decodeURIComponent(
+                activeOtherBtn.getAttribute("data-value") || "",
+              );
+              return { subdub: langRequest(label), quality: selQual };
+            }
+            const selLang = activeLangBtn
+              ? activeLangBtn.getAttribute("data-value")
+              : selectedLangDefault;
             return { subdub: selLang, quality: selQual };
           },
         });
@@ -4924,6 +5158,25 @@ export default function InfoView({
                                       </button>
                                     );
                                   })
+                                )}
+                                {providerHasOtherLanguages && (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handlePlayOthers(item);
+                                    }}
+                                    className="badge-subdub others"
+                                    title="Play in another language (Hindi, French, ...)"
+                                    disabled={probingOthersId !== null}
+                                  >
+                                    <Captions size={11} />
+                                    <span>
+                                      {probingOthersId ===
+                                      (item.id || item.number)
+                                        ? "CHECKING..."
+                                        : "OTHERS"}
+                                    </span>
+                                  </button>
                                 )}
                                 <button
                                   onClick={(e) => {

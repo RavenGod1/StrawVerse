@@ -901,8 +901,15 @@ async function boot() {
       const currentVersion =
         process.env.STRAWVERSE_APP_VERSION || readOwnVersion() || "1.0.0";
 
+      // The update source follows the user's "updateSource" setting
+      // ("owner/repo"), so a fork or local release channel can be used.
+      const { getKeyValue } = require("../../../backend/utils/db");
+      const { parseUpdateSource } = require("../../../backend/utils/constants");
+      const storedSource = await getKeyValue("Settings", "updateSource");
+      const { owner, repo } = parseUpdateSource(storedSource);
+
       const response = await axios.get(
-        "https://api.github.com/repos/TheYogMehta/StrawVerse/releases/latest",
+        `https://api.github.com/repos/${owner}/${repo}/releases/latest`,
         {
           headers: {
             "User-Agent": "StrawVerse-App",
@@ -920,7 +927,7 @@ async function boot() {
       );
       const downloadUrl =
         apkAsset?.browser_download_url ||
-        `https://github.com/TheYogMehta/StrawVerse/releases/download/${release.tag_name}/StrawVerse-${latestVersion}.apk`;
+        `https://github.com/${owner}/${repo}/releases/download/${release.tag_name}/StrawVerse-${latestVersion}.apk`;
 
       latestUpdateInfo = {
         version: latestVersion,

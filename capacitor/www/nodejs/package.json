@@ -1,6 +1,6 @@
 {
   "name": "strawverse-capacitor-backend",
-  "version": "12.1.9",
+  "version": "12.1.11",
   "description": "StrawVerse backend running embedded on Android via capacitor-nodejs",
   "main": "main.bundle.js",
   "private": true,

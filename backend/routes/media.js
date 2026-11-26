@@ -42,7 +42,14 @@ const {
 const ImageCacheManager = require("../utils/ImageCacheManager");
 const { getHeaders } = require("../utils/proxyHeaders");
 const { isAdSegmentUrl } = require("../utils/adSegments");
-const { resolvePlaylistUri, isDirectVideoUrl } = require("../utils/mediaSource");
+const {
+  resolvePlaylistUri,
+  isDirectVideoUrl,
+  parseLangRequest,
+  stripCategorySuffix,
+  filterSourcesByLang,
+  collectOtherLanguages,
+} = require("../utils/mediaSource");
 const { pipeRangeSlice } = require("../utils/rangeSlice");
 const { getMangaAssetMimeType } = require("../utils/mangaAssets");
 const {
@@ -4730,13 +4737,23 @@ router.post("/api/watch", async (req, res) => {
       const safeProvider =
         mediaType === "Movies" && !isMovieProv ? null : provider;
       const Animeprovider = await providerFetch(mediaType, safeProvider);
+      // "all" and "lang:<name>" need every track the provider offers, so the
+      // category filter is dropped and the language is picked afterwards.
+      const { lang, base } = parseLangRequest(subdub);
+      const wantsEverything =
+        Boolean(lang) || String(base || "").toLowerCase() === "all";
+      const prefSubDub = wantsEverything ? null : base || "sub";
+      const sourceEpisodeId = wantsEverything ? stripCategorySuffix(ep) : ep;
       let sourcesArray =
         mediaType === "Movies"
-          ? await fetchMovieSources(Animeprovider, ep, subdub)
-          : await fetchEpisodeSources(Animeprovider, ep, subdub);
+          ? await fetchMovieSources(Animeprovider, sourceEpisodeId, prefSubDub)
+          : await fetchEpisodeSources(
+              Animeprovider,
+              sourceEpisodeId,
+              prefSubDub,
+            );
 
       if (sourcesArray) {
-        const prefSubDub = subdub || "sub";
         let rawSources = [];
         if (
           prefSubDub &&
@@ -4794,6 +4811,13 @@ router.post("/api/watch", async (req, res) => {
         } else if (prefSubDub === "dub") {
           const cleanDub = rawSources.filter((s) => isDub(s));
           if (cleanDub.length > 0) mainSources = cleanDub;
+        }
+
+        // "lang:<name>": keep only the tracks of that language. A language
+        // that only exists as a subtitle track keeps every video source.
+        if (lang) {
+          const matching = filterSourcesByLang(rawSources, lang);
+          if (matching.length > 0) mainSources = matching;
         }
 
         const rawSubtitles =
@@ -4872,6 +4896,27 @@ router.post("/api/watch", async (req, res) => {
     res.status(200).json({
       sources: [],
     });
+  }
+});
+
+// Other languages a provider offers for one episode (the "Others" picker)
+router.post("/api/watch/languages", async (req, res) => {
+  const { ep, provider = null, type } = req.body || {};
+  try {
+    if (!ep) throw new Error("Episode ID Not Found");
+    const isMovieProv = isMovieProvider(provider);
+    const mediaType = type === "Movies" || isMovieProv ? "Movies" : "Anime";
+    const safeProvider = mediaType === "Movies" && !isMovieProv ? null : provider;
+    const Animeprovider = await providerFetch(mediaType, safeProvider);
+    const sourceEpisodeId = stripCategorySuffix(ep);
+    const sourcesArray =
+      mediaType === "Movies"
+        ? await fetchMovieSources(Animeprovider, sourceEpisodeId, null)
+        : await fetchEpisodeSources(Animeprovider, sourceEpisodeId, null);
+    return res.json({ languages: collectOtherLanguages(sourcesArray) });
+  } catch (err) {
+    logger.error(`Error fetching other languages: ${err.message}`);
+    return res.status(200).json({ languages: [] });
   }
 });
 

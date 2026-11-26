@@ -26,6 +26,11 @@ const {
 const { verifyStreamReachability } = require("./streamVerifier");
 const { sortSourcesByPreferredQuality } = require("./constants");
 const {
+  parseLangRequest,
+  stripCategorySuffix,
+  filterSourcesByLang,
+} = require("./mediaSource");
+const {
   materializeSubtitleDataUrl,
   isMpvProcessAlive,
   isMpvClientAlive,
@@ -485,14 +490,21 @@ async function playInMpv(window, options) {
   }
   let image = options.image || "";
   let provider = options.provider || "";
-  let subdub = options.subdub || "sub";
+  // "lang:<name>" plays one of the provider's other languages. It needs every
+  // track the provider offers, so the category filter is dropped and the
+  // language is picked from the returned sources.
+  const { lang: requestedLang, base: requestedBase } = parseLangRequest(
+    options.subdub,
+  );
+  let subdub = requestedLang ? requestedBase || "sub" : options.subdub || "sub";
+  const sourceCategory = requestedLang ? null : subdub;
   let url = options.url || "";
 
   // Duplicate-launch guard: identical play requests arriving within
   // milliseconds (double clicks / double code paths with different id forms)
   // used to spawn two MPV processes. Same title + language with either the
   // episode id OR number matching within 3s reuses the in-flight launch.
-  const __launchKey = `${mediaId || ""}|${subdub || "sub"}`;
+  const __launchKey = `${mediaId || ""}|${subdub || "sub"}|${requestedLang || ""}`;
   const __epA = String(episodeId ?? "");
   const __epB = String(episode ?? "");
   const __now = Date.now();
@@ -582,6 +594,11 @@ async function playInMpv(window, options) {
     }
   } catch (e) {
     logger.error("Failed to load settings in mpvPlayer: " + e.message);
+  }
+
+  // An "others" session plays the subtitle track of that language first.
+  if (requestedLang) {
+    preferredSubLangs = [requestedLang, ...preferredSubLangs];
   }
 
   const seasonLogPart =
@@ -891,12 +908,15 @@ async function playInMpv(window, options) {
       });
     }
     try {
+      const sourceEpisodeId = requestedLang
+        ? stripCategorySuffix(episodeId)
+        : episodeId;
       if (mediaType === "Movies") {
         const Moviesprovider = await providerFetch("Movies", provider);
         const fetched = await fetchMovieSources(
           Moviesprovider,
-          episodeId,
-          subdub,
+          sourceEpisodeId,
+          sourceCategory,
         );
         if (fetched && Array.isArray(fetched.sources)) {
           activeSources = fetched.sources;
@@ -908,8 +928,8 @@ async function playInMpv(window, options) {
         const Animeprovider = await providerFetch("Anime", provider);
         const fetched = await fetchEpisodeSources(
           Animeprovider,
-          episodeId,
-          subdub,
+          sourceEpisodeId,
+          sourceCategory,
         );
         if (fetched && Array.isArray(fetched.sources)) {
           activeSources = fetched.sources;
@@ -917,6 +937,10 @@ async function playInMpv(window, options) {
         if (fetched && Array.isArray(fetched.subtitles)) {
           activeSubtitles = fetched.subtitles;
         }
+      }
+      if (requestedLang) {
+        const matching = filterSourcesByLang(activeSources, requestedLang);
+        if (matching.length > 0) activeSources = matching;
       }
       logger.info(
         `[MPV] Fetched ${activeSources.length} sources and ${activeSubtitles.length} subtitles from ${provider}`,
@@ -2175,12 +2199,13 @@ async function playInMpv(window, options) {
       const curImage = sess?.image || image;
       const curProvider = sess?.provider || provider;
       const curMalid = sess?.malid || malid;
-      const curSubdub =
-        sess?.activeSources?.[0]?.lang ||
-        sess?.activeSources?.[0]?.type ||
-        sess?.subdub ||
-        subdub ||
-        "sub";
+      const curSubdub = requestedLang
+        ? subdub
+        : sess?.activeSources?.[0]?.lang ||
+          sess?.activeSources?.[0]?.type ||
+          sess?.subdub ||
+          subdub ||
+          "sub";
       const curDuration = duration || sess?.duration || options.duration || 0;
       const deltaSpent = Math.max(0, currT - lastSavedTime);
 

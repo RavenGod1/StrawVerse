@@ -37,6 +37,10 @@ const { verifyStreamReachability } = require("./streamVerifier");
 const { updateHistory } = require("./history");
 const { getBestProviderForMalId } = require("./mappingResolver");
 const { isRetryableError } = require("./queueRetry");
+const {
+  stripCategorySuffix,
+  filterSourcesByLang,
+} = require("./mediaSource");
 
 let _bgDownloadDepth = 0;
 let isProcessorRunning = false;
@@ -1005,9 +1009,21 @@ async function downloadEpisodeByQuality(
       ? fetchMovieSources
       : fetchEpisodeSources;
     logger.info(`[queueWorker] ${epid} phase: provider-ok, fetching sources`);
+    // An "others" download asks the provider for every track and keeps the
+    // one of the requested language.
+    const requestedLang = config?.lang || null;
+    const sourceCategory = requestedLang ? null : subdub;
     let resolvedEpid = epid;
-    if (subdub && !epid.endsWith(`-${subdub}`) && !epid.endsWith("-both")) {
+    if (
+      !requestedLang &&
+      subdub &&
+      !epid.endsWith(`-${subdub}`) &&
+      !epid.endsWith("-both")
+    ) {
       resolvedEpid = `${epid}-${subdub}`;
+    }
+    if (requestedLang) {
+      resolvedEpid = stripCategorySuffix(epid);
     }
     let sourcesArray = null;
     let fetchAttempt = 0;
@@ -1020,7 +1036,7 @@ async function downloadEpisodeByQuality(
         sourcesArray = await fetchSourcesForProvider(
           provider,
           resolvedEpid,
-          subdub,
+          sourceCategory,
         );
       } catch (err) {
         lastFetchErr = err;
@@ -1077,7 +1093,8 @@ async function downloadEpisodeByQuality(
       ];
     };
 
-    const initialSources = extractSources(sourcesArray, subdub);
+    const extractKey = requestedLang ? null : subdub;
+    const initialSources = extractSources(sourcesArray, extractKey);
     logger.info(
       `[queueWorker] ${epid} phase: sources-${initialSources.length > 0 ? "ok" : "empty"}`,
     );
@@ -1085,9 +1102,13 @@ async function downloadEpisodeByQuality(
       throw new Error(`SCRAPER_TEMPORARY_ERROR: ${lastFetchErr.message}`);
     }
 
-    let sourcesList = extractSources(sourcesArray, subdub);
+    let sourcesList = extractSources(sourcesArray, extractKey);
 
-    if ((!sourcesList || sourcesList.length === 0) && resolvedEpid !== epid) {
+    if (
+      (!sourcesList || sourcesList.length === 0) &&
+      resolvedEpid !== epid &&
+      !requestedLang
+    ) {
       sourcesArray = await fetchSourcesForProvider(provider, epid, subdub);
       sourcesList = extractSources(sourcesArray, subdub);
     }
@@ -1096,7 +1117,7 @@ async function downloadEpisodeByQuality(
     // try the other category and the unfiltered list. This handles cases where
     // the anikoto site returns servers for a different sub-dub type than requested
     // (e.g., episode 1 is hardsub-only, user requested softsub).
-    if ((!sourcesList || sourcesList.length === 0) && subdub) {
+    if ((!sourcesList || sourcesList.length === 0) && subdub && !requestedLang) {
       // Try opposite category (sub <-> dub <-> hsub)
       const tryCategory =
         subdub.toLowerCase() === "sub" ? "dub" : subdub.toLowerCase() === "dub" ? "hsub" : "sub";
@@ -1118,7 +1139,10 @@ async function downloadEpisodeByQuality(
     }
 
     // Final fallback: try without any category suffix (get all servers)
-    if ((!sourcesList || sourcesList.length === 0) && resolvedEpid !== epid) {
+    if (
+      (!sourcesList || sourcesList.length === 0) &&
+      (resolvedEpid !== epid || requestedLang)
+    ) {
       try {
         const noCategory = await fetchSourcesForProvider(provider, epid, null);
         const noCatList = extractSources(noCategory, null);
@@ -1163,9 +1187,9 @@ async function downloadEpisodeByQuality(
               const fresh = await fetchEpisodeSources(
                 provider,
                 String(match.id),
-                subdub,
+                sourceCategory,
               );
-              const freshList = extractSources(fresh, subdub);
+              const freshList = extractSources(fresh, extractKey);
               if (freshList && freshList.length > 0) {
                 sourcesArray = fresh;
                 sourcesList = freshList;
@@ -1197,10 +1221,22 @@ async function downloadEpisodeByQuality(
       sourcesArray?.dub?.subtitles ||
       [];
 
+    // An "others" download keeps the servers of the requested language. A
+    // language that only exists as a subtitle track keeps every server.
+    if (requestedLang && sourcesList && sourcesList.length > 0) {
+      const matching = filterSourcesByLang(sourcesList, requestedLang);
+      if (matching.length > 0) {
+        logger.info(
+          `[Download] Using ${matching.length}/${sourcesList.length} "${requestedLang}" servers.`,
+        );
+        sourcesList = matching;
+      }
+    }
+
     // Prefer soft-sub servers when the user asked for "sub": an unfiltered
     // fallback can return hardsub (hsub) servers whose subtitles are burned
     // into the video frames and can't be toggled in a player.
-    if (sourcesList && sourcesList.length > 0 && subdub) {
+    if (sourcesList && sourcesList.length > 0 && subdub && !requestedLang) {
       const isHSub = (s) =>
         s?.isHsub ||
         s?.type === "hsub" ||
@@ -1419,6 +1455,10 @@ async function downloadEpisodeByQuality(
     const currentSettings = (await settingfetch()) || {};
     const preferredLangs = config?.preferredSubtitleLanguages ||
       currentSettings?.preferredSubtitleLanguages || ["English"];
+    // An "others" download prefers the subtitle track of that language.
+    const activePreferredLangs = requestedLang
+      ? [requestedLang, ...preferredLangs]
+      : preferredLangs;
 
     let filteredSubtitles = (subdub === "hsub" ? [] : subtitles || []).filter(
       (sub) => {
@@ -1426,13 +1466,13 @@ async function downloadEpisodeByQuality(
         const subLang = sub.lang || sub.label || sub.language;
         return (
           subLang !== "Thumbnails" &&
-          isLanguagePreferred(subLang, preferredLangs)
+          isLanguagePreferred(subLang, activePreferredLangs)
         );
       },
     );
     if (
       subdub !== "hsub" &&
-      preferredLangs.length > 0 &&
+      activePreferredLangs.length > 0 &&
       filteredSubtitles.length === 0 &&
       Array.isArray(subtitles) &&
       subtitles.length > 0

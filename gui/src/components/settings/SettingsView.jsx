@@ -245,6 +245,8 @@ export default function SettingsView({
   const [maxLogFiles, setMaxLogFiles] = useState(5);
   const [logDirectory, setLogDirectory] = useState("");
   const [autoSkipIntro, setAutoSkipIntro] = useState(true);
+  const [enableOtherLanguages, setEnableOtherLanguages] = useState(true);
+  const [updateSource, setUpdateSource] = useState("TheYogMehta/StrawVerse");
   const [mappingSyncInterval, setMappingSyncInterval] = useState(1);
   const [infoRecCount, setInfoRecCount] = useState(4);
   const [subFontSize, setSubFontSize] = useState(46);
@@ -253,6 +255,7 @@ export default function SettingsView({
   const [subBorderSize, setSubBorderSize] = useState(3.0);
   const [subBgColor, setSubBgColor] = useState("transparent");
   const [playerSpeed, setPlayerSpeed] = useState(1.0);
+  const [playerControlsHideDelay, setPlayerControlsHideDelay] = useState(3);
   const [mangaReaderLayout, setMangaReaderLayout] = useState("long-strip");
   const [mangaReaderWidth, setMangaReaderWidth] = useState(800);
   const [catalogTitleFontSize, setCatalogTitleFontSize] = useState(14);
@@ -865,6 +868,16 @@ export default function SettingsView({
         setPlayerSpeed(
           s.playerSpeed !== undefined ? parseFloat(s.playerSpeed) : 1.0,
         );
+        {
+          const hideDelayVal = parseInt(s.playerControlsHideDelay, 10);
+          setPlayerControlsHideDelay(
+            Number.isInteger(hideDelayVal) &&
+              hideDelayVal >= 1 &&
+              hideDelayVal <= 8
+              ? hideDelayVal
+              : 3,
+          );
+        }
         setImageCacheSizeLimit(s.imageCacheSizeLimit || 5);
         setDeveloperMode(s.developerMode);
         setDownloadNotification(
@@ -897,6 +910,12 @@ export default function SettingsView({
           );
         }
         setAutoSkipIntro(s.autoSkipIntro);
+        setEnableOtherLanguages(
+          s.enableOtherLanguages !== undefined
+            ? Boolean(s.enableOtherLanguages)
+            : true,
+        );
+        setUpdateSource(s.updateSource || "TheYogMehta/StrawVerse");
         {
           const recCountVal = parseInt(s.infoRecCount, 10);
           setInfoRecCount(
@@ -1161,6 +1180,13 @@ export default function SettingsView({
         : 1.0)
     )
       dirty.playerSpeed = playerSpeed;
+    if (
+      playerControlsHideDelay !==
+      (settings.playerControlsHideDelay !== undefined
+        ? parseInt(settings.playerControlsHideDelay, 10)
+        : 3)
+    )
+      dirty.playerControlsHideDelay = playerControlsHideDelay;
     if (developerMode !== settings.developerMode)
       dirty.developerMode = developerMode;
     if (
@@ -1202,6 +1228,15 @@ export default function SettingsView({
     }
     if (autoSkipIntro !== settings.autoSkipIntro)
       dirty.autoSkipIntro = autoSkipIntro;
+    if (
+      enableOtherLanguages !==
+      (settings.enableOtherLanguages !== undefined
+        ? Boolean(settings.enableOtherLanguages)
+        : true)
+    )
+      dirty.enableOtherLanguages = enableOtherLanguages;
+    if (updateSource !== (settings.updateSource || "TheYogMehta/StrawVerse"))
+      dirty.updateSource = updateSource;
     if (
       infoRecCount !==
       (settings.infoRecCount !== undefined
@@ -1339,6 +1374,10 @@ export default function SettingsView({
         (settings.playerSpeed !== undefined
           ? parseFloat(settings.playerSpeed)
           : 1.0) ||
+      playerControlsHideDelay !==
+        (settings.playerControlsHideDelay !== undefined
+          ? parseInt(settings.playerControlsHideDelay, 10)
+          : 3) ||
       developerMode !== settings.developerMode ||
       downloadNotification !==
         (settings.downloadNotification !== undefined
@@ -1359,6 +1398,11 @@ export default function SettingsView({
           : true) ||
       (parseInt(maxLogFiles, 10) || 5) !== (settings.maxLogFiles || 5) ||
       autoSkipIntro !== settings.autoSkipIntro ||
+      enableOtherLanguages !==
+        (settings.enableOtherLanguages !== undefined
+          ? Boolean(settings.enableOtherLanguages)
+          : true) ||
+      updateSource !== (settings.updateSource || "TheYogMehta/StrawVerse") ||
       (settings.infoRecCount !== undefined
         ? parseInt(settings.infoRecCount, 10)
         : 4) !== infoRecCount ||
@@ -1408,6 +1452,7 @@ export default function SettingsView({
     subBorderSize,
     subBgColor,
     playerSpeed,
+    playerControlsHideDelay,
     developerMode,
     downloadNotification,
     animeDownloadLocation,
@@ -1419,6 +1464,8 @@ export default function SettingsView({
     externalLogEnabled,
     maxLogFiles,
     autoSkipIntro,
+    enableOtherLanguages,
+    updateSource,
     infoRecCount,
     mangaReaderLayout,
     mangaReaderWidth,
@@ -2905,11 +2952,72 @@ export default function SettingsView({
                     />
                   </div>
                 </div>
+
+                {isMobileApp() && (
+                  <div className="settings-row-item">
+                    <div className="settings-row-info">
+                      <div className="settings-row-label">
+                        Controls Auto-Hide Delay
+                      </div>
+                      <div className="settings-row-hint">
+                        How long the player controls stay visible after the
+                        last tap. (1-8 seconds)
+                      </div>
+                    </div>
+                    <div className="settings-row-control u-style-72">
+                      <input
+                        type="number"
+                        min={1}
+                        max={8}
+                        value={playerControlsHideDelay}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value, 10);
+                          setPlayerControlsHideDelay(isNaN(val) ? "" : val);
+                        }}
+                        onBlur={(e) => {
+                          const val = parseInt(e.target.value, 10);
+                          if (isNaN(val) || val < 1) {
+                            setPlayerControlsHideDelay(1);
+                          } else if (val > 8) {
+                            setPlayerControlsHideDelay(8);
+                          }
+                        }}
+                        className="settings-text-input settings-number-input u-style-73"
+                      />
+                      <span className="u-style-74">seconds</span>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Subtitles & Audio */}
               <div className="settings-section glass-panel">
                 <h2 className="settings-section-title">Subtitles & Audio</h2>
+
+                <div className="settings-row-item">
+                  <div className="settings-row-info">
+                    <div className="settings-row-label">
+                      Other Languages (Others)
+                    </div>
+                    <div className="settings-row-hint">
+                      Show the OTHERS button for providers that offer extra
+                      languages (Hindi, French, Spanish, ...) next to SUB/DUB.
+                    </div>
+                  </div>
+                  <div className="settings-row-control">
+                    <Dropdown
+                      value={String(enableOtherLanguages)}
+                      onChange={(val) =>
+                        setEnableOtherLanguages(val === "true")
+                      }
+                      options={[
+                        { value: "true", label: "Yes" },
+                        { value: "false", label: "No" },
+                      ]}
+                      minWidth={200}
+                    />
+                  </div>
+                </div>
 
                 <div
                   className="settings-row-item vertical-layout"
@@ -3835,6 +3943,30 @@ export default function SettingsView({
                   <span className="settings-version-value">
                     v{appVersion || "9.5.0"}
                   </span>
+                </div>
+
+                <div className="settings-row-item vertical-layout">
+                  <div className="settings-row-info">
+                    <div className="settings-row-label">Update Source</div>
+                    <div className="settings-row-hint">
+                      GitHub repo the updater checks, as "owner/repo" or a
+                      full repository URL. Use your fork to get your own
+                      builds.
+                    </div>
+                  </div>
+                  <div className="settings-row-control">
+                    <input
+                      type="text"
+                      value={updateSource}
+                      onChange={(e) => setUpdateSource(e.target.value)}
+                      onBlur={(e) => {
+                        const value = e.target.value.trim();
+                        setUpdateSource(value || "TheYogMehta/StrawVerse");
+                      }}
+                      className="settings-text-input u-style-73"
+                      placeholder="TheYogMehta/StrawVerse"
+                    />
+                  </div>
                 </div>
 
                 <div className="settings-update-action">

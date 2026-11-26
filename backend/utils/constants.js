@@ -299,6 +299,19 @@ function getMalStatusLabel(status) {
 }
 
 const GITHUB_REPO = "TheYogMehta/StrawVerse";
+
+// Update source for the in-app updater: "owner/repo" or a full GitHub URL.
+function parseUpdateSource(value) {
+  const [fallbackOwner, fallbackRepo] = GITHUB_REPO.split("/");
+  const raw = String(value || "").trim();
+  if (!raw) return { owner: fallbackOwner, repo: fallbackRepo };
+  const cleaned = raw.replace(/\.git$/i, "").replace(/\/+$/, "");
+  const match =
+    cleaned.match(/github\.com[/:]([^/]+)\/([^/]+)/i) ||
+    cleaned.match(/^([^/\s]+)\/([^/\s]+)$/);
+  if (!match) return { owner: fallbackOwner, repo: fallbackRepo };
+  return { owner: match[1], repo: match[2] };
+}
 const DISCORD_CLIENT_ID = "1372260492982358016";
 const DISCORD_IDLE_MESSAGES = Object.freeze([
   "Taking a quick snack break 🍕",
@@ -495,6 +508,7 @@ module.exports = {
   isValidMalStatus,
   getMalStatusLabel,
   GITHUB_REPO,
+  parseUpdateSource,
   DISCORD_CLIENT_ID,
   DISCORD_IDLE_MESSAGES,
   getCurrentAppVersion,

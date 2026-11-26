@@ -16,6 +16,7 @@ const {
   addMultipleToQueue,
 } = require("./utils/queue");
 const { MetadataAdd, FindMapping } = require("./utils/Metadata");
+const { parseLangRequest } = require("./utils/mediaSource");
 const path = require("path");
 const { hasLocalMediaFiles, SEASON_FOLDER_RE } = require("./utils/constants");
 
@@ -295,7 +296,14 @@ async function downloadAnimeSingle(
     const Animeprovider =
       preFetchedProvider || (await providerFetch("Anime", provider));
 
-    let resolvedSubDub = subdub || "sub";
+    // "lang:<name>" downloads one of the provider's other languages. The
+    // episode is still filed under the normal SUB/DUB bucket so the library
+    // keeps working; the language travels in the queue config.
+    const { lang: requestedLang, base: requestedBase } =
+      parseLangRequest(subdub);
+    let resolvedSubDub = requestedLang
+      ? requestedBase || "sub"
+      : subdub || "sub";
 
     if (saveinfo) {
       const existing = await queryOne("SELECT id FROM Anime WHERE id = ?", [
@@ -384,6 +392,7 @@ async function downloadAnimeSingle(
         CustomDownloadLocation: config?.CustomDownloadLocationAnime,
         jellyfinCompatibility: config?.jellyfinCompatibility,
         animeNamingScheme: config?.animeNamingScheme || "default",
+        lang: requestedLang || null,
       },
       epid: episodeid,
       totalSegments: 0,

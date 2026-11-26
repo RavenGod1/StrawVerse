@@ -2,9 +2,14 @@ const test = require("node:test");
 const assert = require("node:assert");
 const {
   normalizeSourceRequest,
+  stripCategorySuffix,
   resolvePlaylistUri,
   hasMediaSources,
   isDirectVideoUrl,
+  parseLangRequest,
+  sourceLangLabel,
+  filterSourcesByLang,
+  collectOtherLanguages,
 } = require("./mediaSource");
 
 test("normalizeSourceRequest removes a category suffix from episode ids", () => {
@@ -49,6 +54,98 @@ test("isDirectVideoUrl recognizes Abyss range-stream URLs", () => {
     false,
   );
   assert.strictEqual(isDirectVideoUrl("not a url"), false);
+});
+
+test("isDirectVideoUrl keeps protocol-relative and unparseable media URLs", () => {
+  assert.strictEqual(isDirectVideoUrl("//cdn.example/video.mp4"), true);
+  assert.strictEqual(isDirectVideoUrl("https://cdn.example/video file.mp4"), true);
+});
+
+test("parseLangRequest splits a language request from the app's versions", () => {
+  assert.deepStrictEqual(parseLangRequest("lang:Hindi"), {
+    lang: "Hindi",
+    base: null,
+  });
+  assert.deepStrictEqual(parseLangRequest("dub"), { lang: null, base: "dub" });
+  assert.deepStrictEqual(parseLangRequest(""), { lang: null, base: null });
+});
+
+test("stripCategorySuffix removes the version suffix from episode ids", () => {
+  assert.strictEqual(stripCategorySuffix("episode-3-sub"), "episode-3");
+  assert.strictEqual(stripCategorySuffix("episode-3-dub"), "episode-3");
+  assert.strictEqual(stripCategorySuffix("episode-3"), "episode-3");
+});
+
+test("sourceLangLabel skips the app's own versions and non-language words", () => {
+  assert.strictEqual(sourceLangLabel({ lang: "sub" }), "");
+  assert.strictEqual(sourceLangLabel({ type: "dub" }), "");
+  assert.strictEqual(sourceLangLabel({ lang: "Multi Audio" }), "");
+  assert.strictEqual(sourceLangLabel({ lang: "Hindi" }), "Hindi");
+  assert.strictEqual(sourceLangLabel({ name: "Anime Salt Abyss (Hindi)" }), "Hindi");
+  // A version combo in the name is not a language.
+  assert.strictEqual(
+    sourceLangLabel({ name: "Anime World India HLS (SUB + DUB)" }),
+    "",
+  );
+  assert.strictEqual(sourceLangLabel({ name: "Stream (SUB/DUB)" }), "");
+  // Some providers only write the language in the source name.
+  assert.strictEqual(
+    sourceLangLabel({ name: "AniXoHindi Hindi Dub", type: "dub" }),
+    "Hindi",
+  );
+  assert.strictEqual(sourceLangLabel({ name: "Anime World India HLS" }), "");
+});
+
+test("filterSourcesByLang keeps the tracks of one language", () => {
+  const sources = [
+    { url: "a", lang: "Hindi" },
+    { url: "b", lang: "English" },
+    { url: "c", type: "dub" },
+  ];
+  assert.deepStrictEqual(
+    filterSourcesByLang(sources, "Hindi").map((s) => s.url),
+    ["a"],
+  );
+  assert.deepStrictEqual(
+    filterSourcesByLang(sources, "hindi").map((s) => s.url),
+    ["a"],
+  );
+  assert.strictEqual(filterSourcesByLang(sources, "").length, 3);
+});
+
+test("collectOtherLanguages lists provider languages with their track counts", () => {
+  const languages = collectOtherLanguages({
+    sources: [{ lang: "Hindi" }, { lang: "Hindi" }, { lang: "sub" }],
+    subtitles: [{ lang: "French" }, { lang: "Hindi" }],
+  });
+  assert.deepStrictEqual(languages, [
+    { key: "hindi", label: "Hindi", sources: 2, subtitles: 1 },
+    { key: "french", label: "French", sources: 0, subtitles: 1 },
+  ]);
+});
+
+test("collectOtherLanguages leaves out the app's own languages", () => {
+  // English is the app's DUB and its default subtitle language.
+  const languages = collectOtherLanguages({
+    sources: [
+      { name: "Anime World India HLS (SUB + DUB)", type: "dub" },
+      { lang: "English" },
+      { lang: "Hindi" },
+    ],
+    subtitles: [{ lang: "English" }, { lang: "Hindi" }],
+  });
+  assert.deepStrictEqual(languages, [
+    { key: "hindi", label: "Hindi", sources: 1, subtitles: 1 },
+  ]);
+});
+
+test("collectOtherLanguages finds a language written only in the source name", () => {
+  const languages = collectOtherLanguages({
+    sources: [{ name: "AniXoHindi Hindi Dub", type: "dub" }],
+  });
+  assert.deepStrictEqual(languages, [
+    { key: "hindi", label: "Hindi", sources: 1, subtitles: 0 },
+  ]);
 });
 
 test("resolvePlaylistUri resolves root-relative HLS URIs from the origin", () => {

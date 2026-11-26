@@ -303,6 +303,31 @@ async function settingfetch() {
       changes = true;
     }
 
+    // Android player controls auto-hide delay in seconds: 1-8, default 3.
+    if (!config?.hasOwnProperty("playerControlsHideDelay")) {
+      config.playerControlsHideDelay = 3;
+      changes = true;
+    } else {
+      const parsedHideDelay = parseInt(config.playerControlsHideDelay, 10);
+      const clampedHideDelay = Number.isInteger(parsedHideDelay)
+        ? Math.min(8, Math.max(1, parsedHideDelay))
+        : 3;
+      if (clampedHideDelay !== config.playerControlsHideDelay) {
+        config.playerControlsHideDelay = clampedHideDelay;
+        changes = true;
+      }
+    }
+
+    if (!config?.hasOwnProperty("enableOtherLanguages")) {
+      config.enableOtherLanguages = true;
+      changes = true;
+    }
+
+    if (!config?.hasOwnProperty("updateSource")) {
+      config.updateSource = "TheYogMehta/StrawVerse";
+      changes = true;
+    }
+
     if (!config?.hasOwnProperty("infoRecCount")) {
       config.infoRecCount = 4;
       changes = true;
@@ -377,6 +402,9 @@ async function SettingsLoad() {
             subBorderSize: 3.0,
             subBgColor: "transparent",
             playerSpeed: 1.0,
+            playerControlsHideDelay: 3,
+            enableOtherLanguages: true,
+            updateSource: "TheYogMehta/StrawVerse",
             infoSortOrder: null,
             infoRecCount: 4,
             upscalePreset: "off",
@@ -405,6 +433,15 @@ async function SettingsLoad() {
     }
     if (config && !config.hasOwnProperty("playerSpeed")) {
       config.playerSpeed = 1.0;
+    }
+    if (config && !config.hasOwnProperty("playerControlsHideDelay")) {
+      config.playerControlsHideDelay = 3;
+    }
+    if (config && !config.hasOwnProperty("enableOtherLanguages")) {
+      config.enableOtherLanguages = true;
+    }
+    if (config && !config.hasOwnProperty("updateSource")) {
+      config.updateSource = "TheYogMehta/StrawVerse";
     }
 
     if (config && !config.hasOwnProperty("infoRecCount")) {

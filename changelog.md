@@ -1,5 +1,34 @@
 # Changelog
 
+# [12.1.11] - 2026-11-26
+
+### Player & Settings
+
+- **Player Controls Auto-Hide Delay (Android):** Settings → Player now has a "Controls Auto-Hide Delay" slider (1-8 seconds, 3 by default) so the Android player controls stay visible as long as you want.
+- **OTHERS Button Is Now Optional:** Settings → Player → "Other Languages (Others)" turns the OTHERS button on or off. It also only appears for providers that really offer extra languages, so providers with SUB/DUB only never show it.
+- **Update Source:** Settings → About now takes an "Update Source" (`owner/repo` or a full GitHub URL). Point it at your own fork to get your own builds instead of the default releases.
+
+### Fixes
+
+- **All Resolutions and Servers:** Providers now expose every quality they have (1080p, 720p, ...) as its own source, so the download options list all of them and the players list every server instead of a single "1080p".
+- **Anime World India on Android:** The HLS manifest of Anime World India has no ".m3u8" suffix, so the Android player treated it as a plain video file and showed a black screen. It is now recognised as a playlist and plays.
+
+- Version bump to 12.1.11 (versionCode 43).
+
+# [12.1.10] - 2026-11-26
+
+### Other Languages
+
+- **OTHERS Button for Stream and Download:** Every episode row and the download options now offer an **OTHERS** button next to SUB and DUB. It lists the languages the provider actually offers for that episode (Hindi, French, Portuguese, Spanish, Russian, ...) and plays or downloads that one. SUB and DUB stay exactly as they were: the chosen language is a separate choice and never replaces them.
+- **Its Own Language-Aware Player:** An OTHERS playback starts on that language's subtitle track, without overwriting your saved subtitle preference, and without changing the library bucket, the continue-watching entry or the normal SUB/DUB selection.
+- **Real Languages Only:** Provider labels are cleaned up before they are offered, so version labels such as "SUB + DUB" and English (the app's own DUB) no longer show up as selectable other languages.
+
+### Fixes
+
+- **Streaming and Downloading After 12.1.9:** Direct video detection again recognises protocol-relative and unparseable media URLs, which 12.1.9 started treating as HLS playlists.
+
+- Version bump to 12.1.10 (versionCode 42).
+
 # [12.1.9] - 2026-11-24
 
 ### Provider Playback

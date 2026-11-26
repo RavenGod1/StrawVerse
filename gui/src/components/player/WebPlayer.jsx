@@ -1,6 +1,7 @@
 /* eslint-disable react-hooks/set-state-in-effect, react-hooks/exhaustive-deps */
 import { useEffect, useRef, useState } from "react";
 import { apiPost } from "../../utils/common";
+import { parseLangRequest } from "../../utils/otherLanguages";
 
 if (
   typeof window !== "undefined" &&
@@ -251,6 +252,9 @@ export default function VideoPlayer({
   const [currentEpisode, setCurrentEpisode] = useState(episodeNumOrId);
   const [isCurrentDownloaded, setIsCurrentDownloaded] = useState(isDownloaded);
   const [playerSubDub, setPlayerSubDub] = useState(subdub || "sub");
+  // "lang:Hindi" plays one of the provider's other languages. It is a
+  // separate choice: the app's SUB/DUB stays exactly as it was.
+  const playerLang = parseLangRequest(playerSubDub).lang;
 
   const [isPip, setIsPip] = useState(false);
   const pipSupported =
@@ -342,6 +346,9 @@ export default function VideoPlayer({
 
   useEffect(() => {
     if (!subtitles || subtitles.length === 0) return;
+    // An "others" session must not overwrite the user's saved subtitle
+    // preference - it only picks the track for this playback.
+    if (playerLang) return;
 
     if (window.sharedStateAPI && window.sharedStateAPI.updateSetting) {
       if (selectedSubtitleIndex === -1) {
@@ -360,7 +367,7 @@ export default function VideoPlayer({
         }
       }
     }
-  }, [selectedSubtitleIndex, subtitles]);
+  }, [selectedSubtitleIndex, subtitles, playerLang]);
 
   const updateTimelineDOM = () => {
     const ct = currentTimeRef.current;
@@ -699,7 +706,9 @@ export default function VideoPlayer({
     }
     const subList = downloadedEpisodes.sub || [];
     const dubList = downloadedEpisodes.dub || [];
-    return currentLang === "dub"
+    // An "others" session plays the episode that is filed under SUB/DUB.
+    const lang = parseLangRequest(currentLang).base || currentLang;
+    return lang === "dub"
       ? dubList.map(Number).includes(Number(num))
       : subList.map(Number).includes(Number(num));
   };
@@ -875,7 +884,11 @@ export default function VideoPlayer({
           image,
           provider,
           malid,
-          subdub: playerSubDub,
+          // An "others" session keeps the app's SUB/DUB as the saved
+          // language so the resume button behaves as usual.
+          subdub: playerLang
+            ? parseLangRequest(playerSubDub).base || "sub"
+            : playerSubDub,
         });
         window.refreshInfoViewProgress?.();
         window.refreshCatalogHistory?.();
@@ -1098,7 +1111,8 @@ export default function VideoPlayer({
       setSources(fetchedSources);
       setSubtitles(fetchedSubs);
       if (fetchedSubs && fetchedSubs.length > 0) {
-        const pref = getSavedSubtitlePref();
+        // An "others" session starts on that language's subtitle track.
+        const pref = playerLang || getSavedSubtitlePref();
         const bestIdx = findBestSubtitleIndex(fetchedSubs, pref);
         setSelectedSubtitleIndex(bestIdx);
       } else {
@@ -1349,13 +1363,14 @@ export default function VideoPlayer({
 
   useEffect(() => {
     if (subtitles.length > 0) {
-      const pref = getSavedSubtitlePref();
+      // An "others" session starts on that language's subtitle track.
+      const pref = playerLang || getSavedSubtitlePref();
       const bestIdx = findBestSubtitleIndex(subtitles, pref);
       setSelectedSubtitleIndex(bestIdx);
     } else {
       setSelectedSubtitleIndex(-1);
     }
-  }, [subtitles]);
+  }, [subtitles, playerLang]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -1612,7 +1627,7 @@ export default function VideoPlayer({
           <span className="player-episode-title">
             Playing Episode{" "}
             {currentEpisodeObj ? currentEpisodeObj.number : "Stream"} (
-            {(subdub || "sub").toUpperCase()})
+            {(playerLang || subdub || "sub").toUpperCase()})
           </span>
           <span
             className={`player-header-badge ${isCurrentDownloaded ? "local" : "online"}`}

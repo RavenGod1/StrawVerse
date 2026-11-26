@@ -124,6 +124,8 @@ public class PlayerActivity extends Activity {
     private List<String> preferredSubtitleLanguagesList = new ArrayList<>(java.util.Collections.singletonList("English"));
     private boolean preferredSubtitleLanguagesExplicitlyLoaded = false;
     private String preferredQuality = "highest";
+    // How long the Media3 controls stay visible after the last interaction.
+    private int controlsHideDelaySeconds = 3;
 
     // History tracking fields
     private String mediaType = "Anime";
@@ -1488,7 +1490,7 @@ public class PlayerActivity extends Activity {
             DataSource.Factory kwikFactory = () -> new KwikDataSource(resolvingFactory.createDataSource());
 
             List<MediaItem.SubtitleConfiguration> subtitleConfigurations = getSubtitleConfigurations();
-            boolean isHls = isHlsUrl(videoUrl);
+            boolean isHls = isHlsSource(videoUrl);
 
             MediaItem.Builder mediaItemBuilder = new MediaItem.Builder()
                     .setUri(Uri.parse(playUrl))
@@ -1540,6 +1542,20 @@ public class PlayerActivity extends Activity {
         }
     }
 
+    // Providers may serve an HLS manifest from a URL without a ".m3u8" suffix
+    // (e.g. /hls/<token>), so the source's own isM3U8 flag wins over the
+    // URL guess - otherwise ExoPlayer gets a playlist as a plain video file
+    // and shows a black screen.
+    private boolean isHlsSource(String url) {
+        try {
+            if (sourcesArray != null && currentSourceIndex >= 0 && currentSourceIndex < sourcesArray.length()) {
+                JSONObject src = sourcesArray.getJSONObject(currentSourceIndex);
+                if (src.optBoolean("isM3U8", false)) return true;
+            }
+        } catch (Exception ignored) {}
+        return isHlsUrl(url);
+    }
+
     private String toProxyUrl(String url) {
         return toProxyUrl(url, null);
     }
@@ -1574,7 +1590,7 @@ public class PlayerActivity extends Activity {
         }
         String base = "http://127.0.0.1:9545/api/stream";
         String refParam = "&referer=" + Uri.encode(ref);
-        if (isHlsUrl(url)) {
+        if (isHlsSource(url)) {
             return base + "/m3u8?url=" + Uri.encode(url) + refParam;
         }
         return base + "/segment?url=" + Uri.encode(url) + refParam;
@@ -1816,7 +1832,7 @@ public class PlayerActivity extends Activity {
             DataSource.Factory kwikFactory = () -> new KwikDataSource(resolvingFactory.createDataSource());
 
             List<MediaItem.SubtitleConfiguration> subtitleConfigurations = getSubtitleConfigurations();
-            boolean isHls = isHlsUrl(newUrl);
+            boolean isHls = isHlsSource(newUrl);
 
             MediaItem.Builder mediaItemBuilder = new MediaItem.Builder()
                     .setUri(Uri.parse(playUrl))
@@ -2860,6 +2876,7 @@ public class PlayerActivity extends Activity {
                     keysArr.put("subBorderColor");
                     keysArr.put("subBgColor");
                     keysArr.put("subFontSize");
+                    keysArr.put("playerControlsHideDelay");
                     argsArr.put(keysArr);
                     payload.put("args", argsArr);
                     try (OutputStream os = conn.getOutputStream()) {
@@ -2929,6 +2946,22 @@ public class PlayerActivity extends Activity {
                                 });
                                 if (settings.has("quality")) {
                                     preferredQuality = settings.optString("quality", "highest");
+                                }
+                                if (settings.has("playerControlsHideDelay")) {
+                                    int delay = settings.optInt("playerControlsHideDelay", 3);
+                                    if (delay < 1) delay = 1;
+                                    if (delay > 8) delay = 8;
+                                    controlsHideDelaySeconds = delay;
+                                    final int hideDelayMs = delay * 1000;
+                                    runOnUiThread(new Runnable() {
+                                        @Override
+                                        public void run() {
+                                            if (isActivityDead()) return;
+                                            if (playerView != null) {
+                                                playerView.setControllerShowTimeoutMs(hideDelayMs);
+                                            }
+                                        }
+                                    });
                                 }
                                 if (settings.has("playerSpeed")) {
                                     try {

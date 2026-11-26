@@ -169,28 +169,13 @@ try {
 }
 
 // Load package.json config dynamically for the auto-updater to support fork updates
+let packagedUpdateSource = "TheYogMehta/StrawVerse";
 try {
   const pkg = require("./package.json");
-  if (pkg.build && pkg.build.publish) {
-    autoUpdater.setFeedURL({
-      provider: "github",
-      owner: pkg.build.publish.owner,
-      repo: pkg.build.publish.repo,
-    });
-  } else {
-    autoUpdater.setFeedURL({
-      provider: "github",
-      owner: "TheYogMehta",
-      repo: "StrawVerse",
-    });
+  if (pkg.build?.publish?.owner && pkg.build?.publish?.repo) {
+    packagedUpdateSource = `${pkg.build.publish.owner}/${pkg.build.publish.repo}`;
   }
-} catch (err) {
-  autoUpdater.setFeedURL({
-    provider: "github",
-    owner: "TheYogMehta",
-    repo: "StrawVerse",
-  });
-}
+} catch (_) {}
 
 const backendDir = fs.existsSync(path.join(__dirname, "backend"))
   ? path.join(__dirname, "backend")
@@ -206,6 +191,23 @@ const preloadPath = fs.existsSync(path.join(__dirname, "preload.js"))
 
 //  functions
 const { logger } = require(path.join(backendDir, "utils", "AppLogger"));
+const { parseUpdateSource } = require(
+  path.join(backendDir, "utils", "constants"),
+);
+let currentUpdateSource = packagedUpdateSource;
+
+// The update feed follows the user's "updateSource" setting (owner/repo), so a
+// fork or a local release channel can be used instead of the default repo.
+function applyUpdateFeed(source) {
+  const { owner, repo } = parseUpdateSource(source);
+  currentUpdateSource = `${owner}/${repo}`;
+  try {
+    autoUpdater.setFeedURL({ provider: "github", owner, repo });
+  } catch (err) {
+    logger.error(`Failed to set update feed: ${err.message}`);
+  }
+}
+applyUpdateFeed(packagedUpdateSource);
 const { getKeyValue, setKeyValue } = require(
   path.join(backendDir, "utils", "db"),
 );
@@ -874,8 +876,10 @@ app.whenReady().then(async () => {
   if (app.isPackaged) {
     // Deferred so the update check (GitHub round-trip, ~4s) does not compete
     // with window paint, mapping sync and scraper loading during startup.
-    setTimeout(() => {
+    setTimeout(async () => {
       try {
+        const storedSource = await getKeyValue("Settings", "updateSource");
+        applyUpdateFeed(storedSource || packagedUpdateSource);
         autoUpdater.checkForUpdatesAndNotify();
       } catch (err) {
         logger.error(`Auto-update check failed to start: ${err.message}`);
@@ -953,7 +957,7 @@ autoUpdater.on("error", (err) => {
         ? "Auto-update failed due to macOS code signature verification (unsigned build). Please download the latest DMG release from GitHub."
         : errMsg,
       isCodeSignError: Boolean(isCodeSignError),
-      releaseUrl: "https://github.com/TheYogMehta/StrawVerse/releases/latest",
+      releaseUrl: `https://github.com/${currentUpdateSource}/releases/latest`,
     });
   }
 });
@@ -977,6 +981,8 @@ ipcMain.handle("check-for-update", async () => {
     });
   }
   try {
+    const storedSource = await getKeyValue("Settings", "updateSource");
+    applyUpdateFeed(storedSource || packagedUpdateSource);
     const result = await autoUpdater.checkForUpdates();
     return { success: true, version: result?.updateInfo?.version };
   } catch (err) {
