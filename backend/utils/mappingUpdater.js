@@ -626,7 +626,19 @@ async function applySyncResponse(data) {
   return hasChanges;
 }
 
+// Canary checks are a network probe: run them at most once an hour per
+// process, no matter how many syncs happen in between.
+const CANARY_CHECK_INTERVAL_MS = 60 * 60 * 1000;
+let lastCanaryCheckAt = 0;
+
 async function checkCanaries(osName) {
+  if (Date.now() - lastCanaryCheckAt < CANARY_CHECK_INTERVAL_MS) {
+    logger.info(
+      "[mappingUpdater] Skipping canary check (already ran within the last hour).",
+    );
+    return;
+  }
+  lastCanaryCheckAt = Date.now();
   try {
     const vRes = await mappingClient.get(
       `${MAPPING_API_BASE}/api/mapping/version`,
@@ -675,23 +687,51 @@ async function checkCanaries(osName) {
   } catch (_) {}
 }
 
-// The watchdog wakes once a minute, re-reads the interval setting (so a
-// change — including 0 = off — takes effect within a minute, with no
-// reschedule plumbing in the settings save paths) and runs a scheduled
-// sync once the interval has elapsed since the last attempt. Attempts are
-// tracked in memory: a failed sync retries next interval instead of every
-// minute, and a restart starts clean (the boot sync covers that run).
+// The watchdog sleeps until the next due sync instead of waking every
+// minute: the due moment is the last attempt plus the configured interval,
+// so a quiet install makes no periodic requests at all. The interval is
+// re-read whenever the timer is armed, so a change (including 0 = off)
+// still takes effect.
 let lastMappingSyncAttempt = 0;
 let watchdogTimer = null;
+let watchdogArming = false;
+let watchdogLastFire = 0;
+// While scheduled syncing is off the timer still wakes up this often, so
+// turning the interval back on is noticed without a restart (no request
+// is made while it is off).
+const WATCHDOG_RECHECK_MS = 60 * 60 * 1000;
 
 function armMappingWatchdog() {
-  if (watchdogTimer) return;
-  watchdogTimer = setInterval(runMappingWatchdogTick, 60 * 1000);
+  if (watchdogTimer || watchdogArming) return;
+  watchdogArming = true;
+  scheduleMappingWatchdog().finally(() => {
+    watchdogArming = false;
+  });
+}
+
+async function scheduleMappingWatchdog() {
+  let delay = 0;
+  try {
+    const hours = await getSyncIntervalHours();
+    if (hours === 0) {
+      delay = WATCHDOG_RECHECK_MS;
+    } else {
+      const intervalMs = hours * 60 * 60 * 1000;
+      // The last fire counts as an attempt marker, so a tick that skipped
+      // the sync (fresh data) cannot spin the timer.
+      const base = Math.max(lastMappingSyncAttempt, watchdogLastFire);
+      delay = Math.max(0, base + intervalMs - Date.now());
+    }
+  } catch (_) {
+    delay = WATCHDOG_RECHECK_MS;
+  }
+  watchdogTimer = setTimeout(runMappingWatchdogTick, delay);
   // Never keep the process alive just for the timer.
   if (typeof watchdogTimer.unref === "function") watchdogTimer.unref();
 }
 
 async function runMappingWatchdogTick() {
+  watchdogLastFire = Date.now();
   try {
     const hours = await getSyncIntervalHours();
     if (hours === 0) return; // 0 = no scheduled sync
@@ -699,6 +739,10 @@ async function runMappingWatchdogTick() {
     await checkForMappingUpdates(false, null, { scheduled: true });
   } catch (e) {
     logger.error(`[mappingUpdater] Scheduled sync failed: ${e.message}`);
+  } finally {
+    // Re-arm for the next due moment.
+    watchdogTimer = null;
+    armMappingWatchdog();
   }
 }
 
@@ -962,10 +1006,21 @@ async function runMappingSyncCheck(force, type, opts) {
   checkCanaries(osName).catch(() => {});
 }
 
-async function syncExtensionMapping(extensionName) {
+// Providers whose mappings were already initialized in this process. The
+// automatic path (settings changes) must not sync the same provider again;
+// an explicit forced sync still can.
+const syncedProvidersThisProcess = new Set();
+
+async function syncExtensionMapping(extensionName, opts = {}) {
   if (!extensionName || !global.mappingDb) return;
   const cleanProv = String(extensionName).toLowerCase().trim().split("/").pop();
   if (!cleanProv) return;
+  if (!opts.force && syncedProvidersThisProcess.has(cleanProv)) {
+    logger.info(
+      `[mappingUpdater] Skipped repeat mapping sync for ${cleanProv} (already synced in this process).`,
+    );
+    return;
+  }
 
   try {
     await ensureMappingTablesExist();
@@ -1015,6 +1070,7 @@ async function syncExtensionMapping(extensionName) {
 
     if (res.data) {
       await applySyncResponse(res.data);
+      syncedProvidersThisProcess.add(cleanProv);
       logger.info(`[mappingUpdater] Initialized mappings for ${cleanProv}`);
     }
   } catch (err) {

@@ -51,6 +51,7 @@ const {
   collectOtherLanguages,
   collectPlaybackOptions,
   providerDeclaresOtherLanguages,
+  providerMatchesBlockedDomain,
 } = require("../utils/mediaSource");
 const { pipeRangeSlice } = require("../utils/rangeSlice");
 const { getMangaAssetMimeType } = require("../utils/mangaAssets");
@@ -4729,6 +4730,31 @@ router.post("/api/info/items", async (req, res) => {
 });
 
 // Play Video From m3u8 url
+// Cloudflare can refuse the app's embedded browser outright (the challenge
+// loops forever). Say so instead of showing "no sources" - the user has to
+// pick another provider, retrying will not help.
+function blockedProviderHint(payload, providerObj = null) {
+  const domain = global.LastRejectedDomain;
+  const at = Number(global.LastRejectedAt || 0);
+  if (!domain || !at || Date.now() - at > 60 * 1000) return null;
+  const groups = payload && typeof payload === "object" ? payload : {};
+  const hasSources = [
+    groups.sources,
+    groups.sub?.sources,
+    groups.dub?.sources,
+    groups.hsub?.sources,
+  ].some((items) => Array.isArray(items) && items.length > 0);
+  if (hasSources) return null;
+  if (providerObj && !providerMatchesBlockedDomain(providerObj, domain)) {
+    return null;
+  }
+  return {
+    blocked: true,
+    blockedDomain: domain,
+    message: `${domain} is blocked by Cloudflare for this app right now. This site needs a real browser - try another provider for this title.`,
+  };
+}
+
 router.post("/api/watch", async (req, res) => {
   let { ep, epNum, Downloaded, provider = null, subdub, type } = req.body;
   try {
@@ -4755,14 +4781,25 @@ router.post("/api/watch", async (req, res) => {
         Boolean(lang) || String(base || "").toLowerCase() === "all";
       const prefSubDub = wantsEverything ? null : base || "sub";
       const sourceEpisodeId = wantsEverything ? stripCategorySuffix(ep) : ep;
+      // The Play chooser already asked the provider for these sources: reuse
+      // that answer instead of asking a second time.
+      const probed = takePlayOptions(
+        playOptionsKey(
+          mediaType,
+          Animeprovider?.provider_name,
+          stripCategorySuffix(ep),
+        ),
+      );
       let sourcesArray =
-        mediaType === "Movies"
-          ? await fetchMovieSources(Animeprovider, sourceEpisodeId, prefSubDub)
-          : await fetchEpisodeSources(
-              Animeprovider,
-              sourceEpisodeId,
-              prefSubDub,
-            );
+        probed && (wantsEverything || isFlatSourceResponse(probed))
+          ? probed
+          : mediaType === "Movies"
+            ? await fetchMovieSources(Animeprovider, sourceEpisodeId, prefSubDub)
+            : await fetchEpisodeSources(
+                Animeprovider,
+                sourceEpisodeId,
+                prefSubDub,
+              );
 
       if (sourcesArray) {
         let rawSources = [];
@@ -4854,7 +4891,11 @@ router.post("/api/watch", async (req, res) => {
         };
       }
 
-      res.status(200).json(sourcesArray || { sources: [] });
+      const responsePayload = sourcesArray || { sources: [] };
+      res.status(200).json({
+        ...responsePayload,
+        ...(blockedProviderHint(responsePayload, Animeprovider?.provider) || {}),
+      });
     } else {
       if (!epNum) throw new Error("Episode Number Not Found");
       if (!ep) throw new Error("Anime ID Not Found");
@@ -4932,12 +4973,60 @@ router.post("/api/watch/languages", async (req, res) => {
 });
 
 // What the Play button offers: language, server and resolution per language
+// The Play chooser probe and the player ask the provider for the same
+// sources. Keep the probe result for a minute so one click costs one
+// provider request instead of two.
+const playOptionsCache = new Map();
+const PLAY_OPTIONS_TTL_MS = 60 * 1000;
+
+function playOptionsKey(mediaType, providerName, episodeId) {
+  return `${mediaType}|${providerName || ""}|${episodeId}`;
+}
+
+function rememberPlayOptions(key, sourcesArray) {
+  if (!sourcesArray) return;
+  playOptionsCache.set(key, {
+    sourcesArray,
+    expires: Date.now() + PLAY_OPTIONS_TTL_MS,
+  });
+  while (playOptionsCache.size > 40) {
+    playOptionsCache.delete(playOptionsCache.keys().next().value);
+  }
+}
+
+function takePlayOptions(key) {
+  const entry = playOptionsCache.get(key);
+  if (!entry) return null;
+  if (entry.expires < Date.now()) {
+    playOptionsCache.delete(key);
+    return null;
+  }
+  return entry.sourcesArray;
+}
+
+// A provider that answers with one flat list ignores the category filter, so
+// the probe result is the same as a category request.
+function isFlatSourceResponse(response) {
+  return Boolean(
+    response &&
+      typeof response === "object" &&
+      Array.isArray(response.sources) &&
+      !response.sub &&
+      !response.dub &&
+      !response.hsub,
+  );
+}
+
 router.post("/api/watch/options", async (req, res) => {
   const { ep, provider = null, type } = req.body || {};
   try {
     if (!ep) throw new Error("Episode ID Not Found");
     const isMovieProv = isMovieProvider(provider);
-    const mediaType = type === "Movies" || isMovieProv ? "Movies" : "Anime";
+    const isMovieEp =
+      typeof ep === "string" &&
+      (ep.startsWith("tv:") || ep.startsWith("movie:"));
+    const mediaType =
+      type === "Movies" || isMovieEp || isMovieProv ? "Movies" : "Anime";
     const safeProvider = mediaType === "Movies" && !isMovieProv ? null : provider;
     const Animeprovider = await providerFetch(mediaType, safeProvider);
     const sourceEpisodeId = stripCategorySuffix(ep);
@@ -4945,7 +5034,18 @@ router.post("/api/watch/options", async (req, res) => {
       mediaType === "Movies"
         ? await fetchMovieSources(Animeprovider, sourceEpisodeId, null)
         : await fetchEpisodeSources(Animeprovider, sourceEpisodeId, null);
-    return res.json(collectPlaybackOptions(sourcesArray));
+    rememberPlayOptions(
+      playOptionsKey(
+        mediaType,
+        Animeprovider?.provider_name,
+        sourceEpisodeId,
+      ),
+      sourcesArray,
+    );
+    return res.json({
+      languages: collectPlaybackOptions(sourcesArray),
+      ...(blockedProviderHint(sourcesArray, Animeprovider?.provider) || {}),
+    });
   } catch (err) {
     logger.error(`Error fetching playback options: ${err.message}`);
     return res.status(200).json({ languages: [] });

@@ -29,6 +29,7 @@ const {
   parseLangRequest,
   stripCategorySuffix,
   filterSourcesByLang,
+  matchesSourceHint,
 } = require("./mediaSource");
 const {
   materializeSubtitleDataUrl,
@@ -978,21 +979,17 @@ async function playInMpv(window, options) {
   }
 
   // The Play button may have picked a server and a resolution: put that
-  // source first so MPV starts with it.
+  // source first so MPV starts with it. An empty quality means "Auto": the
+  // best quality of that server (the list is already quality-sorted).
   const sourceHint = options.sourceHint;
-  if (sourceHint?.quality && activeSources.length > 1) {
-    const wantedQuality = String(sourceHint.quality).trim();
-    const wantedServer = String(sourceHint.server || "").trim();
-    const hintIndex = activeSources.findIndex((src) => {
-      const quality = String(src?.quality || "").trim();
-      const server = String(
-        src?.server || src?.provider || src?.name || "",
-      ).trim();
-      return (
-        quality === wantedQuality &&
-        (!wantedServer || server === wantedServer)
-      );
-    });
+  if (
+    sourceHint &&
+    (sourceHint.quality || sourceHint.server) &&
+    activeSources.length > 1
+  ) {
+    const hintIndex = activeSources.findIndex((src) =>
+      matchesSourceHint(src, sourceHint),
+    );
     if (hintIndex > 0) {
       const [hinted] = activeSources.splice(hintIndex, 1);
       activeSources.unshift(hinted);

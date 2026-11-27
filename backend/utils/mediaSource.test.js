@@ -11,8 +11,42 @@ const {
   filterSourcesByLang,
   collectOtherLanguages,
   collectPlaybackOptions,
+  matchesSourceHint,
   providerDeclaresOtherLanguages,
+  providerMatchesBlockedDomain,
 } = require("./mediaSource");
+
+test("providerMatchesBlockedDomain blames only the blocked provider", () => {
+  // The provider that owns the blocked domain.
+  assert.strictEqual(
+    providerMatchesBlockedDomain(
+      { name: "animepahe", baseUrl: "https://animepahe.pw" },
+      "animepahe.pw",
+    ),
+    true,
+  );
+  // Another provider must not inherit the blocked hint.
+  assert.strictEqual(
+    providerMatchesBlockedDomain(
+      { name: "animekai", baseUrl: "https://animekai.to" },
+      "animepahe.pw",
+    ),
+    false,
+  );
+  // The name alone is enough when the extension has no base url.
+  assert.strictEqual(
+    providerMatchesBlockedDomain({ name: "AnimePahe" }, "animepahe.pw"),
+    true,
+  );
+  assert.strictEqual(
+    providerMatchesBlockedDomain(undefined, "animepahe.pw"),
+    false,
+  );
+  assert.strictEqual(
+    providerMatchesBlockedDomain({ name: "animekai" }, ""),
+    false,
+  );
+});
 
 test("providerDeclaresOtherLanguages reads the extension statuses", () => {
   // "Multi Audio" and a named language mean the provider has more than SUB/DUB.
@@ -62,6 +96,29 @@ test("collectPlaybackOptions lists language, server and resolution", () => {
   ]);
   // A provider without sources offers nothing.
   assert.deepStrictEqual(collectPlaybackOptions({}).languages, []);
+});
+
+test("matchesSourceHint honours the picked server and resolution", () => {
+  const source = { url: "a", quality: "1080p", server: "RUBSTM", name: "x" };
+  // Both parts must match.
+  assert.strictEqual(
+    matchesSourceHint(source, { server: "RUBSTM", quality: "1080p" }),
+    true,
+  );
+  assert.strictEqual(
+    matchesSourceHint(source, { server: "RUBSTM", quality: "720p" }),
+    false,
+  );
+  assert.strictEqual(
+    matchesSourceHint(source, { server: "VIDMOLY", quality: "1080p" }),
+    false,
+  );
+  // "Auto" (no quality) matches any quality of that server.
+  assert.strictEqual(matchesSourceHint(source, { server: "RUBSTM" }), true);
+  assert.strictEqual(matchesSourceHint(source, { quality: "1080p" }), true);
+  // No hint at all matches nothing.
+  assert.strictEqual(matchesSourceHint(source, { server: "", quality: "" }), false);
+  assert.strictEqual(matchesSourceHint(source, null), false);
 });
 
 test("normalizeSourceRequest removes a category suffix from episode ids", () => {

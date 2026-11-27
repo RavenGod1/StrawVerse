@@ -904,6 +904,8 @@ public class CloudflareBypassPlugin extends Plugin {
         final double playerSpeed = call.getDouble("playerSpeed", 1.0);
         com.getcapacitor.JSArray prefSubLangsArray = call.getArray("preferredSubtitleLanguages");
         final String preferredSubtitleLanguages = prefSubLangsArray != null ? prefSubLangsArray.toString() : call.getString("preferredSubtitleLanguages", "[]");
+        final String preferredServer = call.getString("preferredServer", "");
+        final String preferredQuality = call.getString("preferredQuality", "");
 
         getActivity().runOnUiThread(new Runnable() {
             @Override
@@ -926,6 +928,8 @@ public class CloudflareBypassPlugin extends Plugin {
                     intent.putExtra("autoPlayNextEpisode", autoPlayNextEpisode);
                     intent.putExtra("playerSpeed", playerSpeed);
                     intent.putExtra("preferredSubtitleLanguages", preferredSubtitleLanguages);
+                    intent.putExtra("preferredServer", preferredServer);
+                    intent.putExtra("preferredQuality", preferredQuality);
                     context.startActivity(intent);
                     call.resolve();
                 } catch (Exception e) {

@@ -1975,7 +1975,9 @@ async function HandleExtensions(
       if (canonicalType !== "Movies") {
         try {
           const { syncExtensionMapping } = require("./mappingUpdater");
-          syncExtensionMapping(ExtensionName).catch(() => {});
+          // Automatic path: a provider is synced once per process, so
+          // repeated settings changes do not re-sync it.
+          syncExtensionMapping(ExtensionName, { force: false }).catch(() => {});
         } catch (_) {}
       }
 

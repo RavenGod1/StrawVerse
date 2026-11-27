@@ -173,6 +173,7 @@ export default function CatalogGrid({
                 alt={item.title}
                 className="media-img"
                 loading="lazy"
+                decoding="async"
                 draggable={false}
                 onError={(e) => {
                   e.target.onerror = null;

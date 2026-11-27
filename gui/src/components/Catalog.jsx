@@ -340,6 +340,7 @@ export default function Catalog({
   onNavigate,
 }) {
   const lastRequestRef = useRef(null);
+  const abortControllerRef = useRef(null);
   const sentinelRef = useRef(null);
   const infiniteObserverRef = useRef(null);
   const isFetchingMoreRef = useRef(false);
@@ -357,6 +358,13 @@ export default function Catalog({
   useEffect(() => {
     didFetchRef.current = false;
   }, [type, provider]);
+
+  // Abort the catalogue request in flight when the view goes away.
+  useEffect(() => {
+    return () => {
+      abortControllerRef.current?.abort();
+    };
+  }, []);
 
   const cacheKey = `${type}_${provider}`;
   const cache = getCatalogCache()[cacheKey];
@@ -1598,6 +1606,11 @@ export default function Catalog({
     const currentRequestId = Math.random();
     lastRequestRef.current = currentRequestId;
 
+    // A new request supersedes the one still in flight.
+    abortControllerRef.current?.abort();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     if (!isAppend) {
       setLoading(true);
       setErrorMsg("");
@@ -1627,6 +1640,7 @@ export default function Catalog({
             filters: currentFilters,
             keyword: activeSearch,
           }),
+          signal: controller.signal,
         })
           .then((r) => r.json())
           .then((cRes) => {
@@ -1674,6 +1688,7 @@ export default function Catalog({
           filters: mappedFilters,
           keyword: activeSearch || undefined,
         }),
+        signal: controller.signal,
       });
 
       if (!response.ok) throw new Error("Network error fetching catalog data.");
@@ -1783,6 +1798,10 @@ export default function Catalog({
         didFetchRef.current = true;
       }
     } catch (err) {
+      // A superseded (or unmounted) request is not a failure: stay quiet.
+      if (controller.signal.aborted || err?.name === "AbortError") {
+        return;
+      }
       if (lastRequestRef.current !== currentRequestId) {
         return;
       }
@@ -1804,7 +1823,10 @@ export default function Catalog({
         markAppendFailed(page);
       }
     } finally {
-      if (lastRequestRef.current === currentRequestId) {
+      if (
+        !controller.signal.aborted &&
+        lastRequestRef.current === currentRequestId
+      ) {
         setLoading(false);
         setInfiniteLoading(false);
         isFetchingMoreRef.current = false;
@@ -2560,6 +2582,7 @@ export default function Catalog({
         const entry = entries[0];
         if (
           entry.isIntersecting &&
+          !document.hidden &&
           !loading &&
           !infiniteLoading &&
           !isFetchingMoreRef.current &&
@@ -2576,7 +2599,19 @@ export default function Catalog({
     observer.observe(sentinelRef.current);
     infiniteObserverRef.current = observer;
 
-    return () => observer.disconnect();
+    // A hidden tab must not page the catalogue; when it comes back the
+    // sentinel is re-observed so the same check runs again.
+    const handleVisibilityChange = () => {
+      if (document.hidden || !sentinelRef.current) return;
+      observer.disconnect();
+      observer.observe(sentinelRef.current);
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      observer.disconnect();
+    };
   }, [
     infiniteScroll,
     loading,

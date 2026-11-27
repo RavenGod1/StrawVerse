@@ -1124,19 +1124,27 @@ export default function VideoPlayer({
       }
 
       if (fetchedSources.length > 0) {
-        // The Play button may have picked a server and a resolution.
-        const hinted = sourceHint
-          ? fetchedSources.find((s) => {
+        // The Play button may have picked a server and a resolution. An empty
+        // quality means "Auto": the best quality of that server.
+        const wantedQuality = String(sourceHint?.quality || "").trim();
+        const wantedServer = String(sourceHint?.server || "").trim();
+        const hintMatches = sourceHint
+          ? fetchedSources.filter((s) => {
               const quality = String(s.quality || "").trim();
               const server = String(
                 s.server || s.provider || s.name || "",
               ).trim();
               return (
-                quality === String(sourceHint.quality || "").trim() &&
-                (!sourceHint.server || server === sourceHint.server)
+                (!wantedQuality || quality === wantedQuality) &&
+                (!wantedServer || server === wantedServer)
               );
             })
-          : null;
+          : [];
+        const hinted =
+          hintMatches.find((s) => s.quality === "1080p") ||
+          hintMatches.find((s) => s.quality === "720p") ||
+          hintMatches[0] ||
+          null;
         const preferred =
           hinted ||
           fetchedSources.find((s) => s.quality === "1080p") ||
@@ -1144,7 +1152,12 @@ export default function VideoPlayer({
           fetchedSources[0];
         setSelectedSource(preferred);
       } else {
-        setErrorMsg("No video sources found for this episode.");
+        setErrorMsg(
+          data?.blocked
+            ? data.message ||
+              "This provider is blocked right now. Try another provider."
+            : "No video sources found for this episode.",
+        );
       }
     } catch (err) {
       if (err.name === "AbortError") {

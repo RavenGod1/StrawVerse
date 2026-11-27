@@ -1,5 +1,25 @@
 # Changelog
 
+# [12.1.14] - 2026-11-27
+
+### Play Button
+
+- **The Server and the Resolution Are Now Real Choices:** The chooser of the single **PLAY** button asks for the server, then the language, then the resolution, and the player starts on exactly that source. "Auto" means: no hint, the player takes the best source it finds.
+- **Your Last Choice Is Remembered:** The server, language and resolution you picked are remembered per provider and are preselected the next time you press PLAY.
+- **Android Gets the Same Chooser:** The Android app now asks for the server and the resolution too, and the native player starts on the picked source instead of asking again. The in-player "Select Server / Quality" button is still there for switching later.
+
+### Blocked Providers
+
+- **A Blocked Provider Offers Another One:** When Cloudflare refuses the app's browser on a site (animepahe.pw), the app says so instead of "no sources", and offers the other providers that are already mapped to that title. Switching costs no extra request - the mapping is local.
+- **A Blocked Site Stays Blocked for 30 Minutes:** After Cloudflare rejects the app's browser, the app does not open another verification window for that site for half an hour.
+
+### Performance
+
+- **One Click, One Request:** The chooser and the player now share one answer from the provider, so pressing PLAY no longer asks the provider twice.
+- **Fewer Requests in the Background:** The mapping watchdog checks less often, the extension mapping syncs once per provider per session, the canary checks run hourly, the catalogue stops asking when a filter changes or the window is hidden, and card images load only when they are visible.
+
+- Version bump to 12.1.14 (versionCode 46).
+
 # [12.1.13] - 2026-11-26
 
 ### Play Button

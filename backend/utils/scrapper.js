@@ -25,6 +25,11 @@ const {
 let isQuitting = false;
 let activeBypasses = {};
 let bypassCooldowns = {};
+// Cloudflare can reject the app's embedded browser outright (the challenge
+// loops forever). Such a domain stays blocked for a while - a new attempt
+// would open another verification window for every card.
+let rejectedDomains = {};
+const REJECTED_DOMAIN_TTL_MS = 30 * 60 * 1000;
 let bypassQueue = [];
 let bypassBusy = false;
 
@@ -818,6 +823,15 @@ global.cloudflarebypass = async (targetUrl, force = false, referer = null) => {
 
   if (activeBypasses[domain]) return activeBypasses[domain];
 
+  if (rejectedDomains[domain] && Date.now() < rejectedDomains[domain]) {
+    console.log(
+      `[Bypass] ${domain} is blocked for ${Math.max(1, Math.round((rejectedDomains[domain] - Date.now()) / 60000))} more minute(s) - Cloudflare did not accept this browser. Skipping bypass.`,
+    );
+    global.LastRejectedDomain = domain;
+    global.LastRejectedAt = Date.now();
+    return false;
+  }
+
   if (
     !force &&
     bypassCooldowns[domain] &&
@@ -928,6 +942,7 @@ global.cloudflarebypass = async (targetUrl, force = false, referer = null) => {
       // seconds is enough; waiting longer only leaves a stuck "Verifying..."
       // window on screen.
       let stuckRounds = 0;
+      let browserRejected = false;
       for (let i = 0; i < 30; i++) {
         const sessionCookies =
           await global.ScrapperWindow.webContents.session.cookies.get({});
@@ -1025,6 +1040,7 @@ global.cloudflarebypass = async (targetUrl, force = false, referer = null) => {
           // accept the browser, so stop early instead of waiting it out.
           stuckRounds += 1;
           if (stuckRounds >= 20) {
+            browserRejected = true;
             console.warn(
               `[Bypass] Cloudflare check for ${domain} is looping (${stuckRounds}s, status ${global.LastScrapperResponseCode}). The embedded browser was not accepted - this site usually needs a real browser. Aborting bypass.`,
             );
@@ -1070,14 +1086,22 @@ global.cloudflarebypass = async (targetUrl, force = false, referer = null) => {
         !isStillChallenge
       ) {
         delete bypassCooldowns[domain];
+        delete rejectedDomains[domain];
         console.log(
           `[Bypass] Successfully bypassed / loaded destination page for ${domain} (title: "${title}")`,
         );
         return true;
       } else {
         bypassCooldowns[domain] = Date.now() + 15 * 1000;
+        if (browserRejected) {
+          // The browser was not accepted: keep the domain blocked so the app
+          // does not open a new verification window for every card.
+          rejectedDomains[domain] = Date.now() + REJECTED_DOMAIN_TTL_MS;
+          global.LastRejectedDomain = domain;
+          global.LastRejectedAt = Date.now();
+        }
         console.warn(
-          `[Bypass] Failed to solve challenge for ${domain} (title: "${title}", status ${global.LastScrapperResponseCode}, clearance: ${gotClearance ? "yes" : "no"}). The app's embedded browser was not accepted by Cloudflare - this site usually needs a real browser. Cooldown set for 15s.`,
+          `[Bypass] Failed to solve challenge for ${domain} (title: "${title}", status ${global.LastScrapperResponseCode}, clearance: ${gotClearance ? "yes" : "no"}). The app's embedded browser was not accepted by Cloudflare - this site usually needs a real browser. Cooldown set for ${browserRejected ? "30 minutes" : "15s"}.`,
         );
         if (global.ScrapperWindow && !global.ScrapperWindow.isDestroyed()) {
           global.ScrapperWindow.loadURL("about:blank").catch(() => {});

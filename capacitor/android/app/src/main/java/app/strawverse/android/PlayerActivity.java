@@ -124,6 +124,9 @@ public class PlayerActivity extends Activity {
     private List<String> preferredSubtitleLanguagesList = new ArrayList<>(java.util.Collections.singletonList("English"));
     private boolean preferredSubtitleLanguagesExplicitlyLoaded = false;
     private String preferredQuality = "highest";
+    // The server / resolution the app's Play chooser picked for this episode.
+    private String requestedServer = "";
+    private String requestedQuality = "";
     // How long the Media3 controls stay visible after the last interaction.
     private int controlsHideDelaySeconds = 3;
 
@@ -273,6 +276,14 @@ public class PlayerActivity extends Activity {
             if (spd > 0) {
                 savedSpeed = (float) spd;
             }
+        }
+        if (intent.hasExtra("preferredServer")) {
+            String reqServer = intent.getStringExtra("preferredServer");
+            if (reqServer != null) requestedServer = reqServer.trim();
+        }
+        if (intent.hasExtra("preferredQuality")) {
+            String reqQuality = intent.getStringExtra("preferredQuality");
+            if (reqQuality != null) requestedQuality = reqQuality.trim();
         }
         if (intent.hasExtra("preferredSubtitleLanguages")) {
             String pSub = intent.getStringExtra("preferredSubtitleLanguages");
@@ -1067,6 +1078,33 @@ public class PlayerActivity extends Activity {
         }
     }
 
+    // The source the app's Play chooser picked (server and/or resolution).
+    private int findRequestedSourceIndex() {
+        if (sourcesArray == null || sourcesArray.length() == 0) return -1;
+        if (requestedServer.isEmpty() && requestedQuality.isEmpty()) return -1;
+        for (int i = 0; i < sourcesArray.length(); i++) {
+            try {
+                JSONObject s = sourcesArray.getJSONObject(i);
+                String server = s.optString("server", s.optString("provider", s.optString("name", ""))).trim();
+                String quality = s.optString("quality", "").trim();
+                if (!requestedServer.isEmpty() && !server.equalsIgnoreCase(requestedServer)) continue;
+                if (!requestedQuality.isEmpty() && !quality.equalsIgnoreCase(requestedQuality)) continue;
+                return i;
+            } catch (Exception ignored) {}
+        }
+        // The server alone is enough - the resolution may not be listed.
+        if (!requestedServer.isEmpty() && !requestedQuality.isEmpty()) {
+            for (int i = 0; i < sourcesArray.length(); i++) {
+                try {
+                    JSONObject s = sourcesArray.getJSONObject(i);
+                    String server = s.optString("server", s.optString("provider", s.optString("name", ""))).trim();
+                    if (server.equalsIgnoreCase(requestedServer)) return i;
+                } catch (Exception ignored) {}
+            }
+        }
+        return -1;
+    }
+
     private void onSourcesFetched(JSONObject data) {
         if (isActivityDead()) return;
         try {
@@ -1098,7 +1136,9 @@ public class PlayerActivity extends Activity {
                 return;
             }
 
-            resolveServerWithFallback(0);
+            // Start on the server / resolution the app's chooser picked.
+            int requestedIndex = findRequestedSourceIndex();
+            resolveServerWithFallback(requestedIndex >= 0 ? requestedIndex : 0);
 
         } catch (Exception e) {
             Log.e("PlayerActivity", "Error processing fetched sources: " + e.getMessage());

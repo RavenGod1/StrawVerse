@@ -328,6 +328,23 @@ function providerDeclaresOtherLanguages(statuses) {
   return false;
 }
 
+// Does a source match the server/resolution the user picked in the Play
+// chooser? An empty quality means "Auto": any quality of that server.
+function matchesSourceHint(source, hint) {
+  if (!hint) return false;
+  const wantedQuality = String(hint.quality || "").trim();
+  const wantedServer = String(hint.server || "").trim();
+  if (!wantedQuality && !wantedServer) return false;
+  const quality = String(source?.quality || "").trim();
+  const server = String(
+    source?.server || source?.provider || source?.name || "",
+  ).trim();
+  return (
+    (!wantedQuality || quality === wantedQuality) &&
+    (!wantedServer || server === wantedServer)
+  );
+}
+
 function resolvePlaylistUri(uri, playlistUrl) {
   try {
     return new URL(uri, playlistUrl).href;
@@ -372,6 +389,26 @@ function hasMediaSources(result) {
   );
 }
 
+// Does a blocked Cloudflare domain belong to the provider that just failed?
+// Without this the hint would blame the last blocked site for an unrelated
+// provider that simply has no sources.
+function providerMatchesBlockedDomain(providerObj, domain) {
+  if (!domain) return false;
+  let hostName = "";
+  try {
+    hostName = new URL(String(providerObj?.baseUrl || "")).hostname.replace(
+      /^www\./,
+      "",
+    );
+  } catch (_) {}
+  if (hostName && (hostName === domain || hostName.endsWith(`.${domain}`))) {
+    return true;
+  }
+  const label = String(domain.split(".")[0] || "").toLowerCase();
+  const name = String(providerObj?.name || "").toLowerCase();
+  return Boolean(label && name && (name === label || name.includes(label)));
+}
+
 module.exports = {
   normalizeSourceRequest,
   stripCategorySuffix,
@@ -387,5 +424,7 @@ module.exports = {
   filterSourcesByLang,
   collectOtherLanguages,
   collectPlaybackOptions,
+  matchesSourceHint,
   providerDeclaresOtherLanguages,
+  providerMatchesBlockedDomain,
 };

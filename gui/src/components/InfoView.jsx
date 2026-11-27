@@ -38,7 +38,6 @@ import {
 import { getProxiedImageUrl } from "../utils/imageUrl";
 import { getDownloadProgress } from "../utils/downloadProgress";
 import { parseLangRequest, langRequest } from "../utils/otherLanguages";
-import { isMobileApp } from "../utils/nativeBridge";
 import Dropdown from "./common/Dropdown";
 import "./css/InfoView.css";
 
@@ -165,6 +164,38 @@ export default function InfoView({
       cancelled = true;
     };
   }, []);
+
+  // The last server/language/resolution the user picked, per provider, so the
+  // chooser opens with the choice they already made.
+  const [playChoices, setPlayChoices] = useState({});
+  useEffect(() => {
+    if (!window.sharedStateAPI?.getSettings) return;
+    let cancelled = false;
+    window.sharedStateAPI
+      .getSettings(["playChoices"])
+      .then((res) => {
+        if (cancelled) return;
+        const val = res?.settings?.playChoices;
+        if (val && typeof val === "object") setPlayChoices(val);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const savePlayChoice = async (providerKey, choice) => {
+    if (!providerKey || !window.sharedStateAPI?.updateSetting) return;
+    setPlayChoices((prev) => ({ ...prev, [providerKey]: choice }));
+    try {
+      const res = await window.sharedStateAPI.getSettings(["playChoices"]);
+      const merged = { ...(res?.settings?.playChoices || {}) };
+      merged[providerKey] = choice;
+      await window.sharedStateAPI.updateSetting("playChoices", merged);
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   const saveMsShow = async (next) => {
     const merged = { ...msShow, ...next };
@@ -350,6 +381,8 @@ export default function InfoView({
       const subdub = args[3];
       const animeTitle = details?.title || "Anime Stream";
       const provider = details?.provider;
+      // The server/resolution the chooser picked (index 11 of the watch call).
+      const sourceHint = args[11] || null;
 
       const targetItem = (episodesOrChapters || []).find(
         (item) =>
@@ -432,6 +465,10 @@ export default function InfoView({
         autoPlayNextEpisode: currentAutoPlayNext,
         playerSpeed: currentPlayerSpeed,
         preferredSubtitleLanguages: currentPreferredSubLangs,
+        // The native player starts on this server / resolution instead of
+        // asking the user again.
+        preferredServer: sourceHint?.server || "",
+        preferredQuality: sourceHint?.quality || "",
       }).catch((err) => {
         console.error("Failed to start native player:", err);
       });
@@ -2477,7 +2514,7 @@ export default function InfoView({
 
   // The Play button of a multi-language provider: server, then language, then
   // resolution.
-  const showPlayOptions = async (languages, item) => {
+  const showPlayOptions = async (languages, item, prefs = null) => {
     const serverNames = [];
     languages.forEach((lang) =>
       (lang.servers || []).forEach((server) => {
@@ -2498,23 +2535,36 @@ export default function InfoView({
       return server?.resolutions || [];
     };
 
-    const showServers = !isMobileApp();
-    const state = { server: serverNames[0] || "", lang: "", quality: "" };
-    state.lang = languagesFor(state.server)[0]?.key || languages[0]?.key || "";
-    state.quality = resolutionsFor(state.server, state.lang)[0] || "";
+    const state = { server: "", lang: "", quality: "auto" };
+    state.server =
+      prefs?.server && serverNames.includes(prefs.server)
+        ? prefs.server
+        : serverNames[0] || "";
+    const availableLangs = languagesFor(state.server);
+    state.lang =
+      prefs?.lang && availableLangs.some((lang) => lang.key === prefs.lang)
+        ? prefs.lang
+        : availableLangs[0]?.key || "";
+    const availableQualities = resolutionsFor(state.server, state.lang);
+    state.quality =
+      prefs?.quality && availableQualities.includes(prefs.quality)
+        ? prefs.quality
+        : "auto";
 
     const serverOptions = () =>
       serverNames.map((name) => ({ value: name, label: name }));
     const languageOptions = () =>
-      (showServers ? languagesFor(state.server) : languages).map((lang) => ({
+      languagesFor(state.server).map((lang) => ({
         value: lang.key,
         label: lang.label,
       }));
-    const qualityOptions = () =>
-      resolutionsFor(state.server, state.lang).map((quality) => ({
-        value: quality,
-        label: quality || "Auto",
-      }));
+    // "Auto" means the best quality the player can find - no quality hint.
+    const qualityOptions = () => [
+      { value: "auto", label: "Auto" },
+      ...resolutionsFor(state.server, state.lang)
+        .filter(Boolean)
+        .map((quality) => ({ value: quality, label: quality })),
+    ];
 
     const result = await Swal.fire({
       title: `Play Episode ${item?.number ?? ""}`.trim(),
@@ -2572,32 +2622,24 @@ export default function InfoView({
             font-size: 13px;
           }
         </style>
-        ${
-          showServers
-            ? `<div class="swal-opt-label">Server</div>
-               <div id="swal-opt-server">${playOptionGroup(
-                 "server",
-                 serverOptions(),
-                 state.server,
-               )}</div>`
-            : ""
-        }
+        <div class="swal-opt-label">Server</div>
+        <div id="swal-opt-server">${playOptionGroup(
+          "server",
+          serverOptions(),
+          state.server,
+        )}</div>
         <div class="swal-opt-label">Language</div>
         <div id="swal-opt-lang">${playOptionGroup(
           "lang",
           languageOptions(),
           state.lang,
         )}</div>
-        ${
-          showServers
-            ? `<div class="swal-opt-label">Resolution</div>
-               <div id="swal-opt-quality">${playOptionGroup(
-                 "quality",
-                 qualityOptions(),
-                 state.quality,
-               )}</div>`
-            : ""
-        }
+        <div class="swal-opt-label">Resolution</div>
+        <div id="swal-opt-quality">${playOptionGroup(
+          "quality",
+          qualityOptions(),
+          state.quality,
+        )}</div>
       `,
       showCancelButton: true,
       confirmButtonText: "Play",
@@ -2641,10 +2683,10 @@ export default function InfoView({
             if (!langs.some((lang) => lang.key === state.lang)) {
               state.lang = langs[0]?.key || "";
             }
-            state.quality = resolutionsFor(value, state.lang)[0] || "";
+            state.quality = "auto";
           } else if (kind === "lang") {
             state.lang = value;
-            state.quality = resolutionsFor(state.server, value)[0] || "";
+            state.quality = "auto";
           } else if (kind === "quality") {
             state.quality = value;
           }
@@ -2667,6 +2709,51 @@ export default function InfoView({
     return result?.value || null;
   };
 
+  // A provider blocked by Cloudflare cannot play. Offer a provider the local
+  // mapping already links to this title - no extra provider requests.
+  const offerMappedAlternative = async (blockedProvider) => {
+    const current = String(details?.provider || "").toLowerCase();
+    const alternatives = (details?.linkedProviders || []).filter(
+      (p) =>
+        p?.id &&
+        p?.provider &&
+        p.provider.toLowerCase() !== current &&
+        p.provider !== "provider" &&
+        p.provider !== "local source",
+    );
+    if (!alternatives.length) return false;
+
+    const inputOptions = {};
+    alternatives.forEach((p) => {
+      inputOptions[`${p.provider}::${p.id}`] = p.provider;
+    });
+
+    const { value } = await Swal.fire({
+      title: "Provider Blocked",
+      html: `${blockedProvider || "This provider"} is blocked by Cloudflare right now. Another mapped provider for this title:`,
+      input: "select",
+      inputOptions,
+      inputPlaceholder: "Choose a provider",
+      showCancelButton: true,
+      confirmButtonText: "Switch",
+      cancelButtonText: "Cancel",
+      background: "var(--bg-secondary)",
+      color: "var(--text-main)",
+      confirmButtonColor: "var(--accent)",
+      cancelButtonColor: "var(--bg-tertiary)",
+    });
+    if (!value) return true;
+
+    const chosen = alternatives.find((p) => `${p.provider}::${p.id}` === value);
+    if (!chosen) return true;
+    await handleProviderSwitch(chosen.id, chosen.provider);
+    swalInfo(
+      "Provider Switched",
+      `Now using ${chosen.provider}. Press PLAY again to watch this episode.`,
+    );
+    return true;
+  };
+
   const handlePlayWithOptions = async (item) => {
     setProbingOthersId(item?.id || item?.number);
     try {
@@ -2678,6 +2765,17 @@ export default function InfoView({
       });
       const languages = Array.isArray(data?.languages) ? data.languages : [];
       if (!languages.length) {
+        if (data?.blocked) {
+          const offered = await offerMappedAlternative(details?.provider);
+          if (!offered) {
+            swalError(
+              "Provider Blocked",
+              data.message ||
+                "This provider is blocked right now. Try another provider.",
+            );
+          }
+          return;
+        }
         swalInfo(
           "No Sources Found",
           `This episode has no playable sources on ${details?.provider || "this provider"}.`,
@@ -2685,8 +2783,18 @@ export default function InfoView({
         return;
       }
 
-      const choice = await showPlayOptions(languages, item);
+      const choice = await showPlayOptions(
+        languages,
+        item,
+        playChoices[details?.provider || "default"],
+      );
       if (!choice) return;
+
+      savePlayChoice(details?.provider || "default", {
+        server: choice.server,
+        lang: choice.lang,
+        quality: choice.quality,
+      });
 
       onWatch(
         details?.id || id,
@@ -2700,7 +2808,11 @@ export default function InfoView({
         details?.image,
         undefined,
         item?.season || 1,
-        { server: choice.server, quality: choice.quality },
+        {
+          server: choice.server,
+          // "Auto" means: no quality hint, the player picks the best source.
+          quality: choice.quality === "auto" ? "" : choice.quality,
+        },
       );
     } catch (err) {
       console.error(err);
