@@ -91,7 +91,6 @@ local icons = {
 local speed_menu = {
     active = false,
     selected_index = 4,
-    last_closed_time = nil,
     speeds = { 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0 }
 }
 
@@ -663,10 +662,14 @@ local close_speed_menu
 local close_server_menu
 local close_sub_menu
 
+-- The OSC binds mbtn_left in several input sections (showhide, window-controls,
+-- info_btn, skip_intro_btn), so one physical click can reach process_event
+-- more than once. The menu drawers must react to the first delivery only,
+-- otherwise they open and close again within the same click.
+local menu_press_seen = false
+
 close_server_menu = function()
     if not server_menu.active then return end
-    server_menu.last_closed_time = mp.get_time()
-    server_menu.last_closed_type = server_menu.menu_type
     server_menu.active = false
     mp.remove_key_binding("server-menu-up")
     mp.remove_key_binding("server-menu-down")
@@ -709,17 +712,14 @@ end
 
 local function open_server_menu(menu_type)
     menu_type = menu_type or "servers"
-    local now = mp.get_time()
     if server_menu.active then
+        -- Toggling the same drawer closes it, another drawer replaces it.
         if server_menu.menu_type == menu_type then
             close_server_menu()
             return
         else
             close_server_menu()
         end
-    elseif server_menu.last_closed_time and (now - server_menu.last_closed_time < 0.4) and (server_menu.last_closed_type == menu_type) then
-        server_menu.last_closed_time = nil
-        return
     end
     close_speed_menu()
     close_sub_menu()
@@ -857,7 +857,6 @@ end
 
 close_speed_menu = function()
     if not speed_menu.active then return end
-    speed_menu.last_closed_time = mp.get_time()
     speed_menu.active = false
     mp.remove_key_binding("speed-menu-up")
     mp.remove_key_binding("speed-menu-down")
@@ -882,12 +881,8 @@ local function select_speed()
 end
 
 local function open_speed_menu()
-    local now = mp.get_time()
     if speed_menu.active then
         close_speed_menu()
-        return
-    elseif speed_menu.last_closed_time and (now - speed_menu.last_closed_time < 0.4) then
-        speed_menu.last_closed_time = nil
         return
     end
     close_server_menu()
@@ -3044,6 +3039,9 @@ function mouse_leave()
     if get_hidetimeout() >= 0 then
         hide_osc()
     end
+    -- a press that was released outside the window never reaches the "up"
+    -- handler, so the next click must not be swallowed as a duplicate
+    menu_press_seen = false
     -- reset mouse position
     state.last_mouseX, state.last_mouseY = nil, nil
     state.mouse_in_window = false
@@ -3292,6 +3290,10 @@ function process_event(source, what)
     -- Handle menu drawer clicks if server, speed, or sub menu is active
     if source == 'mbtn_left' then
         if what == 'down' then
+            if menu_press_seen then
+                return
+            end
+            menu_press_seen = true
             local mx, my = get_virt_mouse_pos()
 
             -- Check if click is directly on menu buttons
@@ -3428,6 +3430,7 @@ function process_event(source, what)
                 return
             end
         elseif what == 'up' then
+            menu_press_seen = false
             if menu_click_in_progress then
                 menu_click_in_progress = false
                 state.active_element = nil
