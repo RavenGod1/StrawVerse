@@ -667,6 +667,12 @@ local close_sub_menu
 -- more than once. The menu drawers must react to the first delivery only,
 -- otherwise they open and close again within the same click.
 local menu_press_seen = false
+-- When a drawer was opened, a second delivery of the same click must not
+-- close it again - the menu would look like it retracted by itself.
+local menu_opened_at = 0
+local function menu_opened_recently()
+    return (mp.get_time() - menu_opened_at) < 0.35
+end
 
 close_server_menu = function()
     if not server_menu.active then return end
@@ -740,6 +746,7 @@ local function open_server_menu(menu_type)
     server_menu.is_servers = (menu_type == "servers")
     server_menu.menu_type = menu_type
     server_menu.active = true
+    menu_opened_at = mp.get_time()
 
     local active_server = unquote(mp.get_property("user-data/strawverse-active-server"))
     local current_url = mp.get_property("stream-open-filename") or mp.get_property("path")
@@ -890,6 +897,7 @@ local function open_speed_menu()
     show_osc()
     
     speed_menu.active = true
+    menu_opened_at = mp.get_time()
     local current_speed = mp.get_property_number("speed", 1.0)
     local min_diff = 999
     for idx, s in ipairs(speed_menu.speeds) do
@@ -1124,6 +1132,7 @@ local function open_sub_menu()
     
     update_tracklist()
     sub_menu.active = true
+    menu_opened_at = mp.get_time()
     
     local has_tracks = (#tracks_osc.sub > 0)
     local total_items = has_tracks and (#tracks_osc.sub + 2) or 2
@@ -3036,7 +3045,10 @@ function request_tick()
 end
 
 function mouse_leave()
-    if get_hidetimeout() >= 0 then
+    -- An open drawer must stay readable: hiding the OSC under it makes the
+    -- menu look like it retracted. The auto-hide path skips the same case.
+    if get_hidetimeout() >= 0 and
+        not (server_menu.active or speed_menu.active or sub_menu.active) then
         hide_osc()
     end
     -- a press that was released outside the window never reaches the "up"
@@ -3302,7 +3314,11 @@ function process_event(source, what)
                 if elements[n] and elements[n].hitbox and elements[n].visible ~= false and elements[n].enabled ~= false then
                     if elements[n].layout == nil or elements[n].layout.visible ~= false then
                         local hb = elements[n].hitbox
-                        if mx >= hb.x1 and mx <= hb.x2 and my >= hb.y1 and my <= hb.y2 then
+                        -- A few pixels of slack: the hitbox is computed from
+                        -- the last layout, a click that lands a pixel off
+                        -- must still hit the button.
+                        if mx >= hb.x1 - 4 and mx <= hb.x2 + 4 and
+                            my >= hb.y1 - 4 and my <= hb.y2 + 4 then
                             local nname = elements[n].name
                             if nname == 'cy_speed' or nname == 'cy_sub' or nname == 'cy_server' or nname == 'cy_quality' then
                                 hit_btn = nname
@@ -3317,7 +3333,9 @@ function process_event(source, what)
                 close_server_menu()
                 close_sub_menu()
                 if speed_menu.active then
-                    close_speed_menu()
+                    if not menu_opened_recently() then
+                        close_speed_menu()
+                    end
                 else
                     open_speed_menu()
                 end
@@ -3327,7 +3345,9 @@ function process_event(source, what)
                 close_server_menu()
                 close_speed_menu()
                 if sub_menu.active then
-                    close_sub_menu()
+                    if not menu_opened_recently() then
+                        close_sub_menu()
+                    end
                 else
                     open_sub_menu()
                 end
@@ -3337,7 +3357,9 @@ function process_event(source, what)
                 close_speed_menu()
                 close_sub_menu()
                 if server_menu.active and server_menu.menu_type == "servers" then
-                    close_server_menu()
+                    if not menu_opened_recently() then
+                        close_server_menu()
+                    end
                 else
                     open_server_menu("servers")
                 end
@@ -3347,7 +3369,9 @@ function process_event(source, what)
                 close_speed_menu()
                 close_sub_menu()
                 if server_menu.active and server_menu.menu_type == "quality" then
-                    close_server_menu()
+                    if not menu_opened_recently() then
+                        close_server_menu()
+                    end
                 else
                     open_server_menu("quality")
                 end

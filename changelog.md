@@ -1,5 +1,31 @@
 # Changelog
 
+# [12.1.17] - 2026-11-28
+
+### Subtitles
+
+- **PirateXPlay Streams and Downloads Now Carry Subtitles:** The provider looked for subtitle files only on the server that was about to play and gave up when that one had none. It now reads the subtitle files of every server of the episode - the Vidmoly mirror and the HLS master both list them - and hands the file to the player and to the download, no matter which server the video comes from. When no known server has a subtitle, the remaining servers are checked before the episode is given up on.
+
+### Player Fixed
+
+- **The Player's Dropdown Menus Stay Open:** A click that reached the player's overlay twice opened the subtitles, server, quality or speed menu and closed it again in the same click, so the menu looked like it snapped shut instantly. The menu now reacts to the click once, a second delivery of the same click cannot close it again, and an open menu stays open when the pointer leaves the window.
+
+# [12.1.16] - 2026-11-27
+
+### Player Fixed
+
+- **The Player's Dropdown Menus Stay Open:** Clicking the subtitles, server, quality or speed button in the player opened the menu and closed it again in the same click, so the menus seemed to snap shut instantly. The click was handled several times because the player's overlay listens for the mouse button in more than one place; it now reacts to one click once.
+
+# [12.1.15] - 2026-11-27
+
+### Streaming Fixed
+
+- **Streaming Works Again on Every Provider:** The PLAY button's chooser was reading its list of languages from the wrong place, so every provider that offers more than SUB/DUB (Anime World India, PirateXPlay, AniXoHindi) answered "No Sources Found" even when the episode had playable sources. Providers that only offer SUB/DUB were never affected, which is why some titles still played.
+
+### Downloads
+
+- **SUB, DUB and Hindi Can Now Be Downloaded Side by Side:** Asking for more than one version of the same episode used to keep only the last one - the versions shared one queue slot and one file name, so the second download replaced the first. Each version now has its own queue slot and its own file (`1Ep.sub.mp4`, `1Ep.dub.mp4`, `1Ep.hindi.mp4`), and a version that is already on disk no longer blocks the other versions.
+
 # [12.1.14] - 2026-11-27
 
 ### Play Button
